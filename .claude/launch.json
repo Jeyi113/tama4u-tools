@@ -4,8 +4,11 @@
     {
       "name": "tama4u-editor",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "tama4u", "edit"],
-      "cwd": "/Users/jeyiyoo/Documents/tama4u-tools",
+      "runtimeArgs": [
+        "-m",
+        "tama4u",
+        "edit"
+      ],
       "port": 8477
     }
   ]
