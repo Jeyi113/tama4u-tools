@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tama4u-editor",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "tama4u", "edit"],
+      "cwd": "/Users/jeyiyoo/Documents/tama4u-tools",
+      "port": 8477
+    }
+  ]
+}

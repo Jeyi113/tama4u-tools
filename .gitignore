@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Reference material and derived data harvested from Bandai's download packs.
+# Not redistributable -- see README for how to regenerate locally.
+incoming/
+tama4u/charasprites/
+tama4u/itemindex.json
+tama4u/charset*.json

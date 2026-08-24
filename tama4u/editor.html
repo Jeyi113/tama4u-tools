@@ -1,0 +1,1288 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>tama4u editor</title>
+<style>
+  :root{--bg:#f5f2ec;--card:#fff;--ink:#2b2620;--line:#e2dcd2;--accent:#e8564a;--ok:#3aa657}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 -apple-system,'Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--ink)}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header h1{font-size:15px;margin:0}
+  header img{height:34px;image-rendering:pixelated;border:1px solid var(--line);border-radius:4px}
+  .btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px}
+  .btn:hover{border-color:#c8c0b2}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  main{display:none;grid-template-columns:minmax(300px,360px) minmax(0,1fr);gap:14px;
+    padding:14px;max-width:1400px;margin:0 auto;align-items:start}
+  @media (max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+  main>div{min-width:0}
+  .off{opacity:.4}
+  .off input,.off select,.off button{pointer-events:none;background:#f2efe9}
+  .offtag{font-size:10px;color:#a08c6a;margin-left:4px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .card h2{font-size:13px;margin:0 0 10px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px}
+  label{display:block;font-size:12px;color:#8a8172;margin:8px 0 2px}
+  input,select{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fdfcfa}
+  .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 90px;min-width:90px}
+  .statgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;text-align:center}
+  .statgrid label{margin:0;font-size:11px}
+  .likes{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:3px;
+    max-height:260px;overflow:auto}
+  .likes button{font-size:10px;padding:3px 1px;border:1px solid var(--line);border-radius:4px;background:#fdfcfa;cursor:pointer;overflow:hidden;white-space:nowrap}
+  .likes button.l1{background:#bdf0c3;border-color:var(--ok)}
+  .likes button.l1::before{content:'＋ '}
+  .likes button.l2{background:#f8c6c1;border-color:var(--accent)}
+  .likes button.l2::before{content:'－ '}
+  #drop{margin:60px auto;max-width:520px;padding:60px 30px;border:2px dashed #c8c0b2;border-radius:16px;text-align:center;color:#8a8172;cursor:pointer}
+  #drop.over{border-color:var(--accent);color:var(--accent)}
+  .tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;align-items:center}
+  .tabs button{border:1px solid var(--line);background:#fdfcfa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}
+  .tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .tabs .bank-label{font-size:11px;color:#8a8172;margin:0 2px 0 8px}
+  #canvasWrap{overflow:auto;border:1px solid var(--line);border-radius:8px;background:
+    repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/16px 16px;display:inline-block;max-width:100%}
+  #canvasWrap.opaque{background:#fff}
+  canvas{display:block;image-rendering:pixelated;cursor:crosshair}
+  .pal{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0}
+  .sw{width:26px;height:26px;border-radius:6px;border:2px solid var(--line);cursor:pointer;position:relative}
+  .sw.on{border-color:var(--ink);box-shadow:0 0 0 2px #fff inset}
+  .sw.t::after{content:'T';position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:#666}
+  .hint{font-size:12px;color:#8a8172;margin-top:6px}
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;
+    padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:80%}
+  #toast.show{opacity:1}
+  .pksel{margin-bottom:0}
+  #pkList{display:flex;flex-direction:column;gap:3px}
+  .pkrow{display:flex;gap:6px;align-items:baseline;text-align:left;width:100%;
+    border:1px solid var(--line);background:#fdfcfa;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit}
+  .pkrow:hover{border-color:#c8c0b2}
+  .pkrow.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .pkrow.on .pksub{color:#cfc7ba}
+  .pkrow .pkname{font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pksub{font-size:11px;color:#8a8172;white-space:nowrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>🍙 tama4u editor</h1>
+  <img id="preview" hidden alt="">
+  <span id="fname" style="color:#8a8172;font-size:12px"></span>
+  <span id="modelBadge" style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:#efe9dd;color:#6b6154"></span>
+  <span style="flex:1"></span>
+  <button class="btn" id="openBtn">파일 열기</button>
+  <button class="btn primary" id="saveBtn" hidden>커스텀 .jpg 다운로드</button>
+</header>
+<input type="file" id="fileInput" accept=".jpg,.jpeg" hidden>
+
+<div id="drop">4U 아이템 .jpg 를 여기로 드래그<br>(또는 클릭해서 선택)</div>
+
+<main id="main">
+  <div>
+    <div class="card pksel" id="pkCard" hidden>
+      <h2>패킷 <span style="font-weight:400;text-transform:none" id="pkCount"></span></h2>
+      <div id="pkList"></div>
+    </div>
+    <div class="card" id="metaCard">
+      <h2>기본 정보</h2>
+      <label id="nameLabel">이름 (기기 표시)</label><input id="fName">
+      <div id="name2Box" hidden><label id="name2Label">Name 2 (프로필 표시)</label><input id="fName2"></div>
+      <div class="hint" id="nameNote" hidden></div>
+      <div class="row">
+        <div><label id="serialLabel">시리얼</label><input id="fSerial" type="number" min="0" max="65535"></div>
+        <div id="priceBox"><label>가격</label><input id="fPrice" type="number" min="0" max="65535"></div>
+        <div id="hungerBox"><label>만복도</label><input id="fHunger" type="number" min="0" max="255"></div>
+        <div id="friendBox"><label>친밀도</label><input id="fFriend" type="number" min="0" max="255"></div>
+      </div>
+      <div id="destBox">
+        <label>행선지 (destination)</label>
+        <select id="fDest">
+          <option value="81010201">레스토랑 · 식사</option>
+          <option value="81010d02">레스토랑 · 간식</option>
+          <option value="81010101">냉장고 직행 · 식사 (비매품)</option>
+          <option value="81010102">냉장고 직행 · 간식 (비매품)</option>
+          <option value="81042a01">타마데파 · 장난감</option>
+          <option value="81033300">타마모리 · 옷</option>
+          <option value="81023400">타마모리 · 액세서리</option>
+          <option value="81071f00">고치 인테리어 · 방</option>
+        </select>
+        <div class="hint">보관함 분류는 시리얼 대역을 따르는 것으로 관측됨:<br>
+        0x04xx(1024~)=장난감 상점 · 0x06xx(1536~)=쿠폰→보관함 스페셜 · 0x07xx(1792~)=장식.<br>
+        가격 0 이면 비매품으로 취급.</div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button class="btn" id="swapBtn">이 패킷을 .jpg로 교체</button>
+        <span class="hint" id="swapNote" style="margin:0">다른 아이템 파일의 내용으로 통째로 바꿉니다</span>
+      </div>
+      <input type="file" id="swapInput" accept=".jpg,.jpeg" hidden>
+      <div class="hint" id="wardrobeNote" hidden style="color:#6b8f5e">
+        캐릭터 본체의 옷장 패킷입니다 — 상점을 거치지 않으므로 행선지·가격·
+        스탯이 없습니다. 스프라이트와 이름만 편집하세요.
+      </div>
+      <div class="hint" id="unverifiedNote" hidden style="color:#a8632f">
+        이 패킷은 행선지 코드가 표에 없어 드롭다운을 잠급니다.
+      </div>
+      <div id="animBox" hidden>
+        <label>애니메이션 ID (기기 내장 동작 참조, 보통 A=B)</label>
+        <div class="row">
+          <input id="fAnimA" type="number" min="0" max="255" placeholder="A">
+          <input id="fAnimB" type="number" min="0" max="255" placeholder="B">
+        </div>
+      </div>
+    </div>
+    <div class="card" id="statCard">
+      <h2>스탯 (아이템 사용 효과)</h2>
+      <div class="statgrid">
+        <div><label>지력</label><input id="s0" type="number" min="0" max="99"></div>
+        <div><label>스타일</label><input id="s1" type="number" min="0" max="99"></div>
+        <div><label>카리스마</label><input id="s2" type="number" min="0" max="99"></div>
+        <div><label>미식</label><input id="s3" type="number" min="0" max="99"></div>
+        <div><label>근력</label><input id="s4" type="number" min="0" max="99"></div>
+      </div>
+    </div>
+    <div class="card" id="verCard" hidden>
+      <h2>기기 버전 <span style="font-weight:400;text-transform:none" id="verNow"></span></h2>
+      <label>대상 버전</label>
+      <select id="verSel"></select>
+      <div class="row" style="margin-top:6px">
+        <div><label>카탈로그 인덱스</label><input id="verIdx" type="number" min="0" max="255"></div>
+        <div><label>호환 슬롯 1</label><input id="verC0" placeholder="0000"></div>
+        <div><label>호환 슬롯 2</label><input id="verC1" placeholder="0000"></div>
+      </div>
+      <button class="btn" id="verApply" style="margin-top:8px">이 버전으로 변환</button>
+      <div class="hint" id="verNote"></div>
+    </div>
+    <div class="card" id="cvCard" hidden>
+      <h2>기종 변환 <span style="font-weight:400;text-transform:none" id="cvNow"></span></h2>
+      <div class="row" id="cvBtns"></div>
+      <label style="margin-top:10px">호환 기종 (0xFF 비트마스크)</label>
+      <div id="cvCompat" class="likes" style="grid-template-columns:repeat(3,1fr)"></div>
+      <div class="hint" id="cvCompatNote"></div>
+      <div class="hint" id="cvNote"></div>
+    </div>
+    <div class="card" id="charCard" hidden>
+      <h2>캐릭터 스탯</h2>
+      <div id="charFields"></div>
+    </div>
+    <div class="card" id="emptyNote" hidden>
+      <h2>편집 항목 없음</h2>
+      <div class="hint">이 패킷에는 스프라이트·대사·스탯이 없습니다 (정의/헤더 전용).</div>
+    </div>
+    <div class="card" id="textCard" hidden>
+      <h2>대사 / 텍스트 <span style="font-weight:400;text-transform:none">(길이 고정, 남는 칸은 공백 처리)</span></h2>
+      <div id="texts"></div>
+    </div>
+    <div class="card" id="likesCard">
+      <h2>좋아함 / 싫어함 <span style="font-weight:400;text-transform:none">(클릭: 없음→<span style="color:var(--ok)">좋아함</span>→<span style="color:var(--accent)">싫어함</span>)</span></h2>
+      <div class="likes" id="likes"></div>
+      <div class="hint" id="likesNote" hidden>이 기종은 슬롯↔캐릭터 대응이 아직 확인되지 않아 번호로 표시합니다.</div>
+    </div>
+  </div>
+
+  <div class="card" id="spriteCard">
+    <h2>스프라이트 <span id="bankInfo" style="font-weight:400;text-transform:none"></span></h2>
+    <div class="tabs" id="frameTabs"></div>
+    <div style="margin:-4px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <label style="margin:0;display:flex;gap:4px;align-items:center;font-size:12px;color:var(--ink)">
+        <input type="checkbox" id="gridChk" style="width:auto" checked> 그리드</label>
+      <button class="btn" id="impBtn">BMP 가져오기</button>
+      <button class="btn" id="expBtn">BMP 내보내기</button>
+      <button class="btn" id="thumbBtn">이 프레임으로 썸네일(JPEG 미리보기) 만들기</button>
+      <span class="hint" id="thumbNote" style="margin-left:8px"></span></div>
+    <input type="file" id="bmpInput" accept=".bmp" hidden>
+    <div id="canvasWrap"><canvas id="cv"></canvas></div>
+    <div class="pal" id="pal"></div>
+    <div class="hint">좌클릭 그리기 · 우클릭 스포이드 · 팔레트 더블클릭 색 변경 · Ctrl/Cmd+Z 되돌리기<br>
+      <span id="transHint">팔레트 0번(T)은 투명색.</span> 슬롯 용량 초과 시 저장할 때 알려줍니다.</div>
+    <div id="stripRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <div style="font-size:12px;color:#8a8172;margin-bottom:6px">
+        체형 합성 <span id="stripInfo"></span></div>
+      <div id="strip" style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px"></div>
+    </div>
+    <div id="chAccRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <div style="font-size:12px;color:#8a8172;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>내장 액세서리 합성 <span id="chAccInfo"></span></span>
+        <label style="margin:0">X 오프셋</label>
+        <input id="chAccDx" type="number" value="0" style="width:64px">
+        <label style="margin:0">Y 오프셋</label>
+        <input id="chAccDy" type="number" value="0" style="width:64px">
+        <label style="margin:0;display:flex;align-items:center;gap:4px">
+          <input id="chAccOnly" type="checkbox" style="width:auto"> 액세서리만</label>
+      </div>
+      <div id="chAcc" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px"></div>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="chAccFill">모든 프레임을 정지 포즈 값으로</button>
+        <button class="btn" id="chAccClear">좌표표 비우기 (그대로 겹치기)</button>
+      </div>
+      <div class="hint" id="chAccNote"></div>
+    </div>
+    <div id="animRow" style="display:flex;align-items:center;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <div id="animWrap" style="border:1px solid var(--line);border-radius:8px;background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/12px 12px">
+        <canvas id="animCv"></canvas>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#8a8172;margin-bottom:4px">애니메이션 시뮬레이션 <span id="animInfo"></span></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn" id="animBtn">⏸</button>
+          <input type="range" id="animFps" min="1" max="15" value="5" style="width:110px">
+          <span class="hint" id="animFpsLabel" style="margin:0">5 fps</span>
+        </div>
+        <div class="hint" id="animNote" style="max-width:230px"></div>
+      </div>
+    </div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)" id="simSection" hidden>
+      <h2 style="font-size:13px;margin:0 0 10px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px">
+        기기 시뮬레이션 <span id="simStatus" style="font-weight:400;text-transform:none">— 체형별 기준 캐릭터에 합성</span></h2>
+      <div id="simWrap" style="border:1px solid var(--line);border-radius:8px;display:inline-block;overflow:hidden">
+        <canvas id="simCv"></canvas>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <select id="simBody" style="width:auto">
+          <option value="0">Body type 1</option>
+          <option value="1">Body type 2</option>
+          <option value="2">Body type 3</option>
+          <option value="3">Body type 4</option>
+        </select>
+        <button class="btn" id="simBtn">⏸</button>
+        <label style="margin:0;display:flex;gap:4px;align-items:center;font-size:12px;color:var(--ink)">
+          <input type="checkbox" id="simGridChk" style="width:auto"> 그리드</label>
+        <span class="hint" id="simLabel" style="margin:0"></span>
+      </div>
+      <div id="accPosCard" hidden style="margin-top:12px">
+        <h2 style="font-size:13px;margin:0 0 6px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px">
+          액세서리 착용 좌표 <span style="font-weight:400;text-transform:none">— 선택한 body type의 14행 (중심 64,50)</span></h2>
+        <div id="accGrid" style="display:grid;grid-template-columns:repeat(5,auto);gap:4px;align-items:center;font-size:12px"></div>
+        <div class="hint">미리보기에서 액세서리를 <b>드래그</b>하면 1px 그리드에 스냅되어 좌표가 바뀝니다.
+          모든 body type을 채워야 어느 체형에서도 제자리에 붙습니다.</div>
+      </div>
+    </div>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+const CHARS=['Mametchi','Righttchi','Knighttchi','Tacttchi','Nandetchi','Kuchipatchi','Doyatchi','Gotchimotchi',
+'Shirimotchi','Charatchi','Monakatchi','Mogumogutchi','Spacytchi','Karakutchi','Acchitchi','Yumemitchi',
+'Kiraritchi','Himespetchi','Waltztchi','Amiamitchi','Memetchi','Chocomakatchi','Yukinkotchi','Hoshigirltchi',
+'Chochotchi','Harptchi','Patitchi','Kiramotchi','Furifuritchi','Amakutchi','Julietchi','Pekopekotchi'];
+let fileB64=null, doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
+
+const $=id=>document.getElementById(id);
+const toast=m=>{const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)};
+const curFrame=()=>flat[cur]?.frame;
+const isOpaque=()=>pk&&pk.opaque;
+// Transparency is decided by palette[0] alone, on every model and every
+// frame size: the transparent key is a pure green (G=255, R/B low).
+// Anything else — room wallpapers, photo-studio backdrops, the odd opaque
+// item — is real artwork and renders solid.  Verified across ~24k frames
+// of the iD / iD L / P's / 4U packs.
+const transGreen=f=>{const c=f&&f.palette&&f.palette[0];return c&&c[1]===255&&c[0]<128&&c[2]<128};
+const frOpaque=f=>!!f&&!transGreen(f);
+
+// ---- file open ----
+$('drop').onclick=()=>$('fileInput').click();
+$('openBtn').onclick=()=>$('fileInput').click();
+$('fileInput').onchange=e=>{if(e.target.files[0])load(e.target.files[0])};
+['dragover','dragleave','drop'].forEach(ev=>$('drop').addEventListener(ev,e=>{
+  e.preventDefault();$('drop').classList.toggle('over',ev==='dragover');
+  if(ev==='drop'&&e.dataTransfer.files[0])load(e.dataTransfer.files[0]);
+}));
+function arrayToB64(u8){let s='';const CH=32768;for(let i=0;i<u8.length;i+=CH)s+=String.fromCharCode.apply(null,u8.subarray(i,i+CH));return btoa(s)}
+async function load(f){
+  const buf=await f.arrayBuffer();
+  const r=await fetch('/api/parse',{method:'POST',body:buf});
+  const j=await r.json();
+  if(j.error){toast('파싱 실패: '+j.error);return}
+  fileB64=arrayToB64(new Uint8Array(buf));
+  doc=j; accBuiltFor=null;      // composite tiles must be rebuilt per file
+  newJpegB64=null; $('thumbNote').textContent=''; $('fname').textContent=f.name;
+  $('preview').src='data:image/jpeg;base64,'+j.jpeg_b64; $('preview').hidden=false;
+  $('drop').style.display='none'; $('main').style.display='grid'; $('saveBtn').hidden=false;
+  const editable=j.packets;
+  if(editable.length===0){toast('편집 가능한 패킷이 없습니다');return}
+  $('pkCard').hidden=editable.length<2;
+  $('pkCount').textContent=`— ${editable.length}개 (중첩 포함)`;
+  $('pkList').innerHTML='';
+  editable.forEach(p=>{
+    const tag=p.is_wardrobe?'캐릭터 옷장'
+      :(p.is_item?p.dest_label:(p.kind+' · 프로그램/정의'));
+    const n=(p.banks||[]).reduce((a,b)=>a+b.frames.length,0);
+    const bits=[tag];
+    if(n)bits.push(`스프라이트 ${n}`);
+    if(p.texts&&p.texts.length)bits.push(`대사 ${p.texts.length}`);
+    const b=document.createElement('button');
+    b.className='pkrow'; b.dataset.path=p.path.join(',');
+    b.style.marginLeft=((p.path.length-1)*12)+'px';
+    b.innerHTML=`<span class="pkname">${(p.path.length>1?'↳ ':'')+(p.name||p.unicode_name||p.ansi_id)}</span>`+
+                `<span class="pksub">${bits.join(' · ')}</span>`;
+    b.onclick=()=>selectPacket(p.path);
+    $('pkList').appendChild(b);
+  });
+  selectPacket(editable[0].path);
+}
+
+// ---- packet form ----
+function selectPacket(path){
+  pk=doc.packets.find(p=>p.path.join(',')===path.join(','));
+  document.querySelectorAll('.pkrow').forEach(el=>
+    el.classList.toggle('on', el.dataset.path===path.join(',')));
+  const item=pk.is_item;
+  $('fName').value=pk.name; $('fSerial').value=pk.serial;
+  const ex=pk.char_extra;
+  $('name2Box').hidden=!ex;
+  $('nameNote').hidden=!(ex||pk.is_wardrobe);
+  if(ex){
+    $('fName2').value=ex.name2||''; $('fName2').maxLength=pk.name_slots||9;
+    $('name2Label').textContent=`Name 2 (프로필 표시, 최대 ${pk.name_slots||9}자)`;
+    $('nameNote').innerHTML='<b>Name 1</b>은 기기에서 이름을 붙일 때, <b>Name 2</b>는 프로필에 표시됩니다. '
+      +'옷장 패킷(↳)의 이름은 <b>또 다른 세 번째 필드</b>라 여기서 바꿔도 따라오지 않습니다 — '
+      +'옷장 패킷을 직접 선택해서 고치세요.';
+  }else if(pk.is_wardrobe){
+    $('nameNote').innerHTML='이건 캐릭터의 <b>옷장 패킷 이름</b>입니다. 캐릭터 본체의 Name 1/2와 별개 필드라 '
+      +'커스텀 캐릭터를 만들 때 여기까지 같이 고쳐야 합니다.';
+  }
+  $('serialLabel').textContent = pk.packet_class==='A' ? '캐릭터 슬롯 번호'
+    : (pk.is_wardrobe ? '카탈로그 번호 (파일 번호)' : '시리얼');
+  const verified=item&&pk.stats_verified;
+  const F=pk.fields||[];
+  const on=f=>verified&&F.includes(f);
+  // every setting stays on screen; the ones this model/category never uses
+  // are greyed out so the layout doesn't jump and you can still see them
+  const gate=(id,ok,why)=>{
+    const el=$(id); el.classList.toggle('off',!ok);
+    const lab=el.querySelector('label'); if(!lab)return;
+    let tag=lab.querySelector('.offtag');
+    if(!ok){ if(!tag){tag=document.createElement('span');tag.className='offtag';lab.appendChild(tag)}
+      tag.textContent='· '+(why||'미사용'); }
+    else if(tag)tag.remove();
+  };
+  gate('priceBox', on('price'));
+  gate('hungerBox', on('hunger'), '음식 전용');
+  gate('friendBox', on('friendship'), pk.model==='iD'&&pk.kind==='as'?'iD 장난감 미사용':'해당 없음');
+  gate('destBox', on('price'));
+  gate('animBox', on('anim'), '장난감 전용');
+  gate('statCard', on('stats'), pk.model==='iD'||pk.model==='iDL'?'이 기종에 없음':'해당 없음');
+  gate('likesCard', on('likes'), '해당 없음');
+  $('animBox').hidden=false;
+  $('statCard').style.display=''; $('likesCard').style.display='';
+  $('priceBox').style.display=''; $('hungerBox').style.display='';
+  $('friendBox').style.display=''; $('destBox').style.display='';
+  $('modelBadge').textContent=pk.model||'';
+  $('nameLabel').textContent=`이름 (기기 표시, 최대 ${pk.name_slots||9}자)`;
+  $('fName').maxLength=pk.name_slots||9;
+  $('wardrobeNote').hidden=!pk.is_wardrobe;
+  // destination list is per model (iD keeps a per-item index byte)
+  const opts=pk.dest_options||[];
+  $('fDest').innerHTML=opts.map(o=>`<option value="${o.code}">${o.label}</option>`).join('');
+  const destOpt=opts.find(o=>o.label===pk.dest_label);
+  if(destOpt)$('fDest').value=destOpt.code;
+  $('unverifiedNote').hidden=!!destOpt||!item;
+  if(item)$('fPrice').value=pk.price;
+  if(verified){
+    $('fHunger').value=pk.hunger; $('fFriend').value=pk.friendship;
+    $('fAnimA').value=pk.anim_a; $('fAnimB').value=pk.anim_b;
+    const arr=[pk.stats.intelligence,pk.stats.style,pk.stats.charisma,pk.stats.gourmet,pk.stats.strength];
+    for(let i=0;i<5;i++)$('s'+i).value=arr[i];
+    const lk=$('likes'); lk.innerHTML='';
+    const N=pk.likes_slots||32, labels=pk.likes_labels||[], named=pk.model==='4U';
+    const order=[];
+    if(named){for(let r=0;r<8;r++)for(let c=0;c<4;c++)order.push(c*8+r);}
+    else for(let i=0;i<N;i++)order.push(i);
+    order.forEach(id=>{
+      const b=document.createElement('button');
+      b.textContent=labels[id]||(id+1);
+      b.title=labels[id]?`${id+1} · ${labels[id]}`:`슬롯 ${id+1}`;
+      b.className='l'+pk.likes[id];
+      b.onclick=()=>{pk.likes[id]=(pk.likes[id]+1)%3;b.className='l'+pk.likes[id]};
+      lk.appendChild(b);
+    });
+    const roster=pk.likes_roster;
+    $('likesNote').hidden=named;
+    $('likesNote').innerHTML=roster
+      ? `이 기종은 캐릭터 <b>${N}명</b>입니다. 슬롯↔캐릭터 대응은 아직 일부만 확인돼 번호로 표시합니다.`
+        +`<br>수록 캐릭터: ${roster.join(', ')}`
+      : '이 기종은 슬롯↔캐릭터 대응이 아직 확인되지 않아 번호로 표시합니다.';
+  }
+  // iD device/firmware version
+  $('verCard').hidden=!pk.version;
+  if(pk.version)renderVersion();
+  // cross-model conversion
+  $('cvCard').hidden=!pk.convert;
+  if(pk.convert)renderConvert();
+  // character stat block (download characters only)
+  $('charCard').hidden=!pk.char_stats;
+  if(pk.char_stats)renderCharStats();
+  // dialogue / embedded text runs
+  $('textCard').hidden=!(pk.texts&&pk.texts.length);
+  if(pk.texts){
+    $('texts').innerHTML='';
+    pk.texts.forEach((t,i)=>{
+      const l=document.createElement('label');
+      l.textContent=`${t.label||('@0x'+t.offset.toString(16))} · 최대 ${t.chars}자`+
+        (t.parts&&t.parts.length>1?` (${t.parts.length}줄 합침)`:'');
+      const inp=document.createElement('input');
+      inp.value=t.text.replace(/　+$/,''); inp.maxLength=t.chars; inp.dataset.i=i;
+      inp.oninput=()=>{pk.texts[i].text=inp.value;
+        l.textContent=`${t.label} · ${inp.value.length}/${t.chars}자`+
+          (t.parts&&t.parts.length>1?` (${t.parts.length}줄 합침)`:'')};
+      $('texts').append(l,inp);
+    });
+  }
+  // flatten banks -> frames (loose records share one palette)
+  flat=[];
+  (pk.banks||[]).forEach((bank,bi)=>{
+    if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
+    bank.frames.forEach((fr,fi)=>flat.push({bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
+  });
+  $('spriteCard').style.display=flat.length?'':'none';
+  $('metaCard').style.display=(item||pk.name)?'':'none';
+  $('emptyNote').hidden=!(!flat.length&&!(pk.texts&&pk.texts.length)&&!item);
+  $('transHint').textContent=isOpaque()?'배경(방)은 불투명 — 팔레트 0번도 일반 색.':'팔레트 0번(T)은 투명색.';
+  $('canvasWrap').classList.toggle('opaque',isOpaque());
+  $('bankInfo').textContent=(pk.banks&&pk.banks.length>1)?`— 뱅크 ${pk.banks.length}개 발견 (프로그램 내장 스프라이트 포함)`:'';
+  if(flat.length){cur=0;animIdx=0;undoStack=[];renderTabs();renderFrame();animStart()}
+  else {animStop();$('stripRow').hidden=true;$('animRow').style.display='none'}
+  simStep=0; renderAccGrid();
+  drawSim(); if(simSupported())simStart(); else simStop();
+}
+
+// ---- sprite editor ----
+function renderTabs(){
+  const el=$('frameTabs'); el.innerHTML='';
+  let lastBank=-1;
+  flat.forEach((e,i)=>{
+    if(e.bank!==lastBank&&pk.banks.length>1){
+      const s=document.createElement('span');s.className='bank-label';
+      s.textContent=`뱅크@0x${e.offset.toString(16)}`;el.appendChild(s);lastBank=e.bank;
+    }
+    const b=document.createElement('button');
+    b.textContent=`${e.idx+1} (${e.frame.w}×${e.frame.h})`;
+    b.className=i===cur?'on':'';
+    b.onclick=()=>{cur=i;undoStack=[];renderTabs();renderFrame()};
+    el.appendChild(b);
+  });
+}
+function scaleFor(f){return Math.max(3,Math.min(16,Math.floor(560/Math.max(f.w,f.h))))}
+let showGrid=true;
+$('gridChk').onchange=()=>{showGrid=$('gridChk').checked;renderFrame()};
+function renderFrame(){
+  const f=curFrame(), sc=scaleFor(f), cv=$('cv');
+  cv.width=f.w*sc; cv.height=f.h*sc;
+  const g=cv.getContext('2d');
+  g.clearRect(0,0,cv.width,cv.height);
+  const opaque=frOpaque(f);
+  $('canvasWrap').classList.toggle('opaque',opaque);
+  $('transHint').textContent=opaque?'이 스프라이트는 불투명(배경) — 팔레트 0번도 일반 색.':'팔레트 0번(T)은 투명색.';
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!opaque)continue;
+    const[cr,cg,cb]=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${cr},${cg},${cb})`;g.fillRect(x*sc,y*sc,sc,sc);
+  }
+  if(showGrid&&sc>=4){
+    g.strokeStyle='rgba(0,0,0,.18)'; g.lineWidth=1;
+    for(let x=0;x<=f.w;x++){g.beginPath();g.moveTo(x*sc+.5,0);g.lineTo(x*sc+.5,f.h*sc);g.stroke()}
+    for(let y=0;y<=f.h;y++){g.beginPath();g.moveTo(0,y*sc+.5);g.lineTo(f.w*sc,y*sc+.5);g.stroke()}
+  }
+  renderPal();
+}
+function paletteUse(f){                 // how many pixels use each index
+  const n=new Array(f.palette.length).fill(0);
+  f.pixels.forEach(v=>{if(v<n.length)n[v]++});
+  return n;
+}
+function snap565(rgb){                  // quantise to what BGR565 can store
+  const [r,gg,b]=rgb, R=r>>3, G=gg>>2, B=b>>3;
+  return [R<<3|R>>2, G<<2|G>>4, B<<3|B>>2];
+}
+function renderPal(){
+  const f=curFrame(), el=$('pal'); el.innerHTML='';
+  const use=paletteUse(f);
+  f.palette.forEach((c,i)=>{
+    const d=document.createElement('div');
+    d.className='sw'+(i===palIdx?' on':'')+(i===0&&!frOpaque(f)?' t':'');
+    d.style.background=`rgb(${c[0]},${c[1]},${c[2]})`;
+    const used=use[i];
+    d.title=`인덱스 ${i} · 사용 ${used}px\n클릭: 선택 · 더블클릭: 색 변경`+(used?'':'\n우클릭: 삭제(미사용)');
+    if(!used)d.style.borderStyle='dashed';
+    d.onclick=()=>{palIdx=i;renderPal()};
+    d.ondblclick=()=>{
+      const inp=document.createElement('input');inp.type='color';
+      inp.value='#'+c.map(v=>v.toString(16).padStart(2,'0')).join('');
+      inp.oninput=()=>{
+        const rgb=[1,3,5].map(k=>parseInt(inp.value.substr(k,2),16));
+        f.palette[i]=snap565(rgb);      // device stores BGR565
+        renderFrame();
+      };
+      inp.click();
+    };
+    d.oncontextmenu=e=>{
+      e.preventDefault();
+      if(used){toast(`인덱스 ${i}은 ${used}픽셀에서 사용 중이라 삭제할 수 없습니다`);return}
+      if(f.palette.length<=1)return;
+      f.palette.splice(i,1);
+      f.pixels=f.pixels.map(v=>v>i?v-1:v);
+      if(palIdx>=f.palette.length)palIdx=f.palette.length-1;
+      renderFrame();
+    };
+    el.appendChild(d);
+  });
+  if(f.palette.length<16&&!flat[cur].loose){
+    const add=document.createElement('div');add.className='sw';add.textContent='+';
+    add.style.cssText='display:grid;place-items:center;color:#999';
+    add.onclick=()=>{f.palette.push([0,0,0]);palIdx=f.palette.length-1;renderFrame()};
+    el.appendChild(add);
+  }
+}
+function pixAt(e){
+  const f=curFrame(), sc=scaleFor(f), r=$('cv').getBoundingClientRect();
+  const x=Math.floor((e.clientX-r.left)/sc), y=Math.floor((e.clientY-r.top)/sc);
+  return (x>=0&&y>=0&&x<f.w&&y<f.h)?{x,y,f}:null;
+}
+$('cv').addEventListener('contextmenu',e=>{
+  e.preventDefault();const p=pixAt(e);if(p){palIdx=p.f.pixels[p.y*p.f.w+p.x];renderPal()}
+});
+$('cv').addEventListener('mousedown',e=>{
+  if(e.button!==0)return;const p=pixAt(e);if(!p)return;
+  undoStack.push(p.f.pixels.slice());if(undoStack.length>50)undoStack.shift();
+  drawing=true;paint(e);
+});
+window.addEventListener('mouseup',()=>drawing=false);
+$('cv').addEventListener('mousemove',e=>{if(drawing)paint(e)});
+function paint(e){
+  const p=pixAt(e);if(!p)return;
+  p.f.pixels[p.y*p.f.w+p.x]=palIdx;
+  const sc=scaleFor(p.f),g=$('cv').getContext('2d');
+  if(palIdx===0&&!frOpaque(p.f))g.clearRect(p.x*sc,p.y*sc,sc,sc);
+  else{const[cr,cg,cb]=p.f.palette[palIdx];g.fillStyle=`rgb(${cr},${cg},${cb})`;g.fillRect(p.x*sc,p.y*sc,sc,sc)}
+  if(!animTimer)drawAnim();
+}
+window.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='z'&&undoStack.length){
+    e.preventDefault();curFrame().pixels=undoStack.pop();renderFrame();
+  }
+});
+
+// ---- animation simulation (loops frames of the current bank) ----
+let animTimer=null, animIdx=0;
+const bankFrames=()=>flat.length?pk.banks[flat[cur].bank].frames:[];
+// the frame-cycling preview only makes sense where the bank really is an
+// animation: characters and food.  Clothes/accessories are per-pose pieces,
+// so those get a composite strip on the body instead.
+const ANIM_KINDS=['gh','oy'];
+function animAllowed(){
+  if(!pk)return false;
+  if(pk.is_wardrobe)return true;                 // character pose bank
+  return ANIM_KINDS.includes(pk.kind);
+}
+function drawAnim(){
+  const frames=bankFrames();
+  const strip=!!(pk&&pk.banks&&pk.banks.length&&!pk.is_wardrobe
+                 &&['fk','ac'].includes(pk.kind)&&chara);
+  $('stripRow').hidden=!strip;
+  if(strip)drawStrip();
+  drawCharAcc();
+  $('animRow').style.display=(frames.length&&animAllowed())?'':'none';
+  if(!frames.length||!animAllowed()){animStop();return}
+  animIdx%=frames.length;
+  const f=frames[animIdx];
+  const maxW=Math.max(...frames.map(x=>x.w)), maxH=Math.max(...frames.map(x=>x.h));
+  const sc=Math.max(2,Math.min(8,Math.floor(150/Math.max(maxW,maxH))));
+  const cv=$('animCv'); cv.width=maxW*sc; cv.height=maxH*sc;
+  const g=cv.getContext('2d'); g.clearRect(0,0,cv.width,cv.height);
+  if(frOpaque(f)){g.fillStyle='#fff';g.fillRect(0,0,cv.width,cv.height)}
+  const ox=(maxW-f.w)>>1, oy=maxH-f.h; // bottom-aligned like on device
+  const opaque=frOpaque(f);
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!opaque)continue;
+    const c=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    g.fillRect((ox+x)*sc,(oy+y)*sc,sc,sc);
+  }
+  $('animInfo').textContent=`— 프레임 ${animIdx+1}/${frames.length}`;
+  $('animNote').textContent=flat[cur].loose&&frames.length>1
+    ?'프로그램 내장 스트립: 실제 재생 순서'
+    :(frames.length>1?'뱅크 프레임 순환 재생 (실제 순서·타이밍은 기기 내장 동작 ID를 따름)':'단일 프레임');
+}
+// ---- character + built-in accessory ----------------------------------
+// The wardrobe bank's frames 23-26 are the character's own accessory, and the
+// parent packet carries wear coordinates for them: 112 bytes right at the end,
+// *after* the nested wardrobe packet (4 body types x 14 frames x x/y, the same
+// format accessory items use).  17 of 69 4U characters fill it in; the rest
+// leave it zero, and for those a plain top-left overlay is correct.  Stored
+// values are the accessory's centre on the device stage, where the pose is
+// centred at (64, 50).
+//
+// All 14 table rows drive a tile: rows 0-10 are poses 1-11, row 11 is pose 13,
+// and rows 12-13 are the two 44x52 poses (14, 15).
+const CHAR_ACC=[[[1,2,3,4,5,6,11],23],[[7,8,9,10],24],[[13],25],[[14,15],26]];
+const CHAR_ACC_ROW={1:0,2:1,3:2,4:3,5:4,6:5,7:6,8:7,9:8,10:9,11:10,13:11,14:12,15:13};
+const CHAR_ACC_ORDER=[1,2,3,4,5,6,7,8,9,10,11,13,14,15];
+const accOf=p=>(CHAR_ACC.find(([ps])=>ps.includes(p))||[,0])[1];
+
+// the wear table lives on the *parent* character packet, not the wardrobe
+function charParent(){
+  if(!pk||!doc||!pk.path.length)return null;
+  return doc.packets.find(q=>q.path.length===pk.path.length-1
+    && q.path.every((v,i)=>v===pk.path[i])) || null;
+}
+// the 112 bytes are always physically present; an all-zero table just means
+// "no offset", so editing only ever writes values -- never resizes anything
+function charAccTable(create){
+  const p=charParent(); if(!p||!p.char_extra)return null;
+  if(!p.char_extra.acc_pos){
+    if(!create)return null;
+    // seed from what is already on screen, so creating a table never makes
+    // the composite jump: the plain overlay is (64,42) for the 30x20 frames
+    // and (64,39) for the 44x30 one
+    const seed=CHAR_ACC_ORDER.map(pose=>{
+      const t=accTiles.find(x=>x.pose===pose);
+      return t?defaultXY(t):[64,42];
+    });
+    p.char_extra.acc_pos=[0,1,2,3].map(()=>seed.map(xy=>[xy[0],xy[1]]));
+  }
+  return p.char_extra.acc_pos;
+}
+// the (x,y) that reproduces a plain top-left overlay for this pose/accessory
+function defaultXY(t){
+  return [64-(t.cf.w>>1)+(t.af.w>>1), 50-(t.cf.h>>1)+(t.af.h>>1)];
+}
+// stage anchor: pose centred at (64,50); stored (x,y) is the accessory centre
+function accDelta(cf,af,pose,table){
+  if(!table)return[0,0];
+  const r=CHAR_ACC_ROW[pose]; if(r==null)return[0,0];
+  const [x,y]=table[0][r];      // one body type: row 0 is authoritative
+  return [(x-(af.w>>1))-(64-(cf.w>>1)), (y-(af.h>>1))-(50-(cf.h>>1))];
+}
+
+let accTiles=[], accBuiltFor=null;
+const TILE_S=3;
+function paintAccTile(t){
+  const table=charAccTable(false);
+  const dx=+$('chAccDx').value||0, dy=+$('chAccDy').value||0;
+  const g=t.cv.getContext('2d'); g.clearRect(0,0,t.cv.width,t.cv.height);
+  const put=(f,x,y)=>{for(let yy=0;yy<f.h;yy++)for(let xx=0;xx<f.w;xx++){
+    const v=f.pixels[yy*f.w+xx]; if(v===0&&!frOpaque(f))continue;
+    const c=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    g.fillRect((x+xx)*TILE_S,(y+yy)*TILE_S,TILE_S,TILE_S);}};
+  const cx=(t.W-t.cf.w)>>1, cy=2;
+  if(!$('chAccOnly').checked)put(t.cf,cx,cy);
+  const [ax,ay]=accDelta(t.cf,t.af,t.pose,table);
+  put(t.af,cx+ax+dx,cy+ay+dy);
+}
+function syncAccInputs(){
+  const table=charAccTable(false);
+  accTiles.forEach(t=>{
+    // with no table the fields still show the effective values (greyed), so
+    // typing in one only moves that pose instead of shifting everything
+    const [x,y]=table?table[0][t.row]:defaultXY(t);
+    t.xi.classList.toggle('off',!table); t.yi.classList.toggle('off',!table);
+    if(document.activeElement!==t.xi)t.xi.value=x;
+    if(document.activeElement!==t.yi)t.yi.value=y;
+  });
+}
+function buildCharAcc(){
+  const el=$('chAcc'); el.innerHTML=''; accTiles=[];
+  const frames=pk.banks[flat.length?flat[cur].bank:0].frames;
+  CHAR_ACC_ORDER.forEach(pose=>{
+    const accNo=accOf(pose), cf=frames[pose-1], af=frames[accNo-1];
+    if(!cf||!af)return;
+    const row=CHAR_ACC_ROW[pose];
+    const W=Math.max(cf.w,af.w)+4, H=cf.h+4;
+    const cv=document.createElement('canvas');
+    cv.width=W*TILE_S; cv.height=H*TILE_S;
+    cv.style.cssText='image-rendering:pixelated;border-radius:6px;background:#f3f6f1;cursor:grab;display:block;margin:0 auto';
+    cv.title=`캐릭터 ${pose} + 액세서리 ${accNo}`;
+    const box=document.createElement('div');
+    box.style.cssText='border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center;background:#fff';
+    const lab=document.createElement('div');
+    lab.style.cssText='font-size:11px;color:#8a8172;margin:4px 0 3px';
+    lab.textContent=`포즈 ${pose} · 액 ${accNo}`;
+    const mk=k=>{const i=document.createElement('input');
+      i.type='number'; i.min=0; i.max=255;
+      i.style.cssText='width:48px;padding:1px 3px;font-size:11px;text-align:center';
+      i.oninput=()=>{const t2=charAccTable(true); if(!t2)return;
+        const v=Math.max(0,Math.min(255,+i.value||0));
+        t2.forEach(r=>r[row][k]=v);       // one body type: keep all four in step
+        paintAccTile(tile);};
+      return i};
+    const xi=mk(0), yi=mk(1);
+    const row2=document.createElement('div');
+    row2.style.cssText='display:flex;gap:3px;justify-content:center;align-items:center;font-size:10px;color:#8a8172';
+    row2.append('X',xi,'Y',yi);
+    box.append(cv,lab,row2); el.appendChild(box);
+    const tile={cv,pose,accNo,cf,af,row,W,xi,yi};
+    cv.onmousedown=ev=>startCharAccDrag(ev,tile);
+    accTiles.push(tile);
+  });
+}
+function drawCharAcc(){
+  const on=!!(pk&&pk.is_wardrobe&&pk.banks&&pk.banks.length);
+  $('chAccRow').hidden=!on;
+  if(!on){accBuiltFor=null;return}
+  const key=pk.path.join(',')+'/'+(flat.length?flat[cur].bank:0);
+  if(accBuiltFor!==key){buildCharAcc();accBuiltFor=key}
+  accTiles.forEach(paintAccTile);
+  syncAccInputs();
+  const table=charAccTable(false);
+  $('chAccInfo').textContent=`— ${accTiles.length}쌍`;
+  $('chAccNote').innerHTML='스프라이트 <b>23~26</b>은 이 캐릭터 전용 액세서리입니다 '
+    +'(1~6·11→23, 7~10→24, 13→25, 14·15→26). 타일을 <b>드래그</b>하거나 아래 X·Y를 고치면 '
+    +'그 포즈의 착용 좌표가 바뀝니다.<br>'
+    +(table
+      ? `<b>착용 좌표표 있음</b> — 부모 패킷 끝 112바이트(4체형×14프레임). 정지 포즈 (${table[0][0][0]}, ${table[0][0][1]}).`
+      : '이 캐릭터는 좌표표가 비어 있어(전부 0) 그대로 겹칩니다. 값을 넣으면 표가 생성됩니다.');
+}
+$('chAccFill').onclick=()=>{
+  const t=charAccTable(true); if(!t)return;
+  const [x,y]=t[0][0];
+  t.forEach(r=>r.forEach(xy=>{xy[0]=x;xy[1]=y}));
+  drawCharAcc();
+  toast(`14행 전부 (${x}, ${y}) 로 맞췄습니다`);
+};
+$('chAccClear').onclick=()=>{
+  const p=charParent(); if(!p||!p.char_extra)return;
+  p.char_extra.acc_pos=[0,1,2,3].map(()=>CHAR_ACC_ORDER.map(()=>[0,0]));
+  drawCharAcc();
+  toast('좌표표를 비웠습니다 — 저장하면 그대로 겹치기로 돌아갑니다');
+};
+$('chAccDx').oninput=drawCharAcc; $('chAccDy').oninput=drawCharAcc;
+$('chAccOnly').onchange=()=>accTiles.forEach(paintAccTile);
+
+// drag a tile's accessory: 1px snap, writes straight into the wear table
+function startCharAccDrag(ev,tile){
+  const t=charAccTable(true); if(!t)return;
+  ev.preventDefault();
+  const r=tile.cv.getBoundingClientRect(), sx=tile.cv.width/r.width;
+  const x0=ev.clientX, y0=ev.clientY;
+  const base=[t[0][tile.row][0],t[0][tile.row][1]];
+  tile.cv.style.cursor='grabbing';
+  const move=e=>{
+    // CSS px -> canvas px -> sprite px, snapped to the 1px grid
+    const dx=Math.round((e.clientX-x0)*sx/TILE_S);
+    const dy=Math.round((e.clientY-y0)*sx/TILE_S);
+    t.forEach(rr=>{rr[tile.row][0]=Math.max(0,Math.min(255,base[0]+dx));
+                   rr[tile.row][1]=Math.max(0,Math.min(255,base[1]+dy))});
+    paintAccTile(tile); syncAccInputs();
+  };
+  const up=()=>{tile.cv.style.cursor='grab';
+    window.removeEventListener('mousemove',move);
+    window.removeEventListener('mouseup',up)};
+  window.addEventListener('mousemove',move);
+  window.addEventListener('mouseup',up);
+}
+
+function drawStrip(){
+  const el=$('strip'); el.innerHTML='';
+  const steps=simScenario();
+  $('stripInfo').textContent=`— Body type ${bodyType+1} · ${steps.length}포즈`;
+  steps.forEach(st=>{
+    const S=3, cv=document.createElement('canvas');
+    cv.width=44*S; cv.height=52*S;
+    cv.style.cssText='image-rendering:pixelated;border:1px solid var(--line);border-radius:6px;background:#f3f6f1;flex:0 0 auto';
+    cv.title=`프레임 ${st.label}`;
+    const g=cv.getContext('2d');
+    const ox=(44-st.cf.w)>>1, oy=(52-st.cf.h)>>1;
+    const put=(f,x,y)=>{for(let yy=0;yy<f.h;yy++)for(let xx=0;xx<f.w;xx++){
+      const v=f.pixels[yy*f.w+xx]; if(v===0&&!frOpaque(f))continue;
+      const c=f.palette[v]||[255,0,255];
+      g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+      g.fillRect((x+xx)*S,(y+yy)*S,S,S);}};
+    put(st.cf,ox,oy);
+    st.layers.forEach(l=>put(l.f,ox+(l.x-st.cx),oy+(l.y-st.cy)));
+    el.appendChild(cv);
+  });
+}
+function animStart(){
+  animStop();
+  drawAnim();                    // sets row visibility + composite strip
+  if(!animAllowed())return;
+  animTimer=setInterval(()=>{animIdx++;drawAnim()},1000/+$('animFps').value);
+  $('animBtn').textContent='⏸';
+}
+function animStop(){if(animTimer){clearInterval(animTimer);animTimer=null}$('animBtn').textContent='▶'}
+$('animBtn').onclick=()=>animTimer?animStop():animStart();
+$('animFps').oninput=()=>{$('animFpsLabel').textContent=$('animFps').value+' fps';if(animTimer)animStart()};
+
+// ---- thumbnail: regenerate the file's JPEG preview from the current frame
+let newJpegB64=null;
+$('thumbBtn').onclick=()=>{
+  const f=curFrame(); if(!f)return;
+  const S=Math.max(1,Math.floor(96/Math.max(f.w,f.h)));
+  const c=document.createElement('canvas');
+  c.width=f.w*S; c.height=f.h*S;
+  const g=c.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height);   // JPEG has no alpha
+  const opaque=frOpaque(f);
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!opaque)continue;
+    const col=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;
+    g.fillRect(x*S,y*S,S,S);
+  }
+  const url=c.toDataURL('image/jpeg',0.92);
+  newJpegB64=url.split(',')[1];
+  $('preview').src=url;
+  $('thumbNote').textContent=`프레임 ${flat[cur].idx+1} 적용됨 — 저장 시 반영`;
+};
+
+// ---- BMP import / export (4bpp indexed, matches the CLI's format) ----
+function frameToBMP(f){
+  const rowsz=((f.w*4+31)>>5)*4, size=54+64+rowsz*f.h;
+  const b=new Uint8Array(size), dv=new DataView(b.buffer);
+  b[0]=0x42;b[1]=0x4D; dv.setUint32(2,size,true); dv.setUint32(10,54+64,true);
+  dv.setUint32(14,40,true); dv.setInt32(18,f.w,true); dv.setInt32(22,f.h,true);
+  dv.setUint16(26,1,true); dv.setUint16(28,4,true); dv.setUint32(34,rowsz*f.h,true);
+  dv.setUint32(46,16,true);
+  for(let i=0;i<16;i++){const c=f.palette[i]||[0,0,0];
+    b[54+4*i]=c[2];b[54+4*i+1]=c[1];b[54+4*i+2]=c[0];}
+  for(let y=0;y<f.h;y++){
+    const row=54+64+(f.h-1-y)*rowsz;
+    for(let x=0;x<f.w;x++){const v=f.pixels[y*f.w+x]&0xF;
+      if(x%2===0)b[row+(x>>1)]|=v<<4; else b[row+(x>>1)]|=v;}
+  }
+  return b;
+}
+function bmpToFrame(buf){
+  const b=new Uint8Array(buf), dv=new DataView(buf);
+  const off=dv.getUint32(10,true), w=dv.getInt32(18,true), h=dv.getInt32(22,true);
+  const bpp=dv.getUint16(28,true);
+  if(bpp!==4)throw new Error('4bpp 인덱스 BMP만 가져올 수 있습니다');
+  const ncol=dv.getUint32(46,true)||16, pal=[];
+  for(let i=0;i<ncol;i++)pal.push([b[54+4*i+2],b[54+4*i+1],b[54+4*i]]);
+  const rowsz=((w*bpp+31)>>5)*4, px=[];
+  for(let y=h-1;y>=0;y--){const row=off+y*rowsz;
+    for(let x=0;x<w;x++)px.push(x%2===0?(b[row+(x>>1)]>>4):(b[row+(x>>1)]&0xF));}
+  return {w,h,palette:pal,pixels:px};
+}
+$('expBtn').onclick=()=>{
+  const f=curFrame(); if(!f)return;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([frameToBMP(f)],{type:'image/bmp'}));
+  a.download=`${(pk.name||'sprite')}_${flat[cur].idx+1}.bmp`; a.click();
+};
+$('impBtn').onclick=()=>$('bmpInput').click();
+$('bmpInput').onchange=async e=>{
+  const file=e.target.files[0]; if(!file)return;
+  e.target.value='';
+  try{
+    const src=bmpToFrame(await file.arrayBuffer()), f=curFrame();
+    if(src.w!==f.w||src.h!==f.h){
+      toast(`크기가 다릅니다: ${src.w}×${src.h} → ${f.w}×${f.h} 필요`);return;
+    }
+    undoStack.push(f.pixels.slice());
+    f.pixels=src.pixels;
+    f.palette=src.palette.slice(0,Math.max(...src.pixels)+1).map(snap565);
+    renderFrame(); drawSim();
+    toast('BMP 가져오기 완료');
+  }catch(err){toast('가져오기 실패: '+err.message)}
+};
+
+// ---- device simulation (composite: body-type sprites + item) --------
+// clothes piece per pose within a 7-piece set; a shop clothes item holds
+// 4 sets back to back (one per body type)
+const FK_MAP={0:0,3:0, 2:1,4:1,5:1,10:1, 6:2,7:2,12:2, 8:3, 9:4, 13:5, 14:6};
+const AC_PRIMARY={0:0,2:0,3:0,4:0,5:0,10:0, 6:1,7:1,8:1,9:1, 12:2, 13:3,14:3};
+const PIECES_PER_SET=7;
+let chara=null, simTimer=null, simStep=0, bodyType=0;
+// The wear-coordinate space puts the character sprite's CENTRE at (64, 50)
+// — that is what acposeditor means by "centre position". Bottom-aligning
+// instead skews the accessory on the tall 44x52 poses. Stage is 4px taller
+// than the 128x72 room so those poses aren't clipped.
+const SIMS=4, STAGE_W=128, STAGE_H=76, ANCHOR_X=64, ANCHOR_Y=50, FLOOR_Y=68;
+
+fetch('/api/charasprites').then(r=>r.ok?r.json():null).then(j=>{chara=j;drawSim()}).catch(()=>{});
+
+function simSupported(){
+  if(!pk||!pk.banks||!pk.banks[0]||!chara)return false;
+  return !!((pk.kind==='ac'&&pk.acc_pos)||(pk.kind==='fk'&&!pk.is_wardrobe
+         &&pk.banks[0].frames.length>=PIECES_PER_SET));
+}
+function clothesXY(cf,cx,cy,f){   // centred horizontally, bottom aligned
+  return {x:cx+((cf.w-f.w)>>1), y:cy+cf.h-f.h};
+}
+function simScenario(){
+  const it=pk.banks[0].frames;
+  const rows=pk.acc_rows||[0,1,2,3,4,5,6,7,8,9,10,12,14,15];
+  const LABELS=[0,1,2,3,4,5,6,7,8,9,10,12,13,14];   // row -> BMP frame label
+  const POSES=[0,2,6,8,9,10,12,14];
+  return POSES.map(p=>{
+    const row=rows.indexOf(p);
+    const label=row>=0?LABELS[row]:0;
+    const cf=(chara[bodyType]||[])[label]||chara[0][0];
+    const cx=ANCHOR_X-(cf.w>>1), cy=ANCHOR_Y-(cf.h>>1);
+    const layers=[];
+    if(pk.kind==='fk'){
+      const piece=FK_MAP[p];
+      const f=piece!==undefined?it[bodyType*PIECES_PER_SET+piece]:null;
+      if(f&&f.w>2)layers.push({f,...clothesXY(cf,cx,cy,f)});
+    }else if(pk.kind==='ac'){
+      const pri=AC_PRIMARY[p], xy=(row>=0&&pk.acc_pos)?pk.acc_pos[bodyType][row]:null;
+      if(pri!==undefined&&it[pri]&&xy)
+        layers.push({f:it[pri], x:xy[0]-(it[pri].w>>1), y:xy[1]-(it[pri].h>>1)});
+    }
+    return {pose:p, row, label, cf, cx, cy, layers};
+  });
+}
+function blit(g,f,px,py,opaqueAll){
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!opaqueAll)continue;
+    const c=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    g.fillRect((px+x)*SIMS,(py+y)*SIMS,SIMS,SIMS);
+  }
+}
+function drawSim(){
+  $('simSection').hidden=!simSupported();
+  $('accPosCard').hidden=!(pk&&pk.acc_pos);
+  if(!simSupported())return;
+  const cv=$('simCv'); cv.width=STAGE_W*SIMS; cv.height=STAGE_H*SIMS;
+  const g=cv.getContext('2d');
+  const steps=simScenario();
+  const st=steps[simStep%steps.length];
+  g.fillStyle='#e9f3e4';g.fillRect(0,0,cv.width,cv.height);
+  g.fillStyle='#d5e6cd';g.fillRect(0,FLOOR_Y*SIMS,cv.width,(STAGE_H-FLOOR_Y)*SIMS);
+  blit(g,st.cf,st.cx,st.cy,false);
+  st.layers.forEach(l=>blit(g,l.f,l.x,l.y,false));
+  if(simGrid){
+    g.strokeStyle='rgba(0,0,0,.12)'; g.lineWidth=1;
+    for(let x=0;x<=STAGE_W;x+=4){g.beginPath();g.moveTo(x*SIMS+.5,0);g.lineTo(x*SIMS+.5,STAGE_H*SIMS);g.stroke()}
+    for(let y=0;y<=STAGE_H;y+=4){g.beginPath();g.moveTo(0,y*SIMS+.5);g.lineTo(STAGE_W*SIMS,y*SIMS+.5);g.stroke()}
+    g.strokeStyle='rgba(232,86,74,.5)';
+    g.beginPath();g.moveTo(ANCHOR_X*SIMS+.5,0);g.lineTo(ANCHOR_X*SIMS+.5,STAGE_H*SIMS);g.stroke();
+    g.beginPath();g.moveTo(0,ANCHOR_Y*SIMS+.5);g.lineTo(STAGE_W*SIMS,ANCHOR_Y*SIMS+.5);g.stroke();
+  }
+  const empty=pk.kind==='fk'&&!st.layers.length;
+  $('simLabel').textContent=`${pk.kind==='ac'?'액세서리':'옷'} · 프레임 ${st.label}`+
+    ` · ${simStep%steps.length+1}/${steps.length} · Body type ${bodyType+1}`+
+    (empty?' — 이 체형 세트는 비어 있음(더미)':'');
+}
+function simStart(){
+  simStop();
+  simTimer=setInterval(()=>{simStep++;drawSim()},450);
+  $('simBtn').textContent='⏸';
+  drawSim();
+}
+function simStop(){if(simTimer){clearInterval(simTimer);simTimer=null}$('simBtn').textContent='▶'}
+let simGrid=false, simDrag=null;
+$('simGridChk').onchange=()=>{simGrid=$('simGridChk').checked;drawSim()};
+$('simBtn').onclick=()=>simTimer?simStop():simStart();
+
+// drag the accessory straight on the preview; positions are whole pixels,
+// so the pointer is simply rounded to the 1px grid
+$('simCv').addEventListener('mousedown',e=>{
+  if(!pk||!pk.acc_pos)return;
+  const steps=simScenario(), st=steps[simStep%steps.length];
+  const row=st.row; if(row<0||!st.layers.length)return;
+  const L=st.layers[st.layers.length-1];
+  const r=$('simCv').getBoundingClientRect();
+  const x=(e.clientX-r.left)/SIMS, y=(e.clientY-r.top)/SIMS;
+  if(x<L.x||x>L.x+L.f.w||y<L.y||y>L.y+L.f.h)return;
+  simStop();
+  simDrag={row, dx:x-(L.x+(L.f.w>>1)), dy:y-(L.y+(L.f.h>>1))};
+  e.preventDefault();
+});
+window.addEventListener('mousemove',e=>{
+  if(!simDrag)return;
+  const r=$('simCv').getBoundingClientRect();
+  const cx=Math.round((e.clientX-r.left)/SIMS-simDrag.dx);
+  const cy=Math.round((e.clientY-r.top)/SIMS-simDrag.dy);
+  pk.acc_pos[bodyType][simDrag.row]=[Math.max(0,Math.min(255,cx)),Math.max(0,Math.min(255,cy))];
+  renderAccGrid(); drawSim(); drawStripIfVisible();
+});
+window.addEventListener('mouseup',()=>{simDrag=null});
+function drawStripIfVisible(){if(!$('stripRow').hidden)drawStrip()}
+$('simBody').onchange=()=>{
+  bodyType=+$('simBody').value;
+  renderAccGrid(); drawSim(); drawStripIfVisible();   // strip follows the body type
+};
+
+function renderAccGrid(){
+  const el=$('accGrid'); if(!pk||!pk.acc_pos){el.innerHTML='';return}
+  const LABELS=[0,1,2,3,4,5,6,7,8,9,10,12,13,14];
+  el.innerHTML='<b>프레임</b><b>X</b><b>Y</b><span></span><span></span>';
+  pk.acc_pos[bodyType].forEach((xy,i)=>{
+    const lab=document.createElement('span'); lab.textContent=LABELS[i];
+    const mk=(k)=>{const inp=document.createElement('input');
+      inp.type='number';inp.min=0;inp.max=255;inp.value=xy[k];
+      inp.style.cssText='width:56px;padding:2px 4px';
+      inp.oninput=()=>{pk.acc_pos[bodyType][i][k]=+inp.value||0;drawSim()};
+      return inp};
+    el.append(lab,mk(0),mk(1),document.createElement('span'),document.createElement('span'));
+  });
+}
+
+// ---- iD device version / Lovely Melody conversion ----
+// Only the girls' accessory shop and girls' photo-studio costumes are
+// version-specific; the rest of the catalogue is shared. The split exists
+// because LM swapped Uwasatchi out for Melodytchi, and both the wear
+// coordinates and the like mask are per character.
+const ROSTER_SENSITIVE=[2,3];      // section 2 accessory, 3 clothes/costume
+function renderVersion(){
+  const v=pk.version, P=pk.version_presets||{};
+  $('verNow').textContent=`— 현재 ${v.label} (0x${v.version.toString(16).padStart(4,'0')})`
+    +` · 인덱스 0x${v.index.toString(16)}`;
+  $('verSel').innerHTML=Object.entries(P).map(([k,o])=>
+    `<option value="${k}">${o.label}</option>`).join('');
+  const curKey=Object.keys(P).find(k=>P[k].version===v.version
+    &&P[k].compat[0]===v.compat[0]&&P[k].compat[1]===v.compat[1]);
+  if(curKey)$('verSel').value=curKey;
+  $('verIdx').value=v.index;
+  $('verC0').value=v.compat[0].toString(16).padStart(4,'0');
+  $('verC1').value=v.compat[1].toString(16).padStart(4,'0');
+  const risky=ROSTER_SENSITIVE.includes(pk.section);
+  $('verNote').innerHTML=risky
+    ? '⚠️ 액세서리·코스튬은 <b>캐릭터 로스터에 묶인 카테고리</b>입니다. LM 버전에서 '
+      +'우와삿치가 빠지고 멜로딧치가 들어갔으므로, 버전 바이트만 바꿔도 '
+      +'<b>착용 좌표 행과 호불호 비트</b>는 그 캐릭터 자리만큼 어긋날 수 있습니다. '
+      +'변환 후 시뮬레이션으로 확인하세요.'
+    : '이 카테고리는 버전 간 공통이라 버전 바이트만 맞추면 됩니다.';
+  $('verSel').onchange=()=>{
+    const o=P[$('verSel').value]; if(!o)return;
+    $('verC0').value=o.compat[0].toString(16).padStart(4,'0');
+    $('verC1').value=o.compat[1].toString(16).padStart(4,'0');
+    const [lo,hi]=o.index_range, cur=+$('verIdx').value;
+    if(cur<lo||cur>hi)$('verIdx').value=lo;
+    $('verNote').dataset.range=`대상 인덱스 범위 0x${lo.toString(16)}~0x${hi.toString(16)}`;
+    toast(`대상 인덱스 범위 0x${lo.toString(16)}~0x${hi.toString(16)} — 빈 슬롯인지 확인하세요`);
+  };
+  $('verApply').onclick=()=>{
+    const o=P[$('verSel').value]; if(!o)return;
+    pk.version={version:o.version,
+                compat:[parseInt($('verC0').value,16)||0, parseInt($('verC1').value,16)||0],
+                index:+$('verIdx').value,
+                label:o.label};
+    $('verNow').textContent=`— ${o.label} (0x${o.version.toString(16).padStart(4,'0')})`
+      +` · 인덱스 0x${(+$('verIdx').value).toString(16)} — 저장하면 반영`;
+    toast(`${o.label} 로 변환 준비됨 — 저장하세요`);
+  };
+}
+
+// ---- cross-model conversion ----
+const CV_MODELS=['iD','iDL',"P's",'4U'];
+function renderConvert(){
+  $('cvNow').textContent=`— 현재 ${pk.model}`;
+  const btns=$('cvBtns'); btns.innerHTML='';
+  let note='';
+  CV_MODELS.filter(m=>m!==pk.model).forEach(m=>{
+    const pl=(pk.convert||{})[m]; if(!pl)return;
+    const box=document.createElement('div');
+    const b=document.createElement('button');
+    b.className='btn'; b.textContent=`→ ${m}`; b.style.width='100%';
+    b.disabled=!pl.ok;
+    b.title=pl.ok?pl.changes.join('\n'):pl.blockers.join('\n');
+    b.onclick=async()=>{
+      if(pl.warnings.length&&!confirm(`${m}로 변환합니다.\n\n`+pl.warnings.map(w=>'· '+w).join('\n')))return;
+      const r=await fetch('/api/build',{method:'POST',body:JSON.stringify(
+        {file_b64:fileB64,edits:[{path:pk.path,convert:m}]})});
+      if(!r.ok){toast('변환 실패: '+await r.text());return}
+      const blob=await r.blob();
+      load(new File([blob],($('fName').value.trim()||'custom')+`_${m}.jpg`));
+      toast(`${m} 로 변환했습니다 — 확인 후 저장하세요`);
+    };
+    box.appendChild(b);
+    if(!pl.ok){const h=document.createElement('div');h.className='hint';
+      h.style.margin='4px 0 0';h.textContent=pl.blockers[0];box.appendChild(h)}
+    btns.appendChild(box);
+    if(pl.ok&&!note)note=pl.warnings.map(w=>'· '+w).join('<br>');
+  });
+  const cp=$('cvCompat'); cp.innerHTML='';
+  const have=new Set((pk.compat||{}).models||[]);
+  ['iDL',"P's",'4U'].forEach(m=>{
+    const b=document.createElement('button');
+    b.textContent=m; b.className=have.has(m)?'l1':'';
+    b.onclick=()=>{have.has(m)?have.delete(m):have.add(m);
+      pk.compat={mask:0,models:[...have]}; renderCompatBtns()};
+    cp.appendChild(b);
+  });
+  function renderCompatBtns(){
+    [...cp.children].forEach(b=>b.className=have.has(b.textContent)?'l1':'');
+    $('cvCompatNote').innerHTML=compatNote();
+  }
+  const compatNote=()=>pk.model==='iD'
+    ? 'iD는 이 필드를 쓰지 않습니다 (항상 0).'
+    : `0xFF 비트마스크. <b>iD L + P's 둘 다 체크</b>하면 Mr.Blinky의 <code>itemidlps_*</code> 파일과 같은 상태가 되어 양쪽 기기에서 받을 수 있습니다.`;
+  $('cvCompatNote').innerHTML=compatNote();
+  $('cvNote').innerHTML=note||'변환은 헤더만 다시 쓰고 스프라이트는 그대로 옮깁니다.';
+}
+
+// ---- character stats ----
+const CHAR_FIELDS=[
+  ['tama_id','Tamagotchi ID (로스터)','roster'],
+  ['revert_id','Revert ID (되돌아갈 캐릭터)','roster'],
+  ['graphics','Graphics index','u16'],
+  ['stage','스테이지','enum'],
+  ['body_type','체형','enum'], ['personality','성격 타입','u8'],
+  ['weight_std','표준 체중','u8'], ['weight_min','최소 체중','u8'],
+  ['hunger_dep','공복 감소율','u8'], ['happy_dep','행복 감소율','u8'],
+  ['sickness','병 확률','u8'],
+  ['wake','기상 시각','u8'], ['sleep','취침 시각','u8'],
+  ['birth_month','생일 월','u8'], ['birth_day','생일 일','u8'],
+  ['sep_clothes','옷 분리','yesno'], ['sep_accessory','액세서리 분리','yesno'],
+  ['like_index','호불호 인덱스','enum'],
+  ['transform_type','변신 아이템 타입','enum'],
+  ['transform_serial','변신 아이템 시리얼','item'],
+];
+const YESNO={0:'No',1:'Yes'};
+function renderCharStats(){
+  const el=$('charFields'); el.innerHTML='';
+  const cs=pk.char_stats, en=pk.char_enums||{};
+  const grid=document.createElement('div');
+  grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px';
+  CHAR_FIELDS.forEach(([key,label,type])=>{
+    const box=document.createElement('div');
+    const l=document.createElement('label'); l.textContent=label; box.appendChild(l);
+    let inp;
+    if(type==='roster'){
+      const r=(pk.char_extra||{})[key==='tama_id'?'tama_roster':'revert_roster']||{};
+      const wrap=document.createElement('div'); wrap.className='row';
+      const gsel=document.createElement('select');
+      gsel.innerHTML='<option value="Boy">남자</option><option value="Girl">여자</option>';
+      gsel.value=r.gender||'Boy';
+      const sl=document.createElement('input');
+      sl.type='number'; sl.min=0; sl.max=255; sl.value=r.slot||0;
+      const page=()=>gsel.value==='Girl'?0x1B:0x13;
+      const push=()=>{pk.char_stats[key]=(page()<<8)|(+sl.value&0xFF);
+        l.textContent=`${label} · 0x${pk.char_stats[key].toString(16)}`};
+      gsel.onchange=push; sl.oninput=push;
+      wrap.appendChild(gsel); wrap.appendChild(sl);
+      box.appendChild(wrap); grid.appendChild(box);
+      l.textContent=`${label} · 0x${(cs[key]||0).toString(16)}`;
+      return;
+    }
+    if(type==='item'){
+      // serial + the name the packet itself stores at 0x232 (10 chars)
+      inp=document.createElement('input');
+      inp.type='number'; inp.min=0; inp.max=65535; inp.value=cs[key];
+      const nm=document.createElement('input');
+      nm.value=(pk.char_extra||{}).transform_name||'';
+      nm.maxLength=10; nm.placeholder='아이템 이름';
+      nm.style.marginTop='4px';
+      nm.oninput=()=>{pk.char_extra.transform_name=nm.value};
+      inp.oninput=()=>{pk.char_stats[key]=+inp.value};
+      l.textContent=`${label} + 이름 (파일에 함께 저장)`;
+      box.appendChild(inp); box.appendChild(nm); grid.appendChild(box); return;
+    }
+    if(type==='yesno'){
+      inp=document.createElement('select');
+      inp.innerHTML='<option value="0">No</option><option value="1">Yes</option>';
+      inp.value=cs[key]?1:0;
+      inp.onchange=()=>{pk.char_stats[key]=+inp.value};
+      box.appendChild(inp); grid.appendChild(box); return;
+    }
+    if(type==='enum'&&en[key]){
+      inp=document.createElement('select');
+      const opts=Object.entries(en[key]);
+      // keep the stored value selectable even when it is not in the table
+      if(!opts.some(([k])=>+k===cs[key]))opts.unshift([cs[key],`(0x${(cs[key]||0).toString(16)})`]);
+      inp.innerHTML=opts.map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+      inp.value=cs[key];
+    }else{
+      inp=document.createElement('input');
+      inp.type='number'; inp.min=0; inp.max=type==='u16'?65535:255;
+      inp.value=cs[key];
+    }
+    inp.oninput=()=>{pk.char_stats[key]=+inp.value};
+    box.appendChild(inp); grid.appendChild(box);
+  });
+  el.appendChild(grid);
+  const sk=document.createElement('div');
+  sk.innerHTML='<label>스킬 1~5</label>';
+  const row=document.createElement('div'); row.className='row';
+  (cs.skills||[]).forEach((v,i)=>{
+    const s=document.createElement('input'); s.type='number'; s.min=0; s.max=255; s.value=v;
+    s.oninput=()=>{pk.char_stats.skills[i]=+s.value};
+    row.appendChild(s);
+  });
+  sk.appendChild(row); el.appendChild(sk);
+  const note=document.createElement('div');
+  note.className='hint';
+  note.textContent='취침 시각은 파일에 표시값−1로 저장되며, 여기서는 표시값 기준으로 편집합니다.';
+  el.appendChild(note);
+}
+
+// ---- packet swap: drop another .jpg's packet into this slot ----
+$('swapBtn').onclick=()=>$('swapInput').click();
+$('swapInput').onchange=async e=>{
+  const file=e.target.files[0]; e.target.value=''; if(!file||!pk)return;
+  const buf=new Uint8Array(await file.arrayBuffer());
+  const info=await (await fetch('/api/parse',{method:'POST',body:buf})).json();
+  if(info.error){toast('교체 실패: '+info.error);return}
+  const src=info.packets[0];
+  if(src.model!==pk.model&&!confirm(
+      `기종이 다릅니다 (${src.model} → ${pk.model}). 그래도 교체할까요?`))return;
+  const r=await fetch('/api/build',{method:'POST',body:JSON.stringify({
+    file_b64:fileB64, edits:[{path:pk.path, replace_b64:arrayToB64(buf)}]})});
+  if(!r.ok){toast('교체 실패: '+(await r.json()).error);return}
+  const blob=await r.blob();
+  const nb=new Uint8Array(await blob.arrayBuffer());
+  await load(new File([nb],$('fname').textContent||'custom.jpg'));
+  toast(`"${src.name||src.ansi_id}" 로 교체됨 — 저장하면 반영됩니다`);
+};
+
+// the top-level packet's download name is the file's identity: the display
+// part of "DL_T4UA_<name>.jpg", falling back to its internal item name
+function downloadStem(){
+  const top=doc&&doc.packets.find(q=>q.path.length===1);
+  if(!top)return $('fName').value.trim();
+  const u=top.unicode_name||'';
+  if(u.startsWith('DL_')&&u.indexOf('_',3)>0){
+    const tail=u.slice(u.indexOf('_',3)+1);
+    const stem=tail.includes('.')?tail.slice(0,tail.lastIndexOf('.')):tail;
+    if(stem)return stem;
+  }
+  return (top.name||'').trim()||$('fName').value.trim();
+}
+
+// ---- save ----
+$('saveBtn').onclick=async()=>{
+  const edit={path:pk.path,
+    name:$('fName').value.trim(),
+    unicode_name:$('fName').value.trim().slice(0,10),
+    serial:+$('fSerial').value};
+  if(pk.char_extra){edit.name2=$('fName2').value.trim();
+    if(pk.char_extra.transform_name!=null)edit.transform_name=pk.char_extra.transform_name}
+  if(pk.compat&&pk.model!=='iD')edit.compat=pk.compat.models;
+  if(pk.is_item&&(!pk.fields||pk.fields.includes('price')))edit.price=+$('fPrice').value;
+  if(pk.is_item&&pk.stats_verified){
+    const F=pk.fields||[];
+    edit.dest=$('fDest').value;
+    if(F.includes('likes'))edit.likes=pk.likes;
+    if(F.includes('stats'))edit.stats={intelligence:+$('s0').value,style:+$('s1').value,
+      charisma:+$('s2').value,gourmet:+$('s3').value,strength:+$('s4').value};
+    if(F.includes('hunger'))edit.hunger=+$('fHunger').value;
+    if(F.includes('friendship'))edit.friendship=+$('fFriend').value;
+    if(F.includes('anim')){edit.anim_a=+$('fAnimA').value;edit.anim_b=+$('fAnimB').value}
+  }
+  if(pk.acc_pos)edit.acc_pos=pk.acc_pos;
+  if(pk.banks)edit.banks=pk.banks;
+  if(pk.texts)edit.texts=pk.texts;   // parts[] carries the run layout
+  if(pk.char_stats)edit.char_stats=pk.char_stats;
+  if(pk.version)edit.version=pk.version;
+  const edits=[edit];
+  const par=charParent();
+  if(par&&par.char_extra&&par.char_extra.acc_pos)
+    edits.push({path:par.path,char_acc_pos:par.char_extra.acc_pos});
+  if(pk.char_extra&&pk.char_extra.acc_pos)edit.char_acc_pos=pk.char_extra.acc_pos;
+  const payload={file_b64:fileB64,edits};
+  if(newJpegB64)payload.jpeg_b64=newJpegB64;
+  const r=await fetch('/api/build',{method:'POST',body:JSON.stringify(payload)});
+  if(!r.ok){const j=await r.json();toast('저장 실패: '+j.error);return}
+  const blob=await r.blob();
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  // name the download after the *file*, not whichever sub-packet happens to
+  // be selected -- a character's wardrobe packet has its own separate name,
+  // so saving from it used to produce a differently-named file with
+  // byte-identical contents
+  a.download=(downloadStem()||'custom')+'_custom.jpg';
+  a.click();
+  toast('저장 완료 — 체크섬 검증 통과 ✓');
+};
+</script>
+</body>
+</html>
