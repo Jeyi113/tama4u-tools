@@ -11,6 +11,22 @@ python3 -m tama4u verify <dir|file>            # 체크섬 전수 검증
 python3 -m tama4u export <file.jpg> -o out/    # 스프라이트 → 4bpp BMP
 ```
 
+## 스크린샷
+
+`docs/SCREENSHOTS.md` 참고 (촬영 후 `docs/01-editor.png` 등으로 저장).
+
+## 준비물
+
+다운로드 팩(반다이 배포 .jpg)과 참조 스프라이트는 저작물이라 저장소에
+포함하지 않는다. 로컬에 준비한 뒤 문자표를 한 번 생성하면 된다.
+
+```bash
+python3 -m tama4u charset <download-pack>   # tama4u/charset*.json 생성
+```
+
+기기 시뮬레이션에 쓰는 체형별 참조 스프라이트는 Mr.Blinky의 acposeditor
+BMP를 `tama4u/charasprites/`에 넣으면 활성화된다(없어도 나머지는 동작).
+
 ## 지원 기종 (iD / iD L / P's / 4U)
 
 컨테이너(TAMAGO 매직, u16 크기 필드, sum16 체크섬)와 **스프라이트 코덱은 전
