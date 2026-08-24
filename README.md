@@ -501,3 +501,23 @@ Mr.Blinky의 acposeditor 화면과 대조해 Body2 Y 14개 값이 전부 일치�
 만들기" 버튼이 현재 프레임을 JPEG로 구워 교체하고, 0x32(전체 크기)를
 길이 차이만큼 자동 보정한다.
 - 팩 내 `id2_`/`idn_` 접두어 패킷 (타 기종 호환 아이템 추정)
+
+---
+
+## 라이선스 · 고지
+
+이 저장소의 **코드와 문서**는 [MIT 라이선스](LICENSE)를 따른다.
+
+반다이(BANDAI)와 무관한 **비공식** 프로젝트다. 상업적 목적이 아니라
+자신이 소유한 기기·파일을 다루기 위한 **상호운용(interoperability)** 목적의
+분석 결과이며, 포맷 스펙은 공개 배포 파일을 관찰해 역산한 것이다.
+
+반다이의 저작물(다운로드 아이템 .jpg, 스프라이트, 캐릭터·아이템명)과 그로부터
+추출한 데이터(`charset*.json`, `itemindex.json`, `charasprites/`)는 이 저장소에
+포함하지 않으며 `.gitignore`로 제외돼 있다. 사용하려면 각자 준비해야 한다
+(위 "준비물" 참고).
+
+Tamagotchi 및 관련 명칭·캐릭터는 반다이의 상표다.
+
+포맷 해독은 Mr.Blinky의 Tama Image Editor / Tama 4U character data editor /
+acposeditor 결과와 교차 검증했다.
