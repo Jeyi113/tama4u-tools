@@ -3,6 +3,7 @@
 Confirmed on meals/snacks against Mr.Blinky's Tama Image Editor;
 other categories share the same layout unless noted.
 """
+import re
 import struct
 
 from . import destinations, models
@@ -121,6 +122,59 @@ SECTION_KIND = {1: 'gh', 2: 'ac', 3: 'fk', 4: 'as', 6: 'mail', 7: 'bg'}
 def effective_kind(pkt):
     """kind from the ASCII id, falling back to the section byte (iD)."""
     return pkt.kind if pkt.kind != '?' else SECTION_KIND.get(pkt.section, '?')
+
+
+# Outings, minigames and character definitions are programs, not shop
+# items: their body is code with sprite records and dialogue scattered
+# through it, and the stat block offsets mean nothing.  The destination's
+# first byte separates them -- 0x94 on iD L / P's / 4U (iD parks its
+# outings on 0x14 instead, and those already read correctly).
+PROGRAM_DEST = 0x94
+# 94 02 5b 02 is a program blob we have not decoded (VDPs, LCD tweaks).
+# Its body is compressed, so any "text" a 1-byte charset finds there is an
+# artifact -- scanning it produced 50-240 nonsense blocks per file.
+OPAQUE_PROGRAM_DEST = '94025b02'
+# Dialogue lives in the slivers between sprite records.  When those gaps add
+# up to more than this share of the packet the body is code we cannot read,
+# not a sprites+dialogue layout: real outings sit at 1-5%, undecoded blobs
+# at 22-99%.
+MAX_TEXT_GAP_RATIO = 0.20
+# Real Japanese does not repeat the same kana four times running; a program
+# blob does it constantly.
+_REPEAT = re.compile(r'([^\u3000 ])\1{3,}')
+
+
+def is_program(pkt):
+    return pkt.raw[OFF_DEST] == PROGRAM_DEST
+
+
+def scans_text(pkt):
+    return bytes(pkt.raw[OFF_DEST:OFF_DEST + 4]).hex() != OPAQUE_PROGRAM_DEST
+
+
+def plausible_run(text, width):
+    return width == 2 or not _REPEAT.search(text)
+
+
+def text_gaps(spans, size, start=0x60):
+    """Byte ranges that can hold dialogue: outside every sprite record and
+    nested packet, and after the first one.
+
+    The leading blob is program code.  On the 1-byte models every code byte
+    decodes to *some* kana, so scanning it returns hundreds of nonsense
+    runs; skipping it is what makes those models readable at all.
+    """
+    if not spans:
+        return [(start, size)]
+    spans = sorted(spans)
+    out, cur = [], spans[0][0]
+    for a, b in spans:
+        if a > cur:
+            out.append((cur, a))
+        cur = max(cur, b)
+    if cur < size - 2:
+        out.append((cur, size - 2))
+    return out
 
 
 def editable_fields(pkt):

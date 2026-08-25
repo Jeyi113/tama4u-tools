@@ -832,6 +832,48 @@ const VERSION_PRESETS = {
   '1dc0': { label: 'iD 리비전 (1dc0)', version: 0xcd80, compat: [0x1dc0, 0x1dc0], index_range: [0x01, 0x27] },
 };
 
+// Outings, minigames and character definitions are programs, not shop
+// items: their body is code with sprite records and dialogue scattered
+// through it, and the stat block offsets mean nothing.  The destination's
+// first byte separates them -- 0x94 on iD L / P's / 4U (iD parks its
+// outings on 0x14 instead, and those already read correctly).
+const PROGRAM_DEST = 0x94;
+// 94 02 5b 02 is a program blob we have not decoded (VDPs, LCD tweaks).
+// Its body is compressed, so any "text" a 1-byte charset finds there is an
+// artifact -- scanning it produced 50-240 nonsense blocks per file.
+const OPAQUE_PROGRAM_DEST = '94025b02';
+// Dialogue lives in the slivers between sprite records.  When those gaps add
+// up to more than this share of the packet the body is code we cannot read,
+// not a sprites+dialogue layout: real outings sit at 1-5%, undecoded blobs
+// at 22-99%.
+const MAX_TEXT_GAP_RATIO = 0.20;
+// Real Japanese does not repeat the same kana four times running; a program
+// blob does it constantly.
+const REPEAT = /([^\u3000 ])\1{3,}/;
+
+const isProgram = p => p.raw[OFF_DEST] === PROGRAM_DEST;
+const scansText = p =>
+  Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4))
+    .map(x => x.toString(16).padStart(2, '0')).join('') !== OPAQUE_PROGRAM_DEST;
+const plausibleRun = (text, width) => width === 2 || !REPEAT.test(text);
+
+// Byte ranges that can hold dialogue: outside every sprite record and nested
+// packet, and after the first one.  The leading blob is program code, and on
+// the 1-byte models every code byte decodes to *some* kana, so scanning it
+// returns hundreds of nonsense runs.
+function textGaps(spans, size, start = 0x60) {
+  if (!spans.length) return [[start, size]];
+  const s = [...spans].sort((a, b) => a[0] - b[0]);
+  const out = [];
+  let cur = s[0][0];
+  for (const [a, b] of s) {
+    if (a > cur) out.push([cur, a]);
+    cur = Math.max(cur, b);
+  }
+  if (cur < size - 2) out.push([cur, size - 2]);
+  return out;
+}
+
 const effectiveKind = p => (p.kind !== '?' ? p.kind : (SECTION_KIND[p.section] || '?'));
 
 function accBlockLen(p) {
@@ -1276,7 +1318,8 @@ function describe(data, opts = {}) {
         .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: getDestination(pkt),
       dest_options: destOptions(model).map(([label, code]) => ({ label, code })),
-      is_item: !isChar && (BANK_OFFSETS[effectiveKind(pkt)] !== undefined || model !== '4U'),
+      is_item: !isChar && !isProgram(pkt)
+        && (BANK_OFFSETS[effectiveKind(pkt)] !== undefined || model !== '4U'),
     };
     if (model === 'iD') { info.version = getVersion(pkt); info.version_presets = VERSION_PRESETS; }
     info.compat = getCompat(pkt);
@@ -1329,14 +1372,23 @@ function describe(data, opts = {}) {
     }
     if (!info.is_item) {
       const covered = pkt.children.map(c => [c.offset, c.offset + c.size]);
+      const spans = covered.map(x => [...x]);
       const own = (a, b) => !covered.some(([s, e]) => (s <= a && a < e) || (s < b && b <= e));
+      // collect count-banks *and* loose records: program packets often carry
+      // both, and taking only the first kind hid up to 50 of a file's sprites
       for (const b of scanBanks(pkt.raw, 0x60)) {
-        if (own(b.offset, b.end)) { banks.push({ offset: b.offset, frames: b.frames }); covered.push([b.offset, b.end]); }
+        if (own(b.offset, b.end)) {
+          banks.push({ offset: b.offset, frames: b.frames });
+          covered.push([b.offset, b.end]); spans.push([b.offset, b.end]);
+        }
       }
       for (const rec of scanLoose(pkt.raw)) {
         const [start, , , ncol, , avail] = rec;
         const end = start + 6 + 2 * ncol + avail;
-        if (own(start, end)) banks.push({ offset: start, loose: rec, frames: readLoose(pkt.raw, rec) });
+        if (own(start, end)) {
+          banks.push({ offset: start, loose: rec, frames: readLoose(pkt.raw, rec) });
+          covered.push([start, end]); spans.push([start, end]);
+        }
       }
       if (isChar) {
         info.texts = DIALOGUE_LABELS.map((label, i) => {
@@ -1362,10 +1414,23 @@ function describe(data, opts = {}) {
         info.char_enums = { gender: GENDER, stage: STAGE, body_type: bodyTypes(model),
                             transform_type: TRANSFORM_TYPE, like_index: LIKE_INDEX };
       } else {
-        const texts = scanTexts(pkt.raw, model).filter(([o, n]) => own(o, o + 2 * n));
+        // dialogue is 1 byte/char on iD/iD L/P's and 2 on 4U, and it only
+        // lives in the gaps between sprite records
+        const width = pkt.layout.width;
+        const gaps = textGaps(spans, pkt.size);
+        const ratio = gaps.reduce((a, [x, y]) => a + (y - x), 0) / Math.max(1, pkt.size);
+        let texts = [];
+        if (scansText(pkt) && ratio <= MAX_TEXT_GAP_RATIO) {
+          for (const [lo, hi] of gaps) {
+            if (hi - lo < 8) continue;
+            texts = texts.concat(
+              scanTexts(pkt.raw, model, lo, hi, width === 2 ? 4 : 6, width)
+                .filter(r => plausibleRun(r[2], width)));
+          }
+        }
         if (texts.length)
-          info.texts = groupRuns(texts, 2).map((g, i) => ({
-            parts: g.parts, chars: g.chars, text: g.text, width: 2, label: `대사 ${i + 1}` }));
+          info.texts = groupRuns(texts, width).map((g, i) => ({
+            parts: g.parts, chars: g.chars, text: g.text, width, label: `대사 ${i + 1}` }));
       }
     }
     if (banks.length)

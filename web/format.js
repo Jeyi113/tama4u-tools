@@ -111,6 +111,48 @@ export const VERSION_PRESETS = {
   '1dc0': { label: 'iD 리비전 (1dc0)', version: 0xcd80, compat: [0x1dc0, 0x1dc0], index_range: [0x01, 0x27] },
 };
 
+// Outings, minigames and character definitions are programs, not shop
+// items: their body is code with sprite records and dialogue scattered
+// through it, and the stat block offsets mean nothing.  The destination's
+// first byte separates them -- 0x94 on iD L / P's / 4U (iD parks its
+// outings on 0x14 instead, and those already read correctly).
+export const PROGRAM_DEST = 0x94;
+// 94 02 5b 02 is a program blob we have not decoded (VDPs, LCD tweaks).
+// Its body is compressed, so any "text" a 1-byte charset finds there is an
+// artifact -- scanning it produced 50-240 nonsense blocks per file.
+export const OPAQUE_PROGRAM_DEST = '94025b02';
+// Dialogue lives in the slivers between sprite records.  When those gaps add
+// up to more than this share of the packet the body is code we cannot read,
+// not a sprites+dialogue layout: real outings sit at 1-5%, undecoded blobs
+// at 22-99%.
+export const MAX_TEXT_GAP_RATIO = 0.20;
+// Real Japanese does not repeat the same kana four times running; a program
+// blob does it constantly.
+const REPEAT = /([^\u3000 ])\1{3,}/;
+
+export const isProgram = p => p.raw[OFF_DEST] === PROGRAM_DEST;
+export const scansText = p =>
+  Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4))
+    .map(x => x.toString(16).padStart(2, '0')).join('') !== OPAQUE_PROGRAM_DEST;
+export const plausibleRun = (text, width) => width === 2 || !REPEAT.test(text);
+
+// Byte ranges that can hold dialogue: outside every sprite record and nested
+// packet, and after the first one.  The leading blob is program code, and on
+// the 1-byte models every code byte decodes to *some* kana, so scanning it
+// returns hundreds of nonsense runs.
+export function textGaps(spans, size, start = 0x60) {
+  if (!spans.length) return [[start, size]];
+  const s = [...spans].sort((a, b) => a[0] - b[0]);
+  const out = [];
+  let cur = s[0][0];
+  for (const [a, b] of s) {
+    if (a > cur) out.push([cur, a]);
+    cur = Math.max(cur, b);
+  }
+  if (cur < size - 2) out.push([cur, size - 2]);
+  return out;
+}
+
 export const effectiveKind = p => (p.kind !== '?' ? p.kind : (SECTION_KIND[p.section] || '?'));
 
 export function accBlockLen(p) {

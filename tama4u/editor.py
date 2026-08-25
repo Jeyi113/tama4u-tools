@@ -89,6 +89,7 @@ def describe(data):
             'dest_options': [{'label': l, 'code': c}
                              for l, c, _ in destinations.options(pkt.model)],
             'is_item': (not character.is_character(pkt)
+                        and not items.is_program(pkt)
                         and (items.effective_kind(pkt) in items.BANK_OFFSETS
                              or pkt.model != '4U')),
         }
@@ -158,18 +159,25 @@ def describe(data):
                                   'frames': sprites.read_loose(pkt.raw, rec)})
         if not info['is_item']:
             covered = [(c.offset, c.offset + c.size) for c in pkt.children]
+            spans = list(covered)
             own = lambda a, b: not any(s <= a < e or s < b <= e
                                        for s, e in covered)
+            # collect count-banks *and* loose records: program packets often
+            # carry both, and taking only the first kind hid up to 50 of a
+            # file's sprites (P's outings and VDPs)
             for o, end, frames in sprites.scan_banks(pkt.raw):
                 if own(o, end):
                     banks.append({'offset': o, 'frames': frames})
                     covered.append((o, end))
+                    spans.append((o, end))
             for rec in sprites.scan_loose(pkt.raw):
                 start, w, h, ncol, nf, avail = rec
                 end = start + 6 + 2 * ncol + avail
                 if own(start, end):
                     banks.append({'offset': start, 'loose': list(rec),
                                   'frames': sprites.read_loose(pkt.raw, rec)})
+                    covered.append((start, end))
+                    spans.append((start, end))
             if character.is_character(pkt):
                 # known structure: 14 fixed dialogue slots, 75 chars each
                 info['texts'] = []
@@ -210,14 +218,27 @@ def describe(data):
                     'like_index': character.LIKE_INDEX,
                 }
             else:
-                texts = [(o, n, t) for o, n, t in charset.scan_texts(pkt.raw, table)
-                         if own(o, o + 2 * n)]
+                # dialogue is 1 byte/char on iD/iD L/P's and 2 on 4U, and it
+                # only lives in the gaps between sprite records
+                width = pkt.layout['width']
+                gaps = items.text_gaps(spans, pkt.size)
+                ratio = sum(b - a for a, b in gaps) / max(1, pkt.size)
+                texts = []
+                if items.scans_text(pkt) and ratio <= items.MAX_TEXT_GAP_RATIO:
+                    for lo, hi in gaps:
+                        if hi - lo < 8:
+                            continue
+                        texts += [
+                            r for r in charset.scan_texts(
+                                pkt.raw, table, lo=lo, hi=hi,
+                                min_len=4 if width == 2 else 6, width=width)
+                            if items.plausible_run(r[2], width)]
                 if texts:
                     info['texts'] = [
                         {'parts': g['parts'], 'chars': g['chars'],
-                         'text': g['text'], 'width': 2,
+                         'text': g['text'], 'width': width,
                          'label': f"대사 {i + 1}"}
-                        for i, g in enumerate(charset.group_runs(texts, 2))]
+                        for i, g in enumerate(charset.group_runs(texts, width))]
         if banks:
             info['banks'] = [{'offset': b['offset'],
                               'loose': b.get('loose'),

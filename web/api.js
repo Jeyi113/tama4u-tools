@@ -53,7 +53,8 @@ export function describe(data, opts = {}) {
         .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: F.getDestination(pkt),
       dest_options: destOptions(model).map(([label, code]) => ({ label, code })),
-      is_item: !isChar && (F.BANK_OFFSETS[F.effectiveKind(pkt)] !== undefined || model !== '4U'),
+      is_item: !isChar && !F.isProgram(pkt)
+        && (F.BANK_OFFSETS[F.effectiveKind(pkt)] !== undefined || model !== '4U'),
     };
     if (model === 'iD') { info.version = F.getVersion(pkt); info.version_presets = F.VERSION_PRESETS; }
     info.compat = F.getCompat(pkt);
@@ -106,14 +107,23 @@ export function describe(data, opts = {}) {
     }
     if (!info.is_item) {
       const covered = pkt.children.map(c => [c.offset, c.offset + c.size]);
+      const spans = covered.map(x => [...x]);
       const own = (a, b) => !covered.some(([s, e]) => (s <= a && a < e) || (s < b && b <= e));
+      // collect count-banks *and* loose records: program packets often carry
+      // both, and taking only the first kind hid up to 50 of a file's sprites
       for (const b of scanBanks(pkt.raw, 0x60)) {
-        if (own(b.offset, b.end)) { banks.push({ offset: b.offset, frames: b.frames }); covered.push([b.offset, b.end]); }
+        if (own(b.offset, b.end)) {
+          banks.push({ offset: b.offset, frames: b.frames });
+          covered.push([b.offset, b.end]); spans.push([b.offset, b.end]);
+        }
       }
       for (const rec of scanLoose(pkt.raw)) {
         const [start, , , ncol, , avail] = rec;
         const end = start + 6 + 2 * ncol + avail;
-        if (own(start, end)) banks.push({ offset: start, loose: rec, frames: readLoose(pkt.raw, rec) });
+        if (own(start, end)) {
+          banks.push({ offset: start, loose: rec, frames: readLoose(pkt.raw, rec) });
+          covered.push([start, end]); spans.push([start, end]);
+        }
       }
       if (isChar) {
         info.texts = F.DIALOGUE_LABELS.map((label, i) => {
@@ -139,10 +149,23 @@ export function describe(data, opts = {}) {
         info.char_enums = { gender: F.GENDER, stage: F.STAGE, body_type: F.bodyTypes(model),
                             transform_type: F.TRANSFORM_TYPE, like_index: F.LIKE_INDEX };
       } else {
-        const texts = F.scanTexts(pkt.raw, model).filter(([o, n]) => own(o, o + 2 * n));
+        // dialogue is 1 byte/char on iD/iD L/P's and 2 on 4U, and it only
+        // lives in the gaps between sprite records
+        const width = pkt.layout.width;
+        const gaps = F.textGaps(spans, pkt.size);
+        const ratio = gaps.reduce((a, [x, y]) => a + (y - x), 0) / Math.max(1, pkt.size);
+        let texts = [];
+        if (F.scansText(pkt) && ratio <= F.MAX_TEXT_GAP_RATIO) {
+          for (const [lo, hi] of gaps) {
+            if (hi - lo < 8) continue;
+            texts = texts.concat(
+              F.scanTexts(pkt.raw, model, lo, hi, width === 2 ? 4 : 6, width)
+                .filter(r => F.plausibleRun(r[2], width)));
+          }
+        }
         if (texts.length)
-          info.texts = F.groupRuns(texts, 2).map((g, i) => ({
-            parts: g.parts, chars: g.chars, text: g.text, width: 2, label: `대사 ${i + 1}` }));
+          info.texts = F.groupRuns(texts, width).map((g, i) => ({
+            parts: g.parts, chars: g.chars, text: g.text, width, label: `대사 ${i + 1}` }));
       }
     }
     if (banks.length)
