@@ -164,7 +164,7 @@ export function describe(data, opts = {}) {
           }
         }
         if (texts.length)
-          info.texts = F.groupRuns(texts, width).map((g, i) => ({
+          info.texts = F.groupRuns(texts, width, F.DIALOGUE_MAX_GAP).map((g, i) => ({
             parts: g.parts, chars: g.chars, text: g.text, width, label: `대사 ${i + 1}` }));
       }
     }

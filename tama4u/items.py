@@ -127,9 +127,9 @@ def effective_kind(pkt):
 # Outings, minigames and character definitions are programs, not shop
 # items: their body is code with sprite records and dialogue scattered
 # through it, and the stat block offsets mean nothing.  The destination's
-# first byte separates them -- 0x94 on iD L / P's / 4U (iD parks its
-# outings on 0x14 instead, and those already read correctly).
-PROGRAM_DEST = 0x94
+# first byte separates them.
+# 0x94 on iD L / P's / 4U; iD parks its outings on 0x14.
+PROGRAM_DESTS = (0x94, 0x14)
 # 94 02 5b 02 is a program blob we have not decoded (VDPs, LCD tweaks).
 # Its body is compressed, so any "text" a 1-byte charset finds there is an
 # artifact -- scanning it produced 50-240 nonsense blocks per file.
@@ -139,13 +139,17 @@ OPAQUE_PROGRAM_DEST = '94025b02'
 # not a sprites+dialogue layout: real outings sit at 1-5%, undecoded blobs
 # at 22-99%.
 MAX_TEXT_GAP_RATIO = 0.20
+# Runs one byte apart are line breaks inside one speech; a wider gap means a
+# new speaker.  Merging across those (the letter body's max_gap of 8) glued a
+# whole outing's cast into a single paragraph.
+DIALOGUE_MAX_GAP = 2
 # Real Japanese does not repeat the same kana four times running; a program
 # blob does it constantly.
 _REPEAT = re.compile(r'([^\u3000 ])\1{3,}')
 
 
 def is_program(pkt):
-    return pkt.raw[OFF_DEST] == PROGRAM_DEST
+    return pkt.raw[OFF_DEST] in PROGRAM_DESTS
 
 
 def scans_text(pkt):

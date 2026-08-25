@@ -238,7 +238,8 @@ def describe(data):
                         {'parts': g['parts'], 'chars': g['chars'],
                          'text': g['text'], 'width': width,
                          'label': f"대사 {i + 1}"}
-                        for i, g in enumerate(charset.group_runs(texts, width))]
+                        for i, g in enumerate(charset.group_runs(
+                            texts, width, max_gap=items.DIALOGUE_MAX_GAP))]
         if banks:
             info['banks'] = [{'offset': b['offset'],
                               'loose': b.get('loose'),

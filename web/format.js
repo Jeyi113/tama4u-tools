@@ -114,9 +114,8 @@ export const VERSION_PRESETS = {
 // Outings, minigames and character definitions are programs, not shop
 // items: their body is code with sprite records and dialogue scattered
 // through it, and the stat block offsets mean nothing.  The destination's
-// first byte separates them -- 0x94 on iD L / P's / 4U (iD parks its
-// outings on 0x14 instead, and those already read correctly).
-export const PROGRAM_DEST = 0x94;
+// first byte separates them: 0x94 on iD L / P's / 4U, 0x14 for iD outings.
+export const PROGRAM_DESTS = [0x94, 0x14];
 // 94 02 5b 02 is a program blob we have not decoded (VDPs, LCD tweaks).
 // Its body is compressed, so any "text" a 1-byte charset finds there is an
 // artifact -- scanning it produced 50-240 nonsense blocks per file.
@@ -126,11 +125,15 @@ export const OPAQUE_PROGRAM_DEST = '94025b02';
 // not a sprites+dialogue layout: real outings sit at 1-5%, undecoded blobs
 // at 22-99%.
 export const MAX_TEXT_GAP_RATIO = 0.20;
+// Runs one byte apart are line breaks inside one speech; a wider gap means a
+// new speaker.  Merging across those (the letter body's max_gap of 8) glued a
+// whole outing's cast into a single paragraph.
+export const DIALOGUE_MAX_GAP = 2;
 // Real Japanese does not repeat the same kana four times running; a program
 // blob does it constantly.
 const REPEAT = /([^\u3000 ])\1{3,}/;
 
-export const isProgram = p => p.raw[OFF_DEST] === PROGRAM_DEST;
+export const isProgram = p => PROGRAM_DESTS.includes(p.raw[OFF_DEST]);
 export const scansText = p =>
   Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4))
     .map(x => x.toString(16).padStart(2, '0')).join('') !== OPAQUE_PROGRAM_DEST;
