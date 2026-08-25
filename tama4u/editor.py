@@ -4,6 +4,7 @@ Serves editor.html and two JSON endpoints; all format logic stays in
 this package so the browser is a pure view layer.
 """
 import base64
+import collections
 import json
 import os
 import struct
@@ -234,12 +235,27 @@ def describe(data):
                                 min_len=4 if width == 2 else 6, width=width)
                             if items.plausible_run(r[2], width)]
                 if texts:
-                    info['texts'] = [
-                        {'parts': g['parts'], 'chars': g['chars'],
-                         'text': g['text'], 'width': width,
-                         'label': f"대사 {i + 1}"}
-                        for i, g in enumerate(charset.group_runs(
-                            texts, width, max_gap=items.DIALOGUE_MAX_GAP))]
+                    groups = charset.group_runs(texts, width,
+                                                max_gap=items.DIALOGUE_MAX_GAP)
+                    # Some files store a line twice (the P's travel packets
+                    # keep a second copy right after the first) or reuse one
+                    # phrase in several entries.  That is the file's own
+                    # content, not a scan artefact -- but editing one copy
+                    # and not the others leaves stale text on the device, so
+                    # each block says how many copies it has.
+                    seen = collections.Counter(g['text'] for g in groups)
+                    nth = collections.Counter()
+                    info['texts'] = []
+                    for i, g in enumerate(groups):
+                        n = seen[g['text']]
+                        nth[g['text']] += 1
+                        label = f"대사 {i + 1}"
+                        if n > 1:
+                            label += f" · 중복 {nth[g['text']]}/{n}"
+                        info['texts'].append(
+                            {'parts': g['parts'], 'chars': g['chars'],
+                             'text': g['text'], 'width': width,
+                             'dup_count': n, 'label': label})
         if banks:
             info['banks'] = [{'offset': b['offset'],
                               'loose': b.get('loose'),

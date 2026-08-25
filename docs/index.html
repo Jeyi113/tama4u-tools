@@ -1431,9 +1431,22 @@ function describe(data, opts = {}) {
                 .filter(r => plausibleRun(r[2], width)));
           }
         }
-        if (texts.length)
-          info.texts = groupRuns(texts, width, DIALOGUE_MAX_GAP).map((g, i) => ({
-            parts: g.parts, chars: g.chars, text: g.text, width, label: `대사 ${i + 1}` }));
+        if (texts.length) {
+          const groups = groupRuns(texts, width, DIALOGUE_MAX_GAP);
+          // Some files store a line twice (the P's travel packets keep a
+          // second copy right after the first) or reuse one phrase in
+          // several entries.  That is the file's own content, not a scan
+          // artefact -- but editing one copy and not the others leaves stale
+          // text on the device, so each block says how many copies it has.
+          const seen = {}, nth = {};
+          for (const g of groups) seen[g.text] = (seen[g.text] || 0) + 1;
+          info.texts = groups.map((g, i) => {
+            const n = seen[g.text];
+            nth[g.text] = (nth[g.text] || 0) + 1;
+            const label = `대사 ${i + 1}` + (n > 1 ? ` · 중복 ${nth[g.text]}/${n}` : '');
+            return { parts: g.parts, chars: g.chars, text: g.text, width, dup_count: n, label };
+          });
+        }
       }
     }
     if (banks.length)
