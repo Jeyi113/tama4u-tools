@@ -88,7 +88,7 @@ def describe(data):
             'dest_label': items.get_destination(pkt),
             'dest_options': [{'label': l, 'code': c}
                              for l, c, _ in destinations.options(pkt.model)],
-            'is_item': (pkt.type_sig[4:6] != b'\x48\x03'
+            'is_item': (not character.is_character(pkt)
                         and (items.effective_kind(pkt) in items.BANK_OFFSETS
                              or pkt.model != '4U')),
         }
@@ -130,9 +130,10 @@ def describe(data):
                          'label': '편지 본문' if i == 0 else f'편지 본문 {i + 1}'})
         if items.effective_kind(pkt) == 'ac' and pkt.packet_class == 'S':
             # wear positions: 4 body types x 14 frame rows of (x, y)
-            info['acc_pos'] = [[list(xy) for xy in rows]
-                               for rows in items.get_acc_positions(pkt)]
-            info['acc_rows'] = items.ACC_ROW_TO_POSE
+            rows = items.get_acc_positions(pkt)
+            if rows is not None:
+                info['acc_pos'] = [[list(xy) for xy in r] for r in rows]
+                info['acc_rows'] = items.ACC_ROW_TO_POSE
         # collect sprite banks: fixed offset for plain items; for program/
         # definition packets (gm, dlode, rec, minigames with odd ids) scan
         # the packet's own region for count-banks, then loose records

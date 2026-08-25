@@ -192,13 +192,21 @@ def acc_block_len(pkt):
     "accessories" are ordinary items whose bank starts right at the body
     offset, so the u16 there is a frame count instead.  The two values are
     far apart (784/960 vs a handful of frames), so read it, don't guess."""
-    n = struct.unpack_from('>H', pkt.raw, pkt.layout['bank'])[0]
+    o = pkt.layout['bank']
+    if o + 2 > pkt.size:            # nested reward packets can be tiny
+        return 0
+    n = struct.unpack_from('>H', pkt.raw, o)[0]
     return n if n in ACC_BLOCK_LENS else 0
 
 
 def get_acc_positions(pkt):
-    """[body_type][row] -> (x, y)."""
+    """[body_type][row] -> (x, y), or None when the table does not fit.
+
+    A nested reward accessory can be shorter than the block it would need,
+    so check before reading rather than trusting the section byte."""
     base = acc_pos_offset(pkt)
+    if base + 2 * ACC_BODY_TYPES * ACC_FRAMES > pkt.size:
+        return None
     return [[(pkt.raw[base + 2 * (b * ACC_FRAMES + i)],
               pkt.raw[base + 2 * (b * ACC_FRAMES + i) + 1])
              for i in range(ACC_FRAMES)] for b in range(ACC_BODY_TYPES)]
@@ -366,8 +374,12 @@ def like_roster(pkt):
 
 
 def get_compat(pkt):
-    """Which devices will accept this packet (byte 0xFF bitmask)."""
-    mask = pkt.raw[models.OFF_COMPAT_MASK]
+    """Which devices will accept this packet (byte 0xFF bitmask).
+
+    Nested reward packets can be shorter than 0x100 bytes, so the field is
+    not always present."""
+    mask = (pkt.raw[models.OFF_COMPAT_MASK]
+            if pkt.size > models.OFF_COMPAT_MASK else 0)
     return {'mask': mask,
             'models': [m for m, bit in models.COMPAT_BIT.items() if mask & bit]}
 

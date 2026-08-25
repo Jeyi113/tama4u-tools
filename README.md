@@ -11,6 +11,35 @@ python3 -m tama4u verify <dir|file>            # 체크섬 전수 검증
 python3 -m tama4u export <file.jpg> -o out/    # 스프라이트 → 4bpp BMP
 ```
 
+## 실행
+
+**웹 데모** — 설치 없이 브라우저에서 바로:
+<https://jeyi113.github.io/tama4u-tools/>
+
+`docs/index.html` 은 자기 완결형이라 내려받아 더블클릭해도 똑같이 동작한다.
+파일은 브라우저 안에서만 처리되고 어디로도 전송되지 않는다. 참조 스프라이트를
+싣지 않으므로 기기 시뮬레이션만 빠져 있다.
+
+**로컬 파이썬 에디터** — 시뮬레이션 포함, 배치 작업용 CLI 제공:
+
+```bash
+python3 -m tama4u edit          # http://127.0.0.1:8477
+```
+
+### 같은 로직, 두 구현
+
+포맷 로직은 파이썬(`tama4u/`)이 기준이고, 웹용 JS 포팅(`web/`)이 그것을
+그대로 옮긴 것이다. 둘이 조용히 어긋나지 않도록 **배포되는 번들 자체를**
+파이썬과 파일 단위로 대조한다:
+
+```bash
+python3 web/build.py                              # docs/index.html 생성
+python3 web/dump.py <pack-dir> > /tmp/py.json     # 파이썬 기준 덤프
+node web/verify-bundle.mjs /tmp/py.json <pack-dir>
+```
+
+다운로드 팩 4종 **5,706개 파일 전부 일치**한다.
+
 ## 스크린샷
 
 ### 아이템 편집

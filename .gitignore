@@ -8,3 +8,6 @@ incoming/
 tama4u/charasprites/
 tama4u/itemindex.json
 tama4u/charset*.json
+
+# web/charset-data.js is generated from charset*.json but *is* committed:
+# it is the encoding table the browser build needs to work at all.

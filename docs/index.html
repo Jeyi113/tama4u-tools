@@ -1,0 +1,2503 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>tama4u editor</title>
+<style>
+  :root{--bg:#f5f2ec;--card:#fff;--ink:#2b2620;--line:#e2dcd2;--accent:#e8564a;--ok:#3aa657}
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 -apple-system,'Apple SD Gothic Neo',sans-serif;background:var(--bg);color:var(--ink)}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header h1{font-size:15px;margin:0}
+  header img{height:34px;image-rendering:pixelated;border:1px solid var(--line);border-radius:4px}
+  .btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:13px}
+  .btn:hover{border-color:#c8c0b2}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  main{display:none;grid-template-columns:minmax(300px,360px) minmax(0,1fr);gap:14px;
+    padding:14px;max-width:1400px;margin:0 auto;align-items:start}
+  @media (max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+  main>div{min-width:0}
+  .off{opacity:.4}
+  .off input,.off select,.off button{pointer-events:none;background:#f2efe9}
+  .offtag{font-size:10px;color:#a08c6a;margin-left:4px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .card h2{font-size:13px;margin:0 0 10px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px}
+  label{display:block;font-size:12px;color:#8a8172;margin:8px 0 2px}
+  input,select{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fdfcfa}
+  .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 90px;min-width:90px}
+  .statgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;text-align:center}
+  .statgrid label{margin:0;font-size:11px}
+  .likes{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:3px;
+    max-height:260px;overflow:auto}
+  .likes button{font-size:10px;padding:3px 1px;border:1px solid var(--line);border-radius:4px;background:#fdfcfa;cursor:pointer;overflow:hidden;white-space:nowrap}
+  .likes button.l1{background:#bdf0c3;border-color:var(--ok)}
+  .likes button.l1::before{content:'＋ '}
+  .likes button.l2{background:#f8c6c1;border-color:var(--accent)}
+  .likes button.l2::before{content:'－ '}
+  #drop{margin:60px auto;max-width:520px;padding:60px 30px;border:2px dashed #c8c0b2;border-radius:16px;text-align:center;color:#8a8172;cursor:pointer}
+  #drop.over{border-color:var(--accent);color:var(--accent)}
+  .tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;align-items:center}
+  .tabs button{border:1px solid var(--line);background:#fdfcfa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}
+  .tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .tabs .bank-label{font-size:11px;color:#8a8172;margin:0 2px 0 8px}
+  #canvasWrap{overflow:auto;border:1px solid var(--line);border-radius:8px;background:
+    repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/16px 16px;display:inline-block;max-width:100%}
+  #canvasWrap.opaque{background:#fff}
+  canvas{display:block;image-rendering:pixelated;cursor:crosshair}
+  .pal{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0}
+  .sw{width:26px;height:26px;border-radius:6px;border:2px solid var(--line);cursor:pointer;position:relative}
+  .sw.on{border-color:var(--ink);box-shadow:0 0 0 2px #fff inset}
+  .sw.t::after{content:'T';position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:#666}
+  .hint{font-size:12px;color:#8a8172;margin-top:6px}
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;
+    padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:80%}
+  #toast.show{opacity:1}
+  .pksel{margin-bottom:0}
+  #pkList{display:flex;flex-direction:column;gap:3px}
+  .pkrow{display:flex;gap:6px;align-items:baseline;text-align:left;width:100%;
+    border:1px solid var(--line);background:#fdfcfa;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit}
+  .pkrow:hover{border-color:#c8c0b2}
+  .pkrow.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .pkrow.on .pksub{color:#cfc7ba}
+  .pkrow .pkname{font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pksub{font-size:11px;color:#8a8172;white-space:nowrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>🍙 tama4u editor</h1>
+  <img id="preview" hidden alt="">
+  <span id="fname" style="color:#8a8172;font-size:12px"></span>
+  <span id="modelBadge" style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:#efe9dd;color:#6b6154"></span>
+  <span style="flex:1"></span>
+  <button class="btn" id="openBtn">파일 열기</button>
+  <button class="btn primary" id="saveBtn" hidden>커스텀 .jpg 다운로드</button>
+</header>
+<input type="file" id="fileInput" accept=".jpg,.jpeg" hidden>
+
+<div id="drop">4U 아이템 .jpg 를 여기로 드래그<br>(또는 클릭해서 선택)</div>
+
+<main id="main">
+  <div>
+    <div class="card pksel" id="pkCard" hidden>
+      <h2>패킷 <span style="font-weight:400;text-transform:none" id="pkCount"></span></h2>
+      <div id="pkList"></div>
+    </div>
+    <div class="card" id="metaCard">
+      <h2>기본 정보</h2>
+      <label id="nameLabel">이름 (기기 표시)</label><input id="fName">
+      <div id="name2Box" hidden><label id="name2Label">Name 2 (프로필 표시)</label><input id="fName2"></div>
+      <div class="hint" id="nameNote" hidden></div>
+      <div class="row">
+        <div><label id="serialLabel">시리얼</label><input id="fSerial" type="number" min="0" max="65535"></div>
+        <div id="priceBox"><label>가격</label><input id="fPrice" type="number" min="0" max="65535"></div>
+        <div id="hungerBox"><label>만복도</label><input id="fHunger" type="number" min="0" max="255"></div>
+        <div id="friendBox"><label>친밀도</label><input id="fFriend" type="number" min="0" max="255"></div>
+      </div>
+      <div id="destBox">
+        <label>행선지 (destination)</label>
+        <select id="fDest">
+          <option value="81010201">레스토랑 · 식사</option>
+          <option value="81010d02">레스토랑 · 간식</option>
+          <option value="81010101">냉장고 직행 · 식사 (비매품)</option>
+          <option value="81010102">냉장고 직행 · 간식 (비매품)</option>
+          <option value="81042a01">타마데파 · 장난감</option>
+          <option value="81033300">타마모리 · 옷</option>
+          <option value="81023400">타마모리 · 액세서리</option>
+          <option value="81071f00">고치 인테리어 · 방</option>
+        </select>
+        <div class="hint">보관함 분류는 시리얼 대역을 따르는 것으로 관측됨:<br>
+        0x04xx(1024~)=장난감 상점 · 0x06xx(1536~)=쿠폰→보관함 스페셜 · 0x07xx(1792~)=장식.<br>
+        가격 0 이면 비매품으로 취급.</div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button class="btn" id="swapBtn">이 패킷을 .jpg로 교체</button>
+        <span class="hint" id="swapNote" style="margin:0">다른 아이템 파일의 내용으로 통째로 바꿉니다</span>
+      </div>
+      <input type="file" id="swapInput" accept=".jpg,.jpeg" hidden>
+      <div class="hint" id="wardrobeNote" hidden style="color:#6b8f5e">
+        캐릭터 본체의 옷장 패킷입니다 — 상점을 거치지 않으므로 행선지·가격·
+        스탯이 없습니다. 스프라이트와 이름만 편집하세요.
+      </div>
+      <div class="hint" id="unverifiedNote" hidden style="color:#a8632f">
+        이 패킷은 행선지 코드가 표에 없어 드롭다운을 잠급니다.
+      </div>
+      <div id="animBox" hidden>
+        <label>애니메이션 ID (기기 내장 동작 참조, 보통 A=B)</label>
+        <div class="row">
+          <input id="fAnimA" type="number" min="0" max="255" placeholder="A">
+          <input id="fAnimB" type="number" min="0" max="255" placeholder="B">
+        </div>
+      </div>
+    </div>
+    <div class="card" id="statCard">
+      <h2>스탯 (아이템 사용 효과)</h2>
+      <div class="statgrid">
+        <div><label>지력</label><input id="s0" type="number" min="0" max="99"></div>
+        <div><label>스타일</label><input id="s1" type="number" min="0" max="99"></div>
+        <div><label>카리스마</label><input id="s2" type="number" min="0" max="99"></div>
+        <div><label>미식</label><input id="s3" type="number" min="0" max="99"></div>
+        <div><label>근력</label><input id="s4" type="number" min="0" max="99"></div>
+      </div>
+    </div>
+    <div class="card" id="verCard" hidden>
+      <h2>기기 버전 <span style="font-weight:400;text-transform:none" id="verNow"></span></h2>
+      <label>대상 버전</label>
+      <select id="verSel"></select>
+      <div class="row" style="margin-top:6px">
+        <div><label>카탈로그 인덱스</label><input id="verIdx" type="number" min="0" max="255"></div>
+        <div><label>호환 슬롯 1</label><input id="verC0" placeholder="0000"></div>
+        <div><label>호환 슬롯 2</label><input id="verC1" placeholder="0000"></div>
+      </div>
+      <button class="btn" id="verApply" style="margin-top:8px">이 버전으로 변환</button>
+      <div class="hint" id="verNote"></div>
+    </div>
+    <div class="card" id="cvCard" hidden>
+      <h2>기종 변환 <span style="font-weight:400;text-transform:none" id="cvNow"></span></h2>
+      <div class="row" id="cvBtns"></div>
+      <label style="margin-top:10px">호환 기종 (0xFF 비트마스크)</label>
+      <div id="cvCompat" class="likes" style="grid-template-columns:repeat(3,1fr)"></div>
+      <div class="hint" id="cvCompatNote"></div>
+      <div class="hint" id="cvNote"></div>
+    </div>
+    <div class="card" id="charCard" hidden>
+      <h2>캐릭터 스탯</h2>
+      <div id="charFields"></div>
+    </div>
+    <div class="card" id="emptyNote" hidden>
+      <h2>편집 항목 없음</h2>
+      <div class="hint">이 패킷에는 스프라이트·대사·스탯이 없습니다 (정의/헤더 전용).</div>
+    </div>
+    <div class="card" id="textCard" hidden>
+      <h2>대사 / 텍스트 <span style="font-weight:400;text-transform:none">(길이 고정, 남는 칸은 공백 처리)</span></h2>
+      <div id="texts"></div>
+    </div>
+    <div class="card" id="likesCard">
+      <h2>좋아함 / 싫어함 <span style="font-weight:400;text-transform:none">(클릭: 없음→<span style="color:var(--ok)">좋아함</span>→<span style="color:var(--accent)">싫어함</span>)</span></h2>
+      <div class="likes" id="likes"></div>
+      <div class="hint" id="likesNote" hidden>이 기종은 슬롯↔캐릭터 대응이 아직 확인되지 않아 번호로 표시합니다.</div>
+    </div>
+  </div>
+
+  <div class="card" id="spriteCard">
+    <h2>스프라이트 <span id="bankInfo" style="font-weight:400;text-transform:none"></span></h2>
+    <div class="tabs" id="frameTabs"></div>
+    <div style="margin:-4px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <label style="margin:0;display:flex;gap:4px;align-items:center;font-size:12px;color:var(--ink)">
+        <input type="checkbox" id="gridChk" style="width:auto" checked> 그리드</label>
+      <button class="btn" id="impBtn">BMP 가져오기</button>
+      <button class="btn" id="expBtn">BMP 내보내기</button>
+      <button class="btn" id="thumbBtn">이 프레임으로 썸네일(JPEG 미리보기) 만들기</button>
+      <span class="hint" id="thumbNote" style="margin-left:8px"></span></div>
+    <input type="file" id="bmpInput" accept=".bmp" hidden>
+    <div id="canvasWrap"><canvas id="cv"></canvas></div>
+    <div class="pal" id="pal"></div>
+    <div class="hint">좌클릭 그리기 · 우클릭 스포이드 · 팔레트 더블클릭 색 변경 · Ctrl/Cmd+Z 되돌리기<br>
+      <span id="transHint">팔레트 0번(T)은 투명색.</span> 슬롯 용량 초과 시 저장할 때 알려줍니다.</div>
+    <div id="stripRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <div style="font-size:12px;color:#8a8172;margin-bottom:6px">
+        체형 합성 <span id="stripInfo"></span></div>
+      <div id="strip" style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px"></div>
+    </div>
+    <div id="chAccRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <div style="font-size:12px;color:#8a8172;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>내장 액세서리 합성 <span id="chAccInfo"></span></span>
+        <label style="margin:0">X 오프셋</label>
+        <input id="chAccDx" type="number" value="0" style="width:64px">
+        <label style="margin:0">Y 오프셋</label>
+        <input id="chAccDy" type="number" value="0" style="width:64px">
+        <label style="margin:0;display:flex;align-items:center;gap:4px">
+          <input id="chAccOnly" type="checkbox" style="width:auto"> 액세서리만</label>
+      </div>
+      <div id="chAcc" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px"></div>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="chAccFill">모든 프레임을 정지 포즈 값으로</button>
+        <button class="btn" id="chAccClear">좌표표 비우기 (그대로 겹치기)</button>
+      </div>
+      <div class="hint" id="chAccNote"></div>
+    </div>
+    <div id="animRow" style="display:flex;align-items:center;gap:12px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <div id="animWrap" style="border:1px solid var(--line);border-radius:8px;background:repeating-conic-gradient(#eee 0 25%,#fff 0 50%) 0 0/12px 12px">
+        <canvas id="animCv"></canvas>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#8a8172;margin-bottom:4px">애니메이션 시뮬레이션 <span id="animInfo"></span></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn" id="animBtn">⏸</button>
+          <input type="range" id="animFps" min="1" max="15" value="5" style="width:110px">
+          <span class="hint" id="animFpsLabel" style="margin:0">5 fps</span>
+        </div>
+        <div class="hint" id="animNote" style="max-width:230px"></div>
+      </div>
+    </div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)" id="simSection" hidden>
+      <h2 style="font-size:13px;margin:0 0 10px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px">
+        기기 시뮬레이션 <span id="simStatus" style="font-weight:400;text-transform:none">— 체형별 기준 캐릭터에 합성</span></h2>
+      <div id="simWrap" style="border:1px solid var(--line);border-radius:8px;display:inline-block;overflow:hidden">
+        <canvas id="simCv"></canvas>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <select id="simBody" style="width:auto">
+          <option value="0">Body type 1</option>
+          <option value="1">Body type 2</option>
+          <option value="2">Body type 3</option>
+          <option value="3">Body type 4</option>
+        </select>
+        <button class="btn" id="simBtn">⏸</button>
+        <label style="margin:0;display:flex;gap:4px;align-items:center;font-size:12px;color:var(--ink)">
+          <input type="checkbox" id="simGridChk" style="width:auto"> 그리드</label>
+        <span class="hint" id="simLabel" style="margin:0"></span>
+      </div>
+      <div id="accPosCard" hidden style="margin-top:12px">
+        <h2 style="font-size:13px;margin:0 0 6px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px">
+          액세서리 착용 좌표 <span style="font-weight:400;text-transform:none">— 선택한 body type의 14행 (중심 64,50)</span></h2>
+        <div id="accGrid" style="display:grid;grid-template-columns:repeat(5,auto);gap:4px;align-items:center;font-size:12px"></div>
+        <div class="hint">미리보기에서 액세서리를 <b>드래그</b>하면 1px 그리드에 스냅되어 좌표가 바뀝니다.
+          모든 body type을 채워야 어느 체형에서도 제자리에 붙습니다.</div>
+      </div>
+    </div>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+(function(){
+// Generated from tama4u/charset*.json (python3 -m tama4u charset <pack>).
+// Internal text codes -> characters, per model.  4U stores each code as
+// 0x04xx; the other three use the bare byte.
+const CHARSET = {"4U":{"1025":"あ","1026":"い","1027":"う","1028":"え","1029":"お","1030":"か","1031":"き","1032":"く","1033":"け","1034":"こ","1035":"さ","1036":"し","1037":"す","1038":"せ","1039":"そ","1040":"た","1041":"ち","1042":"つ","1043":"て","1044":"と","1045":"な","1046":"に","1047":"ぬ","1048":"ね","1049":"の","1050":"は","1051":"ひ","1052":"ふ","1053":"へ","1054":"ほ","1055":"ま","1056":"み","1057":"む","1058":"め","1059":"も","1060":"や","1061":"ゆ","1062":"よ","1063":"ら","1064":"り","1065":"る","1066":"れ","1067":"ろ","1068":"わ","1069":"を","1070":"ん","1071":"ぁ","1072":"ぃ","1073":"ぅ","1074":"ぇ","1075":"ぉ","1076":"っ","1077":"ゃ","1078":"ゅ","1079":"ょ","1080":"が","1081":"ぎ","1082":"ぐ","1083":"げ","1084":"ご","1085":"ざ","1086":"じ","1087":"ず","1088":"ぜ","1089":"ぞ","1090":"だ","1091":"ぢ","1092":"づ","1093":"で","1094":"ど","1095":"ば","1096":"び","1097":"ぶ","1098":"べ","1099":"ぼ","1100":"ぱ","1101":"ぴ","1102":"ぷ","1103":"ぺ","1104":"ぽ","1105":"ー","1106":"～","1107":"…","1108":"、","1109":"。","1110":"（","1111":"）","1112":"「","1113":"」","1114":"．","1115":"・","1116":"！","1117":"？","1118":"＆","1121":"▽","1122":"◎","1123":"★","1124":"＠","1125":"♪","1127":"↑","1132":"　","1133":"0","1134":"１","1135":"２","1136":"３","1137":"４","1138":"５","1139":"６","1140":"7","1141":"８","1142":"９","1143":"ア","1144":"イ","1145":"ウ","1146":"エ","1147":"オ","1148":"カ","1149":"キ","1150":"ク","1151":"ケ","1152":"コ","1153":"サ","1154":"シ","1155":"ス","1156":"セ","1157":"ソ","1158":"タ","1159":"チ","1160":"ツ","1161":"テ","1162":"ト","1163":"ナ","1164":"ニ","1165":"ヌ","1166":"ネ","1167":"ノ","1168":"ハ","1169":"ヒ","1170":"フ","1171":"ヘ","1172":"ホ","1173":"マ","1174":"ミ","1175":"ム","1176":"メ","1177":"モ","1178":"ヤ","1179":"ユ","1180":"ヨ","1181":"ラ","1182":"リ","1183":"ル","1184":"レ","1185":"ロ","1186":"ワ","1187":"ヲ","1188":"ン","1189":"ァ","1190":"ィ","1191":"ゥ","1192":"ェ","1193":"ォ","1194":"ッ","1195":"ャ","1196":"ュ","1197":"ョ","1198":"ガ","1199":"ギ","1200":"グ","1201":"ゲ","1202":"ゴ","1203":"ザ","1204":"ジ","1205":"ズ","1206":"ゼ","1207":"ゾ","1208":"ダ","1209":"ヂ","1210":"ヅ","1211":"デ","1212":"ド","1213":"バ","1214":"ビ","1215":"ブ","1216":"ベ","1217":"ボ","1218":"パ","1219":"ピ","1220":"プ","1221":"ペ","1222":"ポ","1248":"A","1249":"B","1250":"C","1251":"D","1252":"Ｅ","1253":"F","1254":"G","1255":"H","1256":"I","1257":"J","1258":"K","1259":"L","1260":"Ｍ","1261":"Ｎ","1262":"Ｏ","1263":"P","1264":"Q","1265":"R","1266":"S","1267":"Ｔ","1268":"U","1269":"Ｖ","1270":"W","1271":"X","1272":"Y","1273":"Z","1276":"＋"},"iD":{"1":"あ","2":"い","3":"う","4":"え","5":"お","6":"か","7":"き","8":"く","9":"け","10":"こ","11":"さ","12":"し","13":"す","14":"せ","15":"そ","16":"た","17":"ち","18":"つ","19":"て","20":"と","21":"な","22":"に","23":"ぬ","24":"ね","25":"の","26":"は","27":"ひ","28":"ふ","29":"へ","30":"ほ","31":"ま","32":"み","33":"む","34":"め","35":"も","36":"や","37":"ゆ","38":"よ","39":"ら","40":"り","41":"る","42":"れ","43":"ろ","44":"わ","45":"を","46":"ん","47":"ぁ","48":"ぃ","49":"ぅ","50":"ぇ","51":"ぉ","52":"っ","53":"ゃ","54":"ゅ","55":"ょ","56":"が","57":"ぎ","58":"ぐ","59":"げ","60":"ご","61":"ざ","62":"じ","63":"ず","64":"ぜ","65":"ぞ","66":"だ","67":"ぢ","68":"づ","69":"で","70":"ど","71":"ば","72":"び","73":"ぶ","74":"べ","75":"ぼ","76":"ぱ","77":"ぴ","78":"ぷ","79":"ぺ","80":"ぽ","81":"ー","82":"～","83":"…","84":"、","85":"。","86":"（","87":"）","88":"「","89":"」","90":"．","91":"・","92":"！","93":"？","94":"＆","97":"▽","98":"◎","99":"★","100":"＠","101":"♪","103":"↑","108":"　","109":"０","110":"１","111":"２","112":"３","113":"４","114":"５","115":"６","116":"7","117":"８","118":"９","119":"ア","120":"イ","121":"ウ","122":"エ","123":"オ","124":"カ","125":"キ","126":"ク","127":"ケ","128":"コ","129":"サ","130":"シ","131":"ス","132":"セ","133":"ソ","134":"タ","135":"チ","136":"ツ","137":"テ","138":"ト","139":"ナ","140":"ニ","141":"ヌ","142":"ネ","143":"ノ","144":"ハ","145":"ヒ","146":"フ","147":"ヘ","148":"ホ","149":"マ","150":"ミ","151":"ム","152":"メ","153":"モ","154":"ヤ","155":"ユ","156":"ヨ","157":"ラ","158":"リ","159":"ル","160":"レ","161":"ロ","162":"ワ","163":"ヲ","164":"ン","165":"ァ","166":"ィ","167":"ゥ","168":"ェ","169":"ォ","170":"ッ","171":"ャ","172":"ュ","173":"ョ","174":"ガ","175":"ギ","176":"グ","177":"ゲ","178":"ゴ","179":"ザ","180":"ジ","181":"ズ","182":"ゼ","183":"ゾ","184":"ダ","185":"ヂ","186":"ヅ","187":"デ","188":"ド","189":"バ","190":"ビ","191":"ブ","192":"ベ","193":"ボ","194":"パ","195":"ピ","196":"プ","197":"ペ","198":"ポ","224":"A","225":"B","226":"Ｃ","227":"D","228":"Ｅ","229":"F","230":"G","231":"H","232":"I","233":"J","234":"Ｋ","235":"L","236":"Ｍ","237":"N","238":"Ｏ","239":"Ｐ","240":"Q","241":"R","242":"S","243":"T","244":"U","245":"Ｖ","246":"W","247":"X","248":"Y","249":"Z","252":"＋"},"iDL":{"1":"あ","2":"い","3":"う","4":"え","5":"お","6":"か","7":"き","8":"く","9":"け","10":"こ","11":"さ","12":"し","13":"す","14":"せ","15":"そ","16":"た","17":"ち","18":"つ","19":"て","20":"と","21":"な","22":"に","23":"ぬ","24":"ね","25":"の","26":"は","27":"ひ","28":"ふ","29":"へ","30":"ほ","31":"ま","32":"み","33":"む","34":"め","35":"も","36":"や","37":"ゆ","38":"よ","39":"ら","40":"り","41":"る","42":"れ","43":"ろ","44":"わ","45":"を","46":"ん","47":"ぁ","48":"ぃ","49":"ぅ","50":"ぇ","51":"ぉ","52":"っ","53":"ゃ","54":"ゅ","55":"ょ","56":"が","57":"ぎ","58":"ぐ","59":"げ","60":"ご","61":"ざ","62":"じ","63":"ず","64":"ぜ","65":"ぞ","66":"だ","67":"ぢ","68":"づ","69":"で","70":"ど","71":"ば","72":"び","73":"ぶ","74":"べ","75":"ぼ","76":"ぱ","77":"ぴ","78":"ぷ","79":"ぺ","80":"ぽ","81":"ー","82":"～","83":"…","84":"、","85":"。","86":"（","87":"）","88":"「","89":"」","90":"．","91":"・","92":"！","93":"？","94":"＆","97":"▽","98":"◎","99":"★","100":"＠","101":"♪","103":"↑","108":"　","109":"0","110":"１","111":"２","112":"３","113":"４","114":"５","115":"６","116":"7","117":"８","118":"９","119":"ア","120":"イ","121":"ウ","122":"エ","123":"オ","124":"カ","125":"キ","126":"ク","127":"ケ","128":"コ","129":"サ","130":"シ","131":"ス","132":"セ","133":"ソ","134":"タ","135":"チ","136":"ツ","137":"テ","138":"ト","139":"ナ","140":"ニ","141":"ヌ","142":"ネ","143":"ノ","144":"ハ","145":"ヒ","146":"フ","147":"ヘ","148":"ホ","149":"マ","150":"ミ","151":"ム","152":"メ","153":"モ","154":"ヤ","155":"ユ","156":"ヨ","157":"ラ","158":"リ","159":"ル","160":"レ","161":"ロ","162":"ワ","163":"ヲ","164":"ン","165":"ァ","166":"ィ","167":"ゥ","168":"ェ","169":"ォ","170":"ッ","171":"ャ","172":"ュ","173":"ョ","174":"ガ","175":"ギ","176":"グ","177":"ゲ","178":"ゴ","179":"ザ","180":"ジ","181":"ズ","182":"ゼ","183":"ゾ","184":"ダ","185":"ヂ","186":"ヅ","187":"デ","188":"ド","189":"バ","190":"ビ","191":"ブ","192":"ベ","193":"ボ","194":"パ","195":"ピ","196":"プ","197":"ペ","198":"ポ","224":"A","225":"B","226":"C","227":"D","228":"E","229":"F","230":"G","231":"H","232":"I","233":"J","234":"K","235":"L","236":"M","237":"N","238":"O","239":"P","240":"Q","241":"R","242":"マ","243":"T","244":"U","245":"V","246":"W","247":"X","248":"Y","249":"Z","252":"＋"},"P's":{"1":"あ","2":"い","3":"う","4":"え","5":"お","6":"か","7":"き","8":"く","9":"け","10":"こ","11":"さ","12":"し","13":"す","14":"せ","15":"そ","16":"た","17":"ち","18":"つ","19":"て","20":"と","21":"な","22":"に","23":"ぬ","24":"ね","25":"の","26":"は","27":"ひ","28":"ふ","29":"へ","30":"ほ","31":"ま","32":"み","33":"む","34":"め","35":"も","36":"や","37":"ゆ","38":"よ","39":"ら","40":"り","41":"る","42":"れ","43":"ろ","44":"わ","45":"を","46":"ん","47":"ぁ","48":"ぃ","49":"ぅ","50":"ぇ","51":"ぉ","52":"っ","53":"ゃ","54":"ゅ","55":"ょ","56":"が","57":"ぎ","58":"ぐ","59":"げ","60":"ご","61":"ざ","62":"じ","63":"ず","64":"ぜ","65":"ぞ","66":"だ","67":"ぢ","68":"づ","69":"で","70":"ど","71":"ば","72":"び","73":"ぶ","74":"べ","75":"ぼ","76":"ぱ","77":"ぴ","78":"ぷ","79":"ぺ","80":"ぽ","81":"ー","82":"～","83":"…","84":"、","85":"。","86":"（","87":"）","88":"「","89":"」","90":"．","91":"ー","92":"！","93":"？","94":"＆","97":"▽","98":"◎","99":"★","100":"＠","101":"♪","103":"↑","108":"_","109":"0","110":"1","111":"2","112":"3","113":"4","114":"5","115":"6","116":"7","117":"8","118":"９","119":"ア","120":"イ","121":"ウ","122":"エ","123":"オ","124":"カ","125":"キ","126":"ク","127":"ケ","128":"コ","129":"サ","130":"シ","131":"ス","132":"セ","133":"ソ","134":"タ","135":"チ","136":"ツ","137":"テ","138":"ト","139":"ナ","140":"ニ","141":"ヌ","142":"ネ","143":"ノ","144":"ハ","145":"ヒ","146":"フ","147":"ヘ","148":"ホ","149":"マ","150":"ミ","151":"ム","152":"メ","153":"モ","154":"ヤ","155":"ユ","156":"ヨ","157":"ラ","158":"リ","159":"ル","160":"レ","161":"ロ","162":"ワ","163":"ヲ","164":"ン","165":"ァ","166":"ィ","167":"ゥ","168":"ェ","169":"ォ","170":"ッ","171":"ャ","172":"ュ","173":"ョ","174":"ガ","175":"ギ","176":"グ","177":"ゲ","178":"ゴ","179":"ザ","180":"ジ","181":"ズ","182":"ゼ","183":"ゾ","184":"ダ","185":"ヂ","186":"ヅ","187":"デ","188":"ド","189":"バ","190":"ビ","191":"ブ","192":"ベ","193":"ボ","194":"パ","195":"ピ","196":"プ","197":"ペ","198":"ポ","224":"A","225":"b","226":"C","227":"D","228":"Ｅ","229":"F","230":"G","231":"h","232":"n","233":"J","234":"K","235":"Ｌ","236":"Ｍ","237":"N","238":"Ｏ","239":"P","240":"Q","241":"R","242":"s","243":"T","244":"u","245":"Ｖ","246":"W","247":"X","248":"e","249":"Z","252":"＋"}};
+
+// Container, sprite codec and per-model layout -- a direct port of
+// tama4u/{container,sprites,models,destinations}.py.  The Python package
+// stays the reference implementation; web/selftest.js diffs the two over
+// the whole download pack so this file cannot drift silently.
+
+const MAGIC = [0x54, 0x41, 0x4d, 0x41, 0x47, 0x4f];   // "TAMAGO"
+
+const OFF_UNICODE_NAME = 0x06;
+const OFF_FILE_SIZE    = 0x32;
+const OFF_ANSI_ID      = 0x34;
+const OFF_PACKET_SIZE  = 0x4a;
+const OFF_TYPE_SIG     = 0x4c;
+const OFF_TOKEN        = 0x52;
+const OFF_SERIAL       = 0x5a;
+
+const sum16 = b => { let s = 0; for (const x of b) s += x; return s & 0xffff; };
+const u16 = (b, o) => (b[o] << 8) | b[o + 1];
+const putU16 = (b, o, v) => { b[o] = (v >> 8) & 0xff; b[o + 1] = v & 0xff; };
+const u16le = (b, o) => b[o] | (b[o + 1] << 8);
+const putU16le = (b, o, v) => { b[o] = v & 0xff; b[o + 1] = (v >> 8) & 0xff; };
+
+function find(hay, needle, from = 0) {
+  outer: for (let i = from; i <= hay.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+
+// ---- models ---------------------------------------------------------
+const LAYOUTS = {
+  'iD':  { name: 0x5a, width: 1, slots: 9,  price: 0x66, bank: 0x100,
+           hunger: 0x6c, friendship: 0x6d, anim: null,
+           likes: 0x68, likes_slots: 11, stats: null },
+  'iDL': { name: 0x5e, width: 1, slots: 14, price: 0x6c, bank: 0x100,
+           hunger: 0x70, friendship: 0x71, anim: 0x6e,
+           likes: 0x72, likes_slots: 32, stats: null },
+  "P's": { name: 0x5e, width: 1, slots: 14, price: 0x6c, bank: 0x100,
+           hunger: 0x70, friendship: 0x71, anim: 0x6e,
+           likes: 0x8a, likes_slots: 32, stats: 0xae },
+  '4U':  { name: 0x5e, width: 2, slots: 9,  price: 0x76, bank: 0x200,
+           hunger: 0x7a, friendship: 0x7b, anim: 0x78,
+           likes: 0x94, likes_slots: 32, stats: 0xb8 },
+};
+const DEFAULT_MODEL = '4U';
+
+// u16 at 0x4C.  Authoritative: a third of the corpus ships one model's
+// packet under another model's download name.
+const SIGNATURES = {
+  0xcd80: 'iD', 0x0dc0: 'iD', 0x1dc0: 'iD', 0xcdc0: 'iD',
+  0x2dc0: 'iDL', 0x8dc0: "P's", 0x0101: '4U',
+};
+const COMPAT_BIT = { 'iDL': 0x01, "P's": 0x02, '4U': 0x10 };
+const OFF_COMPAT_MASK = 0xff;
+
+const PREFIX = { MDP: 'iD', iDL: 'iDL', iDN: "P's", T4U: '4U', APL: 'iD' };
+
+function detect(unicodeName) {
+  if (!unicodeName.startsWith('DL_')) return [DEFAULT_MODEL, 'S'];
+  const head = unicodeName.slice(3).split('_')[0];
+  if (!head) return [DEFAULT_MODEL, 'S'];
+  const last = head[head.length - 1];
+  const cls = 'SAC'.includes(last) ? last : 'S';
+  const key = 'SAC'.includes(last) ? head.slice(0, -1) : head;
+  return [PREFIX[key] || PREFIX[head] || DEFAULT_MODEL, cls];
+}
+const layoutFor = m => LAYOUTS[m] || LAYOUTS[DEFAULT_MODEL];
+
+// ---- destinations ---------------------------------------------------
+const COMMON = [
+  ['레스토랑 · 식사', '81010201', 'ffffffff'],
+  ['레스토랑 · 간식', '81010d02', 'ffffffff'],
+  ['타마데파 · 장난감', '81042a01', 'ffffffff'],
+  ['타마모리 · 옷', '81033300', 'ffffffff'],
+  ['타마모리 · 액세서리', '81023400', 'ffffffff'],
+  ['고치 인테리어 · 방', '81071f00', 'ffffffff'],
+];
+const DEST_CATALOG = {
+  'iD': [
+    ['레스토랑 · 식사', '01010001', 'ffff00ff'],
+    ['레스토랑 · 간식', '01010003', 'ffff00ff'],
+    ['타마데파 · 장난감', '01040001', 'ffff00ff'],
+    ['타마모리 · 액세서리', '01020000', 'ffff00ff'],
+    ['고치 인테리어 · 방', '01070000', 'ffff00ff'],
+    ['사진관 · 의상', '02030001', 'ffff00ff'],
+    ['우편함 · 편지', '01060000', 'ffffffff'],
+  ],
+  'iDL': [...COMMON,
+    ['우편함 · 편지', '81065101', 'ffffffff'],
+    ['우편함 · 해피메일', '81065202', 'ffffffff'],
+    ["타마모리 · 액세서리 (P's용)", '81023500', 'ffffffff'],
+    ['타마데파 · 씨앗', '81082900', 'ffffffff'],
+    ['타마데파 · 생활용품', '81042902', 'ffffffff'],
+    ['타마베이커리 · 간식', '81010c02', 'ffffffff'],
+  ],
+  "P's": [...COMMON,
+    ['보물상자 · 편지', '81065101', 'ffffffff'],
+    ['보물상자 · 스탬프카드', '81065203', 'ffffffff'],
+    ['통신놀이 · 레시피', '81092900', 'ffffffff'],
+    ['타마모리 · 액세서리 2', '81023500', 'ffffffff'],
+  ],
+  '4U': [...COMMON,
+    ['냉장고 직행 · 식사 (비매품)', '81010101', 'ffffffff'],
+    ['냉장고 직행 · 간식 (비매품)', '81010102', 'ffffffff'],
+    ['빙고 정의', '81082900', 'ffffffff'],
+    ['미니게임', '94025b01', 'ffffffff'],
+  ],
+};
+const destOptions = m => DEST_CATALOG[m] || DEST_CATALOG['4U'];
+const hex2bytes = h => h.match(/../g).map(x => parseInt(x, 16));
+
+function destMatch(model, code) {
+  for (const [label, tmpl, mask] of destOptions(model)) {
+    const t = hex2bytes(tmpl), m = hex2bytes(mask);
+    let ok = true;
+    for (let i = 0; i < 4; i++) if (m[i] && t[i] !== code[i]) { ok = false; break; }
+    if (ok) return label;
+  }
+  return null;
+}
+function destApply(model, code, current) {
+  for (const [, tmpl, mask] of destOptions(model)) {
+    if (tmpl === code) {
+      const t = hex2bytes(tmpl), m = hex2bytes(mask);
+      return t.map((v, i) => (m[i] ? v : current[i]));
+    }
+  }
+  return hex2bytes(code);
+}
+
+// ---- packet ---------------------------------------------------------
+class Packet {
+  constructor(data, offset = 0) {
+    this.offset = offset;
+    const size = u16(data, offset + OFF_PACKET_SIZE);
+    this.raw = data.slice(offset, offset + size);
+    this._orig = this.raw.slice();
+    this.children = [];
+    let pos = find(this.raw, MAGIC, MAGIC.length);
+    while (pos !== -1) {
+      const declared = pos + OFF_PACKET_SIZE + 2 <= this.raw.length
+        ? u16(this.raw, pos + OFF_PACKET_SIZE) : 0;
+      if (declared < 0x60 || pos + declared > this.raw.length) {
+        pos = find(this.raw, MAGIC, pos + MAGIC.length);   // false hit in pixels
+        continue;
+      }
+      const child = new Packet(this.raw, pos);
+      this.children.push(child);
+      pos = find(this.raw, MAGIC, pos + child.size);
+    }
+  }
+  get size() { return this.raw.length; }
+  get unicodeName() {
+    let out = '';
+    for (let i = OFF_UNICODE_NAME; i < OFF_FILE_SIZE; i += 2) {
+      const c = u16(this.raw, i);
+      if (c === 0) break;
+      out += String.fromCharCode(c);
+    }
+    return out;
+  }
+  get ansiId() {
+    let out = '';
+    for (let i = OFF_ANSI_ID; i < OFF_PACKET_SIZE; i++) {
+      const b = this.raw[i];
+      if (b === 0) break;
+      out += b < 0x80 ? String.fromCharCode(b) : '\ufffd';   // ascii, errors='replace'
+    }
+    return out;
+  }
+  get typeSig() { return Array.from(this.raw.slice(OFF_TYPE_SIG, OFF_TYPE_SIG + 6)); }
+  get token() { return this.raw.slice(OFF_TOKEN, OFF_TOKEN + 8); }
+  get serial() { return u16(this.raw, OFF_SERIAL); }
+  get declaredSize() { return u16(this.raw, OFF_FILE_SIZE); }
+  shiftDeclaredSize(d) {
+    putU16(this.raw, OFF_FILE_SIZE, Math.max(0, Math.min(0xffff, this.declaredSize + d)));
+  }
+  get section() { return this.raw[0x4f]; }
+  get model() {
+    const sig = this.raw.length >= OFF_TYPE_SIG + 2 ? u16(this.raw, OFF_TYPE_SIG) : 0;
+    return SIGNATURES[sig] || detect(this.unicodeName)[0];
+  }
+  get packetClass() { return detect(this.unicodeName)[1]; }
+  get layout() { return layoutFor(this.model); }
+  get itemNameCodes() {
+    const { name: off, width, slots } = this.layout;
+    const out = [];
+    for (let i = 0; i < slots; i++) {
+      const c = width === 1 ? this.raw[off + i] : u16(this.raw, off + 2 * i);
+      if (c === 0) break;
+      out.push(c);
+    }
+    return out;
+  }
+  get kind() {
+    let s = this.ansiId;
+    for (const p of ['t4u_', 'id2_', 'idn_']) if (s.startsWith(p)) { s = s.slice(p.length); break; }
+    let out = '';
+    for (const ch of s) { if (!/[a-zA-Z]/.test(ch)) break; out += ch; }
+    return out || '?';
+  }
+  setSerial(value) {
+    putU16(this.raw, OFF_SERIAL, value);
+    const old = this.ansiId;                     // keep t4u_gh01855_1 in sync
+    if (old.startsWith('t4u_') && this.kind !== '?') {
+      const head = 't4u_' + this.kind;
+      const tail = old.slice(head.length);
+      let digits = '';
+      for (const ch of tail) { if (!/[0-9]/.test(ch)) break; digits += ch; }
+      const pad = digits.length || 5;
+      const next = head + String(value).padStart(pad, '0') + tail.slice(digits.length);
+      const field = new Uint8Array(OFF_PACKET_SIZE - OFF_ANSI_ID);
+      for (let i = 0; i < next.length && i < field.length; i++) field[i] = next.charCodeAt(i);
+      this.raw.set(field, OFF_ANSI_ID);
+    }
+  }
+  setItemNameCodes(codes) {
+    const { name: off, width, slots } = this.layout;
+    if (codes.length > slots) throw new Error(`item name is limited to ${slots} characters`);
+    const full = [...codes, ...new Array(slots - codes.length).fill(0)];
+    for (let i = 0; i < slots; i++) {
+      if (width === 1) this.raw[off + i] = full[i] & 0xff;
+      else putU16(this.raw, off + 2 * i, full[i]);
+    }
+  }
+  setUnicodeName(name) {
+    const cur = this.unicodeName;
+    const us = cur.indexOf('_', 3);
+    const head = us >= 0 ? cur.slice(0, us + 1) : 'DL_T4US_';
+    const full = `${head}${name}.jpg`;
+    if (full.length * 2 > OFF_FILE_SIZE - OFF_UNICODE_NAME) throw new Error('unicode name too long');
+    const buf = new Uint8Array(OFF_FILE_SIZE - OFF_UNICODE_NAME);
+    for (let i = 0; i < full.length; i++) putU16(buf, 2 * i, full.charCodeAt(i));
+    this.raw.set(buf, OFF_UNICODE_NAME);
+  }
+  checksumOk() { return sum16(this.raw.subarray(0, -2)) === u16(this.raw, this.size - 2); }
+  // Untouched packets keep their original trailing bytes: a few retail files
+  // ship a stale nested checksum the device accepts, and "fixing" it would
+  // alter bytes we never edited.
+  fixChecksums() {
+    for (const c of this.children) {
+      c.fixChecksums();
+      this.raw.set(c.raw, c.offset);
+    }
+    let same = this.raw.length === this._orig.length;
+    if (same) for (let i = 0; i < this.raw.length - 2; i++)
+      if (this.raw[i] !== this._orig[i]) { same = false; break; }
+    if (same) { this.raw[this.size - 2] = this._orig[this.size - 2];
+                this.raw[this.size - 1] = this._orig[this.size - 1]; }
+    else putU16(this.raw, this.size - 2, sum16(this.raw.subarray(0, -2)));
+  }
+}
+
+function parseFile(data) {
+  const first = find(data, MAGIC);
+  if (first === -1) throw new Error('no TAMAGO packet found');
+  const jpeg = data.slice(0, first);
+  const packets = [];
+  let pos = first;
+  for (;;) {
+    const pkt = new Packet(data, pos);
+    packets.push(pkt);
+    pos += pkt.size;
+    const nxt = find(data, MAGIC, pos);
+    if (nxt === -1) break;
+    pos = nxt;
+  }
+  return { jpeg, packets, trailing: data.slice(pos) };
+}
+
+function buildFile(jpeg, packets, trailing = new Uint8Array(0)) {
+  for (const p of packets) p.fixChecksums();
+  const total = jpeg.length + packets.reduce((a, p) => a + p.size, 0) + trailing.length;
+  const out = new Uint8Array(total);
+  let o = 0;
+  out.set(jpeg, o); o += jpeg.length;
+  for (const p of packets) { out.set(p.raw, o); o += p.size; }
+  out.set(trailing, o);
+  return out;
+}
+
+// ---- sprite codec ---------------------------------------------------
+// Frame record: u16 slot_size | w | h | ncol | 00 | 01 FF | BGR565 palette
+//               | 4bpp pixels, LOW nibble = left pixel
+const bgr565ToRgb = v => {
+  const b = (v >> 11) & 0x1f, g = (v >> 5) & 0x3f, r = v & 0x1f;
+  return [(r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2)];
+};
+const rgbToBgr565 = ([r, g, b]) =>
+  ((b >> 3) << 11) | ((g >> 2) << 5) | (r >> 3);
+
+function parseBank(raw, offset) {
+  // Python's struct.unpack_from raises past the end; JS would quietly read
+  // NaN, so every read is bounds-checked to keep the two in step.
+  if (offset + 2 > raw.length) throw new Error('bank header past packet end');
+  const count = u16(raw, offset);
+  const frames = [];
+  let o = offset + 2;
+  for (let n = 0; n < count; n++) {
+    if (o + 8 > raw.length) throw new Error('frame header past packet end');
+    const slot = u16(raw, o);
+    const w = raw[o + 2], h = raw[o + 3], ncol = raw[o + 4], zero = raw[o + 5];
+    const sig = u16(raw, o + 6);
+    if (zero !== 0 || sig !== 0x01ff) throw new Error(`bad frame record at 0x${o.toString(16)}`);
+    const palOff = o + 8;
+    if (palOff + 2 * ncol > raw.length) throw new Error('palette past packet end');
+    const palette = [];
+    for (let i = 0; i < ncol; i++) palette.push(bgr565ToRgb(u16(raw, palOff + 2 * i)));
+    const pxOff = palOff + 2 * ncol;
+    const need = (w * h + 1) >> 1;
+    if (pxOff + need > raw.length) throw new Error('frame runs past packet');
+    const pixels = new Uint8Array(w * h);
+    for (let i = 0; i < need; i++) {
+      const byte = raw[pxOff + i];
+      if (2 * i < pixels.length) pixels[2 * i] = byte & 0xf;
+      if (2 * i + 1 < pixels.length) pixels[2 * i + 1] = byte >> 4;
+    }
+    frames.push({ slot_size: slot, w, h, palette, pixels: Array.from(pixels) });
+    o += 2 + slot;
+  }
+  return { frames, end: o };
+}
+
+function writeBank(raw, frames, offset) {
+  putU16(raw, offset, frames.length);
+  let o = offset + 2;
+  for (const f of frames) {
+    const body = [f.w, f.h, f.palette.length, 0, 0x01, 0xff];
+    for (const c of f.palette) { const v = rgbToBgr565(c); body.push(v >> 8, v & 0xff); }
+    for (let i = 0; i < f.pixels.length; i += 2)
+      body.push(((f.pixels[i + 1] || 0) << 4) | f.pixels[i]);
+    if (body.length > f.slot_size)
+      throw new Error(`frame data ${body.length} exceeds slot ${f.slot_size} (reduce palette size)`);
+    while (body.length < f.slot_size) body.push(0);
+    putU16(raw, o, f.slot_size);
+    raw.set(body, o + 2);
+    o += 2 + f.slot_size;
+  }
+}
+
+// Standalone records inside gm/dlode program blobs: a bank record without
+// the u16 slot prefix, anchored on the 00 NN FF signature.
+function scanBanks(raw, start = 0x60) {
+  const found = [];
+  let o = start;
+  while (o < raw.length - 8) {
+    const n = u16(raw, o);
+    if (n >= 1 && n <= 200) {
+      try {
+        const { frames, end } = parseBank(raw, o);
+        if (frames.length && end <= raw.length) { found.push({ offset: o, end, frames }); o = end; continue; }
+      } catch (e) { /* not a bank here */ }
+    }
+    o += 1;
+  }
+  return found;
+}
+
+function scanLoose(raw, lo = 0x200, hi = null) {
+  hi = hi ?? raw.length;
+  const sigs = [];
+  for (let o = lo + 6; o < hi - 2; o++) {
+    if (raw[o + 1] !== 0xff || !(raw[o] >= 1 && raw[o] <= 32)) continue;
+    const start = o - 4;
+    const w = raw[start], h = raw[start + 1], ncol = raw[start + 2], z = raw[start + 3];
+    if (z === 0 && w >= 2 && w <= 128 && h >= 2 && h <= 128 && ncol >= 1 && ncol <= 16
+        && start + 6 + 2 * ncol < hi) sigs.push([start, w, h, ncol, raw[o]]);
+  }
+  const out = [];
+  for (let i = 0; i < sigs.length; i++) {
+    const [start, w, h, ncol, nf] = sigs[i];
+    const last = out[out.length - 1];
+    if (last && start < last[0] + 6 + 2 * last[3]) continue;   // inside previous header
+    const pxStart = start + 6 + 2 * ncol;
+    const need = nf * ((w * h + 1) >> 1);
+    const pxEnd = Math.min(pxStart + need, i + 1 < sigs.length ? sigs[i + 1][0] : hi);
+    out.push([start, w, h, ncol, nf, Math.max(0, pxEnd - pxStart)]);
+  }
+  return out;
+}
+
+function readLoose(raw, rec) {
+  const [start, w, h, ncol, nf, avail] = rec;
+  const palOff = start + 6;
+  const palette = [];
+  for (let i = 0; i < ncol; i++) palette.push(bgr565ToRgb(u16(raw, palOff + 2 * i)));
+  const px = [];
+  for (let i = 0; i < avail; i++) { const b = raw[palOff + 2 * ncol + i]; px.push(b & 0xf, b >> 4); }
+  while (px.length < nf * w * h) px.push(0);
+  const per = w * h;
+  const frames = [];
+  for (let k = 0; k < nf; k++)
+    frames.push({ slot_size: 0, w, h, palette, pixels: px.slice(k * per, (k + 1) * per) });
+  return frames;
+}
+
+function writeLoose(raw, rec, palette, pixelLists) {
+  const [start, , , ncol, , avail] = rec;
+  if (palette.length !== ncol) throw new Error(`loose record: palette size must stay ${ncol}`);
+  const palOff = start + 6;
+  for (let i = 0; i < palette.length; i++) putU16(raw, palOff + 2 * i, rgbToBgr565(palette[i]));
+  const px = [].concat(...pixelLists);
+  const packed = [];
+  for (let i = 0; i + 1 < px.length; i += 2) packed.push((px[i + 1] << 4) | px[i]);
+  raw.set(packed.slice(0, avail), palOff + 2 * ncol);
+}
+
+// ---- 4bpp indexed BMP (matches Tama Image Editor) --------------------
+function frameToBmp(f) {
+  const rowsz = (((f.w * 4 + 31) / 32) | 0) * 4;
+  const pal = [...f.palette];
+  while (pal.length < 16) pal.push([0, 0, 0]);
+  const size = 54 + 64 + rowsz * f.h;
+  const out = new Uint8Array(size);
+  const dv = new DataView(out.buffer);
+  out[0] = 0x42; out[1] = 0x4d;
+  dv.setUint32(2, size, true); dv.setUint32(10, 54 + 64, true);
+  dv.setUint32(14, 40, true); dv.setInt32(18, f.w, true); dv.setInt32(22, f.h, true);
+  dv.setUint16(26, 1, true); dv.setUint16(28, 4, true);
+  dv.setUint32(34, rowsz * f.h, true);
+  dv.setUint32(38, 2835, true); dv.setUint32(42, 2835, true); dv.setUint32(46, 16, true);
+  for (let i = 0; i < 16; i++) {
+    const [r, g, b] = pal[i];
+    out[54 + 4 * i] = b; out[54 + 4 * i + 1] = g; out[54 + 4 * i + 2] = r;
+  }
+  let p = 54 + 64;
+  for (let y = f.h - 1; y >= 0; y--) {
+    const row = new Uint8Array(rowsz);
+    for (let x = 0; x < f.w; x++) {
+      const v = f.pixels[y * f.w + x];
+      if (x % 2 === 0) row[x >> 1] |= v << 4; else row[x >> 1] |= v;
+    }
+    out.set(row, p); p += rowsz;
+  }
+  return out;
+}
+
+function bmpToFrame(data, slotSize) {
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const off = dv.getUint32(10, true);
+  const w = dv.getInt32(18, true), h = dv.getInt32(22, true);
+  const bpp = dv.getUint16(28, true);
+  if (bpp !== 4) throw new Error('expected 4bpp indexed BMP');
+  const ncol = dv.getUint32(46, true) || 16;
+  const palette = [];
+  for (let i = 0; i < ncol; i++)
+    palette.push([data[54 + 4 * i + 2], data[54 + 4 * i + 1], data[54 + 4 * i]]);
+  const rowsz = (((w * bpp + 31) / 32) | 0) * 4;
+  const pixels = [];
+  for (let y = h - 1; y >= 0; y--)
+    for (let x = 0; x < w; x++) {
+      const b = data[off + y * rowsz + (x >> 1)];
+      pixels.push(x % 2 === 0 ? b >> 4 : b & 0xf);
+    }
+  const used = Math.max(...pixels) + 1;
+  return { slot_size: slotSize, w, h, palette: palette.slice(0, Math.max(used, 1)), pixels };
+}
+
+// Item stats, character stats, text codec and cross-model conversion --
+// a port of tama4u/{items,character,charset,convert}.py.
+
+
+// ---- charset --------------------------------------------------------
+const REV = {};
+for (const [model, table] of Object.entries(CHARSET)) {
+  REV[model] = {};
+  for (const [code, ch] of Object.entries(table)) if (!(ch in REV[model])) REV[model][ch] = +code;
+}
+const tableFor = m => CHARSET[m] || CHARSET['4U'];
+const decode = (codes, table) =>
+  codes.filter(c => c).map(c => table[c] ?? `[${c.toString(16).toUpperCase().padStart(4, '0')}]`).join('');
+
+const fullwidth = ch => {
+  if (ch === ' ') return '　';
+  const o = ch.charCodeAt(0);
+  return o >= 0x21 && o <= 0x7e ? String.fromCharCode(0xff01 + o - 0x21) : null;
+};
+function encode(text, model) {
+  const rev = REV[model] || REV['4U'];
+  const out = [];
+  for (const ch of text) {
+    let code = rev[ch];
+    if (code === undefined) { const alt = fullwidth(ch); code = alt ? rev[alt] : undefined; }
+    if (code === undefined) throw new Error(`no internal code known for '${ch}'`);
+    out.push(code);
+  }
+  return out;
+}
+const spaceCode = model => (REV[model] || REV['4U'])['　'] ?? (REV[model] || REV['4U'])[' '] ?? 0;
+
+function scanTexts(raw, model, lo = 0x200, hi = null, minLen = 4, width = 2) {
+  const table = tableFor(model);
+  hi = hi ?? raw.length;
+  const read = width === 1 ? o => raw[o] : o => u16(raw, o);
+  const runs = [];
+  let o = lo;
+  while (o < hi - width) {
+    const c0 = read(o);
+    if (c0 && table[c0] !== undefined) {
+      const start = o; const chars = [];
+      while (o < hi - width) {
+        const code = read(o);
+        if (code && table[code] !== undefined) { chars.push(table[code]); o += width; }
+        else break;
+      }
+      if (chars.length >= minLen) runs.push([start, chars.length, chars.join('')]);
+    } else o += 1;
+  }
+  return runs;
+}
+
+// A letter body is stored as several runs split by line separators; the
+// user should see one paragraph, not five boxes.
+function groupRuns(runs, width = 2, maxGap = 8) {
+  const groups = [];
+  for (const [off, n, txt] of runs) {
+    if (groups.length) {
+      const g = groups[groups.length - 1];
+      const last = g.parts[g.parts.length - 1];
+      if (off - (last[0] + last[1] * width) <= maxGap) {
+        g.parts.push([off, n]); g.text += txt; g.chars += n; continue;
+      }
+    }
+    groups.push({ parts: [[off, n]], text: txt, chars: n });
+  }
+  return groups;
+}
+
+function writeText(raw, offset, charCount, text, model, width = 2) {
+  const codes = encode(text, model);
+  if (codes.length > charCount) throw new Error(`text too long: ${codes.length} > ${charCount} chars`);
+  while (codes.length < charCount) codes.push(spaceCode(model));
+  for (let i = 0; i < codes.length; i++) {
+    if (width === 1) raw[offset + i] = codes[i] & 0xff;
+    else putU16(raw, offset + 2 * i, codes[i]);
+  }
+}
+function writeGrouped(raw, parts, text, model, width = 2) {
+  const total = parts.reduce((a, [, n]) => a + n, 0);
+  if (text.length > total) throw new Error(`text too long: ${text.length} > ${total} chars`);
+  let pos = 0;
+  for (const [off, n] of parts) { writeText(raw, off, n, text.slice(pos, pos + n), model, width); pos += n; }
+}
+
+// ---- item stats -----------------------------------------------------
+const OFF_DEST = 0x4e;
+const OFF_VERSION = 0x4c;
+const OFF_COMPAT = 0xf8;
+const SECTION_MAIL = 6;
+const SECTION_KIND = { 1: 'gh', 2: 'ac', 3: 'fk', 4: 'as', 6: 'mail', 7: 'bg' };
+const OPAQUE_KINDS = ['bg', 'lv'];
+const BANK_OFFSETS = { gh: 0x200, oy: 0x200, as: 0x200, fk: 0x200, bg: 0x200, lv: 0x200, ac: 0x5c2 };
+const ACC_POS_REL = 0x02, ACC_FRAMES = 14, ACC_BODY_TYPES = 4;
+const ACC_ROW_TO_POSE = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 15];
+const ACC_BLOCK_LENS = [784, 960];
+
+const VERSION_NAMES = {
+  0xcd80: '오리지널 iD', 0x0dc0: 'Lovely Melody', 0x1dc0: 'iD 리비전 (1dc0)', 0x0000: '없음',
+};
+const VERSION_PRESETS = {
+  cd80: { label: '오리지널 iD', version: 0xcd80, compat: [0, 0], index_range: [0x01, 0x27] },
+  '0dc0': { label: 'Lovely Melody', version: 0x0dc0, compat: [0x0dc0, 0x1dc0], index_range: [0xde, 0xfe] },
+  '1dc0': { label: 'iD 리비전 (1dc0)', version: 0xcd80, compat: [0x1dc0, 0x1dc0], index_range: [0x01, 0x27] },
+};
+
+const effectiveKind = p => (p.kind !== '?' ? p.kind : (SECTION_KIND[p.section] || '?'));
+
+function accBlockLen(p) {
+  const o = p.layout.bank;
+  if (o + 2 > p.size) return 0;     // nested reward packets can be tiny
+  const n = u16(p.raw, o);
+  return ACC_BLOCK_LENS.includes(n) ? n : 0;
+}
+function bankOffset(p) {
+  const n = accBlockLen(p);
+  return n ? p.layout.bank + ACC_POS_REL + n : p.layout.bank;
+}
+const priceOffset = p =>
+  (p.model === 'iD' && effectiveKind(p) === 'as') ? 0x6c : p.layout.price;
+const getPrice = p => u16(p.raw, priceOffset(p));
+const setPrice = (p, v) => putU16(p.raw, priceOffset(p), v);
+const getHunger = p => p.raw[p.layout.hunger];
+const setHunger = (p, v) => { p.raw[p.layout.hunger] = v & 0xff; };
+const getFriendship = p => p.raw[p.layout.friendship];
+const setFriendship = (p, v) => { p.raw[p.layout.friendship] = v & 0xff; };
+const getAnim = p => (p.layout.anim ? [p.raw[p.layout.anim], p.raw[p.layout.anim + 1]] : [0, 0]);
+function setAnim(p, a, b) {
+  const o = p.layout.anim;
+  if (o) { p.raw[o] = a & 0xff; p.raw[o + 1] = b & 0xff; }
+}
+// Fallback names for codes outside the per-model catalogue (program and
+// definition packets that never appear in a shop).
+const DESTINATIONS = {
+  '81010201': 'Restaurant (meal)', '81010d02': 'Restaurant (snack)',
+  '81010101': 'Fridge (meal, bundle reward)', '81010102': 'Fridge (snack, bundle reward)',
+  '81042a01': 'TamaDepa (toys)', '81033300': 'TamaMori (clothes)',
+  '81023400': 'TamaMori (accessory)', '81071f00': 'Gotchi Interior (wallpaper)',
+  '81082900': 'Bingo definition', '94025b01': 'Minigame',
+  '94024702': 'Outing definition', '94024803': 'Download character',
+};
+function getDestination(p) {
+  const four = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
+  const hex = four.map(x => x.toString(16).padStart(2, '0')).join('');
+  return destMatch(p.model, four) || DESTINATIONS[hex]
+    || `unknown(${four.map(x => x.toString(16).padStart(2, '0')).join(' ')})`;
+}
+function setDestination(p, code) {
+  const cur = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
+  const merged = destApply(p.model, code, cur);
+  p.raw.set(merged, OFF_DEST);
+  p.raw[0x73] = parseInt(code.slice(2, 4), 16) === 0x01 ? 0x02 : 0x00;   // food flag
+}
+
+const likesSlots = p => p.layout.likes_slots;
+function getLikesRaw(p) {
+  const o = p.layout.likes, out = [];
+  for (let c = 0; c < likesSlots(p); c++) out.push((p.raw[o + (c >> 2)] >> ((c % 4) * 2)) & 3);
+  return out;
+}
+// Read-modify-write: iD only owns 22 of the 32 bits at 0x68, so blindly
+// rewriting all four bytes would wipe the unrelated byte at 0x6B.
+function setLikesRaw(p, values) {
+  const o = p.layout.likes;
+  values.slice(0, likesSlots(p)).forEach((v, c) => {
+    const shift = (c % 4) * 2, i = o + (c >> 2);
+    p.raw[i] = (p.raw[i] & ~(3 << shift)) | ((v & 3) << shift);
+  });
+}
+
+const STAT_KEYS = ['intelligence', 'style', 'charisma', 'gourmet', 'strength'];
+function getStats(p) {
+  const o = p.layout.stats, out = {};
+  STAT_KEYS.forEach((k, i) => { out[k] = o === null ? 0 : p.raw[o + i]; });
+  return out;
+}
+function setStats(p, stats) {
+  const o = p.layout.stats;
+  if (o === null) return;
+  STAT_KEYS.forEach((k, i) => { if (k in stats) p.raw[o + i] = stats[k] & 0xff; });
+}
+
+// Nested reward packets can be shorter than 0x100 bytes, so the field is
+// not always present.
+function getCompat(p) {
+  const mask = p.size > OFF_COMPAT_MASK ? p.raw[OFF_COMPAT_MASK] : 0;
+  return { mask, models: Object.entries(COMPAT_BIT).filter(([, b]) => mask & b).map(([m]) => m) };
+}
+function setCompat(p, list) {
+  let mask = 0;
+  for (const m of list) mask |= COMPAT_BIT[m] || 0;
+  p.raw[OFF_COMPAT_MASK] = mask;
+}
+
+function getVersion(p) {
+  const ver = u16(p.raw, OFF_VERSION);
+  return { version: ver, compat: [u16(p.raw, OFF_COMPAT), u16(p.raw, OFF_COMPAT + 2)],
+           label: VERSION_NAMES[ver] ?? `0x${ver.toString(16).padStart(4, '0')}`,
+           index: p.raw[OFF_DEST + 2] };
+}
+function setVersion(p, version, compat, index) {
+  if (version != null) putU16(p.raw, OFF_VERSION, version & 0xffff);
+  if (compat != null) { putU16(p.raw, OFF_COMPAT, compat[0] & 0xffff); putU16(p.raw, OFF_COMPAT + 2, compat[1] & 0xffff); }
+  if (index != null) p.raw[OFF_DEST + 2] = index & 0xff;
+}
+
+function editableFields(p) {
+  const kind = effectiveKind(p), model = p.model, lay = p.layout;
+  if (p.section === SECTION_MAIL) return ['text'];
+  const f = new Set(['price']);
+  if (kind === 'gh' || kind === 'oy') { f.add('hunger'); f.add('friendship'); }
+  else if (kind === 'as' && model !== 'iD') f.add('friendship');
+  if (!['bg', 'lv'].includes(kind) && !(model === 'iD' && kind === 'as')) f.add('likes');
+  if (lay.stats !== null) f.add('stats');
+  if (kind === 'as' && lay.anim !== null) f.add('anim');
+  return [...f].sort();
+}
+
+// null when the table would not fit -- a nested reward accessory can be
+// shorter than the block the section byte implies.
+function getAccPositions(p) {
+  const base = p.layout.bank + ACC_POS_REL;
+  if (base + 2 * ACC_BODY_TYPES * ACC_FRAMES > p.size) return null;
+  return Array.from({ length: ACC_BODY_TYPES }, (_, b) =>
+    Array.from({ length: ACC_FRAMES }, (_, i) =>
+      [p.raw[base + 2 * (b * ACC_FRAMES + i)], p.raw[base + 2 * (b * ACC_FRAMES + i) + 1]]));
+}
+function setAccPositions(p, table) {
+  const base = p.layout.bank + ACC_POS_REL;
+  table.slice(0, ACC_BODY_TYPES).forEach((rows, b) =>
+    rows.slice(0, ACC_FRAMES).forEach(([x, y], i) => {
+      const o = base + 2 * (b * ACC_FRAMES + i);
+      p.raw[o] = x & 0xff; p.raw[o + 1] = y & 0xff;
+    }));
+}
+const letterTextRange = (p, bank) => {
+  const body = p.layout.bank;
+  return bank > body ? [body, bank] : [0x60, body];
+};
+
+// iD ships 11 characters in the like mask, and the two firmwares do not use
+// the same 11 (Lovely Melody drops Uwasatchi, adds Melodytchi).
+const CHARACTERS = [
+  'Mametchi', 'Righttchi', 'Knighttchi', 'Tacttchi', 'Nandetchi',
+  'Kuchipatchi', 'Doyatchi', 'Gotchimotchi',
+  'Shirimotchi', 'Charatchi', 'Monakatchi', 'Mogumogutchi', 'Spacytchi',
+  'Karakutchi', 'Acchitchi', 'Yumemitchi',
+  'Kiraritchi', 'Himespetchi', 'Waltztchi', 'Amiamitchi', 'Memetchi',
+  'Chocomakatchi', 'Yukinkotchi', 'Hoshigirltchi',
+  'Chochotchi', 'Harptchi', 'Patitchi', 'Kiramotchi', 'Furifuritchi',
+  'Amakutchi', 'Julietchi', 'Pekopekotchi',
+];
+const ID_ROSTER = {
+  'iD original': ['Chamametchi', 'Furawatchi', 'Gozarutchi', 'Kikitchi', 'Kuchipatchi',
+    'Kuromametchi', 'Lovelitchi', 'Makiko', 'Mametchi', 'Memetchi', 'Uwasatchi'],
+  'Lovely Melody': ['Chamametchi', 'Furawatchi', 'Gozarutchi', 'Kikitchi', 'Kuchipatchi',
+    'Kuromametchi', 'Lovelitchi', 'Makiko', 'Mametchi', 'Melodytchi', 'Memetchi'],
+};
+const ID_KNOWN_SLOTS = { 0x0dc0: { 4: 'Kikitchi', 9: 'Furawatchi' } };
+function likeLabels(p) {
+  const n = likesSlots(p);
+  if (p.model === '4U') return CHARACTERS.slice(0, n);
+  if (p.model === 'iD') {
+    const known = ID_KNOWN_SLOTS[u16(p.raw, OFF_VERSION)] || {};
+    return Array.from({ length: n }, (_, c) => known[c] ?? null);
+  }
+  return new Array(n).fill(null);
+}
+const likeRoster = p =>
+  p.model !== 'iD' ? null : ID_ROSTER[u16(p.raw, OFF_VERSION) === 0x0dc0 ? 'Lovely Melody' : 'iD original'];
+
+// ---- character stats ------------------------------------------------
+const CH = {
+  TAMA_ID: 0x204, REVERT_ID: 0x206, GRAPHICS: 0x208, PERSONALITY: 0x20c,
+  SKILLS: 0x20d, STAGE: 0x212, WEIGHT_STD: 0x213, WEIGHT_MIN: 0x214,
+  HUNGER_DEP: 0x215, HAPPY_DEP: 0x216, SICKNESS: 0x217, WAKE: 0x218,
+  SLEEP: 0x219, GENDER: 0x21a, BODY_TYPE: 0x21b, SEP_CLOTHES: 0x21c,
+  SEP_ACCESSORY: 0x21e, BIRTH_MONTH: 0x220, BIRTH_DAY: 0x221,
+  LIKE_INDEX: 0x222, TRANSFORM_TYPE: 0x22e, TRANSFORM_SERIAL: 0x230,
+  TRANSFORM_NAME: 0x232, NAME2: 0x246, DIALOGUE: 0x272,
+};
+const CH_U8 = ['personality', 'stage', 'weight_std', 'weight_min', 'hunger_dep',
+  'happy_dep', 'sickness', 'wake', 'gender', 'body_type', 'sep_clothes',
+  'sep_accessory', 'birth_month', 'birth_day'];
+const CH_U8_OFF = {
+  personality: CH.PERSONALITY, stage: CH.STAGE, weight_std: CH.WEIGHT_STD,
+  weight_min: CH.WEIGHT_MIN, hunger_dep: CH.HUNGER_DEP, happy_dep: CH.HAPPY_DEP,
+  sickness: CH.SICKNESS, wake: CH.WAKE, gender: CH.GENDER, body_type: CH.BODY_TYPE,
+  sep_clothes: CH.SEP_CLOTHES, sep_accessory: CH.SEP_ACCESSORY,
+  birth_month: CH.BIRTH_MONTH, birth_day: CH.BIRTH_DAY,
+};
+const CH_U16_OFF = {
+  tama_id: CH.TAMA_ID, revert_id: CH.REVERT_ID, graphics: CH.GRAPHICS,
+  like_index: CH.LIKE_INDEX, transform_type: CH.TRANSFORM_TYPE,
+  transform_serial: CH.TRANSFORM_SERIAL,
+};
+// The high byte of tama/revert id is a roster page encoding gender.
+const ROSTER_PAGE = { 0x13: 'Boy', 0x1b: 'Girl' };
+const roster = v => ({ page: (v >> 8) & 0xff, slot: v & 0xff,
+  gender: ROSTER_PAGE[(v >> 8) & 0xff] ?? null, value: v });
+
+const GENDER = { 0: 'Boy', 1: 'Girl' };
+const STAGE = { 1: 'Baby', 2: 'Toddler', 3: 'Adult', 4: 'Transform character', 5: 'Download character' };
+const BODY_TYPE = {
+  '4U': { 0: 'Ignore', 1: 'Normal', 2: 'Kuchipatchi', 3: 'Neenetchi', 4: 'Toddlers' },
+  "P's": { 1: 'Normal', 2: 'Kuchipatchi', 3: 'Monakatchi', 4: 'Doyatchi' },
+};
+const TRANSFORM_TYPE = { 0: 'Meal', 1: 'Snack', 2: 'Toy', 4: 'Clothes/accessory', 6: 'Minigame', 8: 'Outing' };
+const LIKE_CHARS = ['Mametchi', 'MameLabtchi', 'Naughty Mametchi', 'Kuchipatchi',
+  'Kuchipatchin', 'JeanisKuchipa', 'Spacytchi', 'Kirari Spacy', 'King Spacy',
+  'Kuromametchi', 'Kuromamesenpai', 'Otakuromame', 'Orenetchi', 'Oreotonatchi',
+  'Memetchi', 'Gourmemequeen', 'Memeobatchi', 'Himespetchi', 'Mamelove Himespetchi',
+  'Lovelitchi', 'Lovelitchi Lovely Fire', 'PochaLovelitchi', 'Melodytchi',
+  'Oyamelojitchi', 'Neenetchi', 'Slim Neene'];
+const LIKE_TRAITS = ['Likes elegance', 'Likes coolness', 'Likes ??? (4143)',
+  'Likes ??? (4144)', 'Likes sports', 'Likes ??? (4146)'];
+const LIKE_INDEX = { 0: 'No likes and dislikes' };
+LIKE_CHARS.forEach((n, i) => { LIKE_INDEX[((0x41 + i) << 8) | 0xff] = n; });
+LIKE_TRAITS.forEach((n, i) => { LIKE_INDEX[0x4141 + i] = n; });
+const bodyTypes = m => BODY_TYPE[m] || BODY_TYPE['4U'];
+const DIALOGUE_LABELS = [
+  'Birthday', 'Marry proposal', 'Hungry', 'Play', 'Dress-up',
+  'Upset (park camping)', 'Goodbye (good end)', 'Goodbye (bad end)',
+  'Hobby skill rnd NFC4', 'Dream job rnd NFC3', 'Fav.food rnd NFC2',
+  'Best friend rnd NFC1', 'Random talk 1', 'Random talk 2',
+];
+
+function getCharStats(p) {
+  const out = {};
+  for (const k of CH_U8) out[k] = p.raw[CH_U8_OFF[k]];
+  for (const [k, o] of Object.entries(CH_U16_OFF)) out[k] = u16le(p.raw, o);
+  out.skills = Array.from(p.raw.slice(CH.SKILLS, CH.SKILLS + 5));
+  out.sleep = p.raw[CH.SLEEP] + 1;             // displayed value
+  return out;
+}
+function setCharStats(p, s) {
+  for (const k of CH_U8) if (k in s) p.raw[CH_U8_OFF[k]] = s[k] & 0xff;
+  for (const [k, o] of Object.entries(CH_U16_OFF)) if (k in s) putU16le(p.raw, o, s[k] & 0xffff);
+  if ('skills' in s) s.skills.slice(0, 5).forEach((v, i) => { p.raw[CH.SKILLS + i] = v & 0xff; });
+  if ('sleep' in s) p.raw[CH.SLEEP] = (s.sleep - 1) & 0xff;
+}
+// The 0x50-0x51 signature alone is not enough: those two bytes are the tail
+// of the destination code, so an iD item whose destination happens to end
+// 48 03 matches it.  A character also has to hold the stat block and all 14
+// dialogue slots.
+const CHAR_MIN_SIZE = CH.DIALOGUE + 14 * 150;
+const isCharacter = p =>
+  p.typeSig[4] === 0x48 && p.typeSig[5] === 0x03 && p.size >= CHAR_MIN_SIZE;
+
+// The character's own accessory (wardrobe frames 23-26) carries wear
+// coordinates at the very end of the parent packet, *after* the nested
+// wardrobe packet: 4 body types x 14 frames x (x, y).
+const ACC_TAIL_LEN = 4 * 14 * 2;
+const ACC_FRAME_FOR_POSE = { 1: 23, 2: 23, 3: 23, 4: 23, 5: 23, 6: 23, 11: 23,
+  7: 24, 8: 24, 9: 24, 10: 24, 13: 25, 14: 26, 15: 26 };
+const ACC_ROW_TO_FRAME = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15];
+
+function accTailOffset(p) {
+  if (!p.children.length) return null;
+  const end = Math.max(...p.children.map(c => c.offset + c.size));
+  return p.size - 2 - end === ACC_TAIL_LEN ? end : null;
+}
+function getCharAccPositions(p) {
+  const o = accTailOffset(p);
+  if (o === null) return null;
+  const tail = p.raw.slice(o, o + ACC_TAIL_LEN);
+  if (!tail.some(x => x)) return null;
+  return Array.from({ length: 4 }, (_, b) =>
+    Array.from({ length: 14 }, (_, i) => [tail[2 * (b * 14 + i)], tail[2 * (b * 14 + i) + 1]]));
+}
+function setCharAccPositions(p, table) {
+  const o = accTailOffset(p);
+  if (o === null) throw new Error('this packet has no wear-coordinate table');
+  table.slice(0, 4).forEach((rows, b) => rows.slice(0, 14).forEach(([x, y], i) => {
+    p.raw[o + 2 * (b * 14 + i)] = x & 0xff;
+    p.raw[o + 2 * (b * 14 + i) + 1] = y & 0xff;
+  }));
+}
+
+// ---- cross-model conversion -----------------------------------------
+const DL_KEY = { 'iD': 'MDP', 'iDL': 'iDL', "P's": 'iDN', '4U': 'T4U' };
+const ANSI_PREFIX = { 'iD': '', 'iDL': 'id2_', "P's": 'idn_', '4U': 't4u_' };
+const ANSI_DIGITS = { 'iD': 3, 'iDL': 5, "P's": 5, '4U': 5 };
+const NAME_PAGE = 0x0400;
+const WEARABLE_SECTIONS = [2, 3];
+const CONVERTIBLE_SECTIONS = [1, 2, 3, 4, 7];
+const SIG_PREFERRED = { 'iD': 0xcd80, 'iDL': 0x2dc0, "P's": 0x8dc0, '4U': 0x0101 };
+const dlPrefix = (m, cls) => (m === 'iD' ? `DL_${DL_KEY[m]}_` : `DL_${DL_KEY[m]}${cls}_`);
+
+function hasBank(p) {
+  if (p.packetClass !== 'S' || !CONVERTIBLE_SECTIONS.includes(p.section)) return false;
+  try { parseBank(p.raw, bankOffset(p)); return true; } catch (e) { return false; }
+}
+const destFor = (target, label) => {
+  if (!label) return null;
+  for (const [l, code] of destOptions(target)) if (l === label) return code;
+  return null;
+};
+
+function convertPlan(p, target) {
+  const src = p.model;
+  const out = { from: src, to: target, ok: true, blockers: [], warnings: [], changes: [] };
+  if (!LAYOUTS[target]) { out.ok = false; out.blockers.push(`알 수 없는 기종: ${target}`); return out; }
+  if (src === target) { out.ok = false; out.blockers.push('이미 이 기종입니다.'); return out; }
+  if (!hasBank(p)) {
+    out.ok = false;
+    out.blockers.push('스프라이트 뱅크를 읽을 수 없는 패킷입니다 (외출·캐릭터·편지 등은 변환 대상이 아닙니다).');
+    return out;
+  }
+  if (WEARABLE_SECTIONS.includes(p.section) && (src === 'iD' || target === 'iD')) {
+    out.ok = false;
+    out.blockers.push('iD는 액세서리·의상 스프라이트 구성이 완전히 다릅니다 '
+      + '(iD 액세서리 7장/의상 48×48 vs 나머지 4장/28장). 스프라이트를 새로 그려야 하므로 자동 변환하지 않습니다.');
+    return out;
+  }
+  const L = layoutFor(src), M = layoutFor(target);
+  out.changes.push(`기종 시그니처 0x4C → 0x${SIG_PREFERRED[target].toString(16).padStart(4, '0')}`);
+  out.changes.push(`다운로드 이름 접두사 → ${dlPrefix(target, p.packetClass)}`);
+  out.changes.push(`스프라이트 뱅크 0x${L.bank.toString(16)} → 0x${M.bank.toString(16)}`);
+  const codes = p.itemNameCodes;
+  if (codes.length > M.slots) out.warnings.push(`이름이 ${codes.length}자인데 ${target}는 ${M.slots}자까지라 잘립니다.`);
+  if (L.width !== M.width)
+    out.changes.push(`이름 인코딩 ${L.width}바이트 → ${M.width}바이트`
+      + (M.width === 2 ? ' (0x04 페이지 부착)' : ' (0x04 페이지 제거)'));
+  const label = destMatch(src, Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4)));
+  const code = destFor(target, label);
+  if (code) out.changes.push(`행선지 → ${label} (${code})`);
+  else out.warnings.push(`행선지 "${label || '미확인'}"에 해당하는 ${target} 코드가 없어 섹션 기본값으로 둡니다. 저장 후 확인하세요.`);
+  const nbytes = (likesSlots(p) + 3) >> 2;
+  let anyLike = false;
+  for (let i = 0; i < nbytes; i++) if (p.raw[L.likes + i]) anyLike = true;
+  if (anyLike) out.warnings.push('호불호는 기종마다 캐릭터 명단이 달라(iD 11명 / 나머지 32명) 옮길 수 없습니다. 전부 해제됩니다.');
+  if (L.stats !== null && M.stats === null) out.warnings.push(`${target}에는 5스탯 칸이 없어 버려집니다.`);
+  if (L.anim !== null && M.anim === null) out.warnings.push(`${target}에는 애니메이션 ID 칸이 없어 버려집니다.`);
+  if (target === 'iD') out.warnings.push('iD는 카탈로그 인덱스(행선지 3번째 바이트)를 기기가 검사합니다. 변환 후 "기기 버전" 카드에서 인덱스를 지정하세요.');
+  out.warnings.push('0x52 토큰 8바이트는 계산식을 몰라 원본 값을 그대로 둡니다.');
+  return out;
+}
+
+function convert(p, target, serial = null) {
+  const info = convertPlan(p, target);
+  if (!info.ok) throw new Error(info.blockers.join('; '));
+  const src = p.model, L = layoutFor(src), M = layoutFor(target);
+  const body = p.raw.slice(L.bank, p.size - 2);
+  const size = M.bank + body.length + 2;
+  const nw = new Uint8Array(size);
+  nw.set(MAGIC, 0);
+
+  const disp = p.unicodeName;
+  const us = disp.startsWith('DL_') ? disp.indexOf('_', 3) : -1;
+  let tail = us >= 0 ? disp.slice(us + 1) : disp;
+  if (tail.includes('.')) tail = tail.slice(0, tail.lastIndexOf('.')) + '.jpg';
+  const dl = dlPrefix(target, p.packetClass) + tail;
+  for (let i = 0; i < dl.length && OFF_UNICODE_NAME + 2 * i + 1 < OFF_FILE_SIZE; i++)
+    putU16(nw, OFF_UNICODE_NAME + 2 * i, dl.charCodeAt(i));
+
+  const ser = (serial === null && src !== 'iD') ? p.serial : (serial || 0);
+  const kind = SECTION_KIND[p.section] || 'gh';
+  if (ANSI_PREFIX[target] || ser < 10 ** ANSI_DIGITS[target]) {
+    const aid = `${ANSI_PREFIX[target]}${kind}${String(ser).padStart(ANSI_DIGITS[target], '0')}_1`;
+    for (let i = 0; i < aid.length; i++) nw[OFF_ANSI_ID + i] = aid.charCodeAt(i);
+  }
+  putU16(nw, OFF_FILE_SIZE, Math.max(0, p.declaredSize + size - p.size));
+  putU16(nw, OFF_PACKET_SIZE, size);
+  putU16(nw, OFF_TYPE_SIG, SIG_PREFERRED[target]);
+
+  const cur = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
+  const code = destFor(target, destMatch(src, cur));
+  let dest = code ? code.match(/../g).map(x => parseInt(x, 16)) : cur;
+  if (target === 'iD') dest = destApply('iD', dest.map(b => b.toString(16).padStart(2, '0')).join(''), [0, 0, 0, 0]);
+  nw.set(dest, OFF_DEST);
+  nw.set(p.token, OFF_TOKEN);
+  if (target !== 'iD') putU16(nw, OFF_SERIAL, ser & 0xffff);
+
+  const codes = p.itemNameCodes.slice(0, M.slots).map(c =>
+    L.width === M.width ? c : (M.width === 2 ? NAME_PAGE | (c & 0xff) : c & 0xff));
+  for (let i = 0; i < M.slots; i++) {
+    const c = i < codes.length ? codes[i] : 0;      // 4U pads with 0x0000
+    if (M.width === 1) nw[M.name + i] = c & 0xff;
+    else putU16(nw, M.name + 2 * i, c);
+  }
+  putU16(nw, M.price, getPrice(p));
+  nw[M.hunger] = p.raw[L.hunger];
+  nw[M.friendship] = p.raw[L.friendship];
+  if (L.anim !== null && M.anim !== null) { nw[M.anim] = p.raw[L.anim]; nw[M.anim + 1] = p.raw[L.anim + 1]; }
+  if (L.stats !== null && M.stats !== null) nw.set(p.raw.slice(L.stats, L.stats + 5), M.stats);
+  // likes stay zero: the character rosters differ between models
+  nw[OFF_COMPAT_MASK] = COMPAT_BIT[target] || 0;
+  if (target === 'iD') nw[0x63] = effectiveKind(p) === 'oy' ? 1 : 2;
+  if (p.section === 1) {
+    const tag = { "P's": 0xa8, '4U': 0xb2 };
+    const v = tag[src] !== undefined ? p.raw[tag[src]] : 0;
+    if (tag[target] !== undefined) nw[tag[target]] = v;
+    if (target === '4U') nw[0x73] = 0x02;
+  }
+  nw.set(body, M.bank);
+  putU16(nw, size - 2, sum16(nw.subarray(0, -2)));
+  return new Packet(nw, 0);
+}
+
+// describe() / applyEdits() -- the two calls the UI makes.  Same shapes as
+// the Python editor's /api/parse and /api/build so the view layer is
+// unchanged; web/selftest.js diffs the two implementations file by file.
+
+
+const findPacket = (packets, path) => path.slice(1).reduce((p, i) => p.children[i], packets[path[0]]);
+
+function* iterPackets(packets) {
+  function* walk(pkt, path) {
+    yield [path, pkt];
+    for (let i = 0; i < pkt.children.length; i++) yield* walk(pkt.children[i], [...path, i]);
+  }
+  for (let i = 0; i < packets.length; i++) yield* walk(packets[i], [i]);
+}
+
+const b64 = u8 => {
+  let s = '';
+  const CH = 0x8000;
+  for (let i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  return btoa(s);
+};
+
+const frameOut = f => ({ slot: f.slot_size, w: f.w, h: f.h, palette: f.palette, pixels: f.pixels });
+
+function describe(data, opts = {}) {
+  const { jpeg, packets } = parseFile(data);
+  const out = { jpeg_b64: opts.jpeg === false ? null : b64(jpeg), packets: [] };
+  for (const [path, pkt] of iterPackets(packets)) {
+    const model = pkt.model;
+    const table = tableFor(model);
+    const sig = pkt.typeSig;
+    const isChar = isCharacter(pkt);
+    const info = {
+      model,
+      name_slots: pkt.layout.slots,
+      packet_class: pkt.packetClass,
+      is_wardrobe: pkt.packetClass === 'C',
+      stats_verified: pkt.packetClass === 'S',
+      path,
+      ansi_id: pkt.ansiId,
+      kind: effectiveKind(pkt),
+      section: pkt.section,
+      serial: pkt.serial,
+      unicode_name: pkt.unicodeName,
+      name: decode(pkt.itemNameCodes, table),
+      size: pkt.size,
+      dest: Array.from(pkt.raw.slice(OFF_DEST, OFF_DEST + 4))
+        .map(x => x.toString(16).padStart(2, '0')).join(''),
+      dest_label: getDestination(pkt),
+      dest_options: destOptions(model).map(([label, code]) => ({ label, code })),
+      is_item: !isChar && (BANK_OFFSETS[effectiveKind(pkt)] !== undefined || model !== '4U'),
+    };
+    if (model === 'iD') { info.version = getVersion(pkt); info.version_presets = VERSION_PRESETS; }
+    info.compat = getCompat(pkt);
+    info.convert = {};
+    for (const m of ['iD', 'iDL', "P's", '4U']) if (m !== model) info.convert[m] = convertPlan(pkt, m);
+    if (info.is_item && !info.is_wardrobe) info.price = getPrice(pkt);
+    if (info.is_item && info.stats_verified) {
+      const anim = getAnim(pkt);
+      info.fields = editableFields(pkt);
+      info.likes_slots = likesSlots(pkt);
+      info.likes_labels = likeLabels(pkt);
+      info.likes_roster = likeRoster(pkt);
+      info.hunger = getHunger(pkt);
+      info.friendship = getFriendship(pkt);
+      info.likes = getLikesRaw(pkt);
+      info.stats = getStats(pkt);
+      info.anim_a = anim[0]; info.anim_b = anim[1];
+    }
+    info.opaque = OPAQUE_KINDS.includes(pkt.kind);
+    if (info.is_item && pkt.section === SECTION_MAIL) {
+      const width = pkt.layout.width;
+      const banks = scanBanks(pkt.raw, 0x60);
+      if (banks.length) {
+        const [lo, hi] = letterTextRange(pkt, banks[0].offset);
+        const body = scanTexts(pkt.raw, model, lo, hi, 3, width);
+        groupRuns(body, width).forEach((g, i) => {
+          (info.texts ??= []).push({ parts: g.parts, chars: g.chars, text: g.text, width,
+            label: i === 0 ? '편지 본문' : `편지 본문 ${i + 1}` });
+        });
+      }
+    }
+    if (effectiveKind(pkt) === 'ac' && pkt.packetClass === 'S') {
+      const rows = getAccPositions(pkt);
+      if (rows) { info.acc_pos = rows; info.acc_rows = ACC_ROW_TO_POSE; }
+    }
+
+    // sprite banks: fixed offset for plain items; program/definition packets
+    // keep theirs at code-determined offsets, so fall back to a scan
+    let banks = [];
+    if (info.is_item) {
+      const off = bankOffset(pkt);
+      try { const { frames } = parseBank(pkt.raw, off); if (frames.length) banks.push({ offset: off, frames }); }
+      catch (e) { /* not a bank at the usual place */ }
+    }
+    if (info.is_item && !banks.length) {
+      for (const b of scanBanks(pkt.raw, 0x40)) banks.push({ offset: b.offset, frames: b.frames });
+      if (!banks.length)
+        for (const rec of scanLoose(pkt.raw))
+          banks.push({ offset: rec[0], loose: rec, frames: readLoose(pkt.raw, rec) });
+    }
+    if (!info.is_item) {
+      const covered = pkt.children.map(c => [c.offset, c.offset + c.size]);
+      const own = (a, b) => !covered.some(([s, e]) => (s <= a && a < e) || (s < b && b <= e));
+      for (const b of scanBanks(pkt.raw, 0x60)) {
+        if (own(b.offset, b.end)) { banks.push({ offset: b.offset, frames: b.frames }); covered.push([b.offset, b.end]); }
+      }
+      for (const rec of scanLoose(pkt.raw)) {
+        const [start, , , ncol, , avail] = rec;
+        const end = start + 6 + 2 * ncol + avail;
+        if (own(start, end)) banks.push({ offset: start, loose: rec, frames: readLoose(pkt.raw, rec) });
+      }
+      if (isChar) {
+        info.texts = DIALOGUE_LABELS.map((label, i) => {
+          const off = CH.DIALOGUE + i * 150;
+          const codes = [];
+          for (let k = 0; k < 75; k++) codes.push(u16(pkt.raw, off + 2 * k));
+          return { offset: off, chars: 75, label, width: 2,
+                   text: decode(codes, table).replace(/^　+|　+$/g, '') };
+        });
+        info.body_type = pkt.raw[CH.BODY_TYPE];
+        info.char_stats = getCharStats(pkt);
+        const cs = info.char_stats;
+        const accpos = getCharAccPositions(pkt);
+        const nm = n => { const c = []; for (let i = 0; i < n[1]; i++) c.push(u16(pkt.raw, n[0] + 2 * i)); return c; };
+        info.char_extra = {
+          acc_pos: accpos,
+          acc_rows: ACC_ROW_TO_FRAME,
+          tama_roster: roster(cs.tama_id),
+          revert_roster: roster(cs.revert_id),
+          transform_name: decode(nm([CH.TRANSFORM_NAME, 10]), table).replace(/^[　\s]+|[　\s]+$/g, ''),
+          name2: decode(nm([CH.NAME2, pkt.layout.slots]), table),
+        };
+        info.char_enums = { gender: GENDER, stage: STAGE, body_type: bodyTypes(model),
+                            transform_type: TRANSFORM_TYPE, like_index: LIKE_INDEX };
+      } else {
+        const texts = scanTexts(pkt.raw, model).filter(([o, n]) => own(o, o + 2 * n));
+        if (texts.length)
+          info.texts = groupRuns(texts, 2).map((g, i) => ({
+            parts: g.parts, chars: g.chars, text: g.text, width: 2, label: `대사 ${i + 1}` }));
+      }
+    }
+    if (banks.length)
+      info.banks = banks.map(b => ({ offset: b.offset, loose: b.loose ?? null,
+                                     frames: b.frames.map(frameOut) }));
+    out.packets.push(info);
+  }
+  return out;
+}
+
+// A nested packet lives inside its parent's bytes, so the parent has to be
+// spliced and its u16 size field rewritten before it is re-parsed.
+function replacePacket(packets, path, newRaw) {
+  if (path.length === 1) { packets[path[0]] = new Packet(newRaw, 0); return; }
+  const parent = findPacket(packets, path.slice(0, -1));
+  const child = parent.children[path[path.length - 1]];
+  const raw = new Uint8Array(parent.size - child.size + newRaw.length);
+  raw.set(parent.raw.subarray(0, child.offset), 0);
+  raw.set(newRaw, child.offset);
+  raw.set(parent.raw.subarray(child.offset + child.size), child.offset + newRaw.length);
+  putU16(raw, OFF_PACKET_SIZE, raw.length);
+  replacePacket(packets, path.slice(0, -1), raw);
+}
+
+function applyEdits(data, edits, newJpeg = null) {
+  let { jpeg, packets, trailing } = parseFile(data);
+  const swaps = edits.filter(e => e.replace_bytes || e.convert);
+  if (swaps.length) {
+    const before = packets.reduce((a, p) => a + p.size, 0);
+    for (const e of swaps) {
+      if (e.convert) {
+        const pkt = findPacket(packets, e.path);
+        replacePacket(packets, e.path, convert(pkt, e.convert, e.serial ?? null).raw);
+        continue;
+      }
+      const { packets: srcpkts } = parseFile(e.replace_bytes);
+      replacePacket(packets, e.path, srcpkts[0].raw);
+    }
+    const delta = packets.reduce((a, p) => a + p.size, 0) - before;
+    for (const p of packets) p.shiftDeclaredSize(delta);
+    edits = edits.filter(e => !(e.replace_bytes || e.convert));
+  }
+  if (newJpeg) {
+    const delta = newJpeg.length - jpeg.length;
+    for (const p of packets) p.shiftDeclaredSize(delta);
+    jpeg = newJpeg;
+  }
+  for (const edit of edits) {
+    const pkt = findPacket(packets, edit.path);
+    const model = pkt.model;
+    if ('serial' in edit) pkt.setSerial(+edit.serial);
+    if ('name' in edit) pkt.setItemNameCodes(encode(edit.name, model));
+    if ('unicode_name' in edit) pkt.setUnicodeName(edit.unicode_name);
+    if ('price' in edit) setPrice(pkt, +edit.price);
+    if ('hunger' in edit) setHunger(pkt, edit.hunger);
+    if ('friendship' in edit) setFriendship(pkt, edit.friendship);
+    if ('dest' in edit) setDestination(pkt, edit.dest);
+    if ('likes' in edit) setLikesRaw(pkt, edit.likes);
+    if ('stats' in edit) setStats(pkt, edit.stats);
+    if ('acc_pos' in edit) setAccPositions(pkt, edit.acc_pos);
+    if ('char_stats' in edit) setCharStats(pkt, edit.char_stats);
+    if ('transform_name' in edit) writeText(pkt.raw, CH.TRANSFORM_NAME, 10, edit.transform_name, model, 2);
+    if ('char_acc_pos' in edit) setCharAccPositions(pkt, edit.char_acc_pos);
+    if ('name2' in edit) writeText(pkt.raw, CH.NAME2, pkt.layout.slots, edit.name2, model, 2);
+    if ('version' in edit) setVersion(pkt, edit.version.version, edit.version.compat, edit.version.index);
+    if ('compat' in edit) setCompat(pkt, edit.compat);
+    if ('anim_a' in edit) setAnim(pkt, edit.anim_a, edit.anim_b ?? edit.anim_a);
+    for (const t of edit.texts || []) {
+      if (t.parts) writeGrouped(pkt.raw, t.parts, t.text, model, t.width ?? 2);
+      else writeText(pkt.raw, t.offset, t.chars, t.text, model, t.width ?? 2);
+    }
+    for (const bank of edit.banks || []) {
+      const off = bank.offset;
+      if (bank.loose) {
+        writeLoose(pkt.raw, bank.loose, bank.frames[0].palette, bank.frames.map(f => f.pixels));
+        continue;
+      }
+      const frames = bank.frames.map(f => ({ slot_size: f.slot, w: f.w, h: f.h,
+                                             palette: f.palette, pixels: f.pixels }));
+      const oldEnd = parseBank(pkt.raw, off).end;      // must not change length
+      const blobLen = 2 + frames.reduce((a, f) => a + 2 + f.slot_size, 0);
+      if (off + blobLen !== oldEnd) throw new Error('bank size mismatch — frame slots must be kept');
+      writeBank(pkt.raw, frames, off);
+    }
+  }
+  return buildFile(jpeg, packets, trailing);
+}
+
+window.TAMA = { describe, applyEdits, parseFile, buildFile };
+})();
+
+// ---- local backend -------------------------------------------------
+// describe()/applyEdits() run in this page, so the editor works from a
+// plain file:// open with no server and nothing leaving the browser.
+const b64ToArray = s => { const b = atob(s); const u = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; };
+const arrToB64 = u8 => { let s = ''; const C = 0x8000;
+  for (let i = 0; i < u8.length; i += C) s += String.fromCharCode.apply(null, u8.subarray(i, i + C));
+  return btoa(s); };
+async function apiParse(buf) {
+  try { return TAMA.describe(new Uint8Array(buf)); }
+  catch (e) { return { error: String(e.message || e) }; }
+}
+async function apiBuild(payload) {
+  const data = b64ToArray(payload.file_b64);
+  const edits = (payload.edits || []).map(e =>
+    e.replace_b64 ? { ...e, replace_bytes: b64ToArray(e.replace_b64) } : e);
+  const jpeg = payload.jpeg_b64 ? b64ToArray(payload.jpeg_b64) : null;
+  return TAMA.applyEdits(data, edits, jpeg);   // throws on bad input
+}
+</script>
+<script>
+const CHARS=['Mametchi','Righttchi','Knighttchi','Tacttchi','Nandetchi','Kuchipatchi','Doyatchi','Gotchimotchi',
+'Shirimotchi','Charatchi','Monakatchi','Mogumogutchi','Spacytchi','Karakutchi','Acchitchi','Yumemitchi',
+'Kiraritchi','Himespetchi','Waltztchi','Amiamitchi','Memetchi','Chocomakatchi','Yukinkotchi','Hoshigirltchi',
+'Chochotchi','Harptchi','Patitchi','Kiramotchi','Furifuritchi','Amakutchi','Julietchi','Pekopekotchi'];
+let fileB64=null, doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
+
+const $=id=>document.getElementById(id);
+const toast=m=>{const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)};
+const curFrame=()=>flat[cur]?.frame;
+const isOpaque=()=>pk&&pk.opaque;
+// Transparency is decided by palette[0] alone, on every model and every
+// frame size: the transparent key is a pure green (G=255, R/B low).
+// Anything else — room wallpapers, photo-studio backdrops, the odd opaque
+// item — is real artwork and renders solid.  Verified across ~24k frames
+// of the iD / iD L / P's / 4U packs.
+const transGreen=f=>{const c=f&&f.palette&&f.palette[0];return c&&c[1]===255&&c[0]<128&&c[2]<128};
+const frOpaque=f=>!!f&&!transGreen(f);
+
+// ---- file open ----
+$('drop').onclick=()=>$('fileInput').click();
+$('openBtn').onclick=()=>$('fileInput').click();
+$('fileInput').onchange=e=>{if(e.target.files[0])load(e.target.files[0])};
+['dragover','dragleave','drop'].forEach(ev=>$('drop').addEventListener(ev,e=>{
+  e.preventDefault();$('drop').classList.toggle('over',ev==='dragover');
+  if(ev==='drop'&&e.dataTransfer.files[0])load(e.dataTransfer.files[0]);
+}));
+function arrayToB64(u8){let s='';const CH=32768;for(let i=0;i<u8.length;i+=CH)s+=String.fromCharCode.apply(null,u8.subarray(i,i+CH));return btoa(s)}
+async function load(f){
+  const buf=await f.arrayBuffer();
+  const j=await apiParse(buf);
+  if(j.error){toast('파싱 실패: '+j.error);return}
+  fileB64=arrayToB64(new Uint8Array(buf));
+  doc=j; accBuiltFor=null;      // composite tiles must be rebuilt per file
+  newJpegB64=null; $('thumbNote').textContent=''; $('fname').textContent=f.name;
+  $('preview').src='data:image/jpeg;base64,'+j.jpeg_b64; $('preview').hidden=false;
+  $('drop').style.display='none'; $('main').style.display='grid'; $('saveBtn').hidden=false;
+  const editable=j.packets;
+  if(editable.length===0){toast('편집 가능한 패킷이 없습니다');return}
+  $('pkCard').hidden=editable.length<2;
+  $('pkCount').textContent=`— ${editable.length}개 (중첩 포함)`;
+  $('pkList').innerHTML='';
+  editable.forEach(p=>{
+    const tag=p.is_wardrobe?'캐릭터 옷장'
+      :(p.is_item?p.dest_label:(p.kind+' · 프로그램/정의'));
+    const n=(p.banks||[]).reduce((a,b)=>a+b.frames.length,0);
+    const bits=[tag];
+    if(n)bits.push(`스프라이트 ${n}`);
+    if(p.texts&&p.texts.length)bits.push(`대사 ${p.texts.length}`);
+    const b=document.createElement('button');
+    b.className='pkrow'; b.dataset.path=p.path.join(',');
+    b.style.marginLeft=((p.path.length-1)*12)+'px';
+    b.innerHTML=`<span class="pkname">${(p.path.length>1?'↳ ':'')+(p.name||p.unicode_name||p.ansi_id)}</span>`+
+                `<span class="pksub">${bits.join(' · ')}</span>`;
+    b.onclick=()=>selectPacket(p.path);
+    $('pkList').appendChild(b);
+  });
+  selectPacket(editable[0].path);
+}
+
+// ---- packet form ----
+function selectPacket(path){
+  pk=doc.packets.find(p=>p.path.join(',')===path.join(','));
+  document.querySelectorAll('.pkrow').forEach(el=>
+    el.classList.toggle('on', el.dataset.path===path.join(',')));
+  const item=pk.is_item;
+  $('fName').value=pk.name; $('fSerial').value=pk.serial;
+  const ex=pk.char_extra;
+  $('name2Box').hidden=!ex;
+  $('nameNote').hidden=!(ex||pk.is_wardrobe);
+  if(ex){
+    $('fName2').value=ex.name2||''; $('fName2').maxLength=pk.name_slots||9;
+    $('name2Label').textContent=`Name 2 (프로필 표시, 최대 ${pk.name_slots||9}자)`;
+    $('nameNote').innerHTML='<b>Name 1</b>은 기기에서 이름을 붙일 때, <b>Name 2</b>는 프로필에 표시됩니다. '
+      +'옷장 패킷(↳)의 이름은 <b>또 다른 세 번째 필드</b>라 여기서 바꿔도 따라오지 않습니다 — '
+      +'옷장 패킷을 직접 선택해서 고치세요.';
+  }else if(pk.is_wardrobe){
+    $('nameNote').innerHTML='이건 캐릭터의 <b>옷장 패킷 이름</b>입니다. 캐릭터 본체의 Name 1/2와 별개 필드라 '
+      +'커스텀 캐릭터를 만들 때 여기까지 같이 고쳐야 합니다.';
+  }
+  $('serialLabel').textContent = pk.packet_class==='A' ? '캐릭터 슬롯 번호'
+    : (pk.is_wardrobe ? '카탈로그 번호 (파일 번호)' : '시리얼');
+  const verified=item&&pk.stats_verified;
+  const F=pk.fields||[];
+  const on=f=>verified&&F.includes(f);
+  // every setting stays on screen; the ones this model/category never uses
+  // are greyed out so the layout doesn't jump and you can still see them
+  const gate=(id,ok,why)=>{
+    const el=$(id); el.classList.toggle('off',!ok);
+    const lab=el.querySelector('label'); if(!lab)return;
+    let tag=lab.querySelector('.offtag');
+    if(!ok){ if(!tag){tag=document.createElement('span');tag.className='offtag';lab.appendChild(tag)}
+      tag.textContent='· '+(why||'미사용'); }
+    else if(tag)tag.remove();
+  };
+  gate('priceBox', on('price'));
+  gate('hungerBox', on('hunger'), '음식 전용');
+  gate('friendBox', on('friendship'), pk.model==='iD'&&pk.kind==='as'?'iD 장난감 미사용':'해당 없음');
+  gate('destBox', on('price'));
+  gate('animBox', on('anim'), '장난감 전용');
+  gate('statCard', on('stats'), pk.model==='iD'||pk.model==='iDL'?'이 기종에 없음':'해당 없음');
+  gate('likesCard', on('likes'), '해당 없음');
+  $('animBox').hidden=false;
+  $('statCard').style.display=''; $('likesCard').style.display='';
+  $('priceBox').style.display=''; $('hungerBox').style.display='';
+  $('friendBox').style.display=''; $('destBox').style.display='';
+  $('modelBadge').textContent=pk.model||'';
+  $('nameLabel').textContent=`이름 (기기 표시, 최대 ${pk.name_slots||9}자)`;
+  $('fName').maxLength=pk.name_slots||9;
+  $('wardrobeNote').hidden=!pk.is_wardrobe;
+  // destination list is per model (iD keeps a per-item index byte)
+  const opts=pk.dest_options||[];
+  $('fDest').innerHTML=opts.map(o=>`<option value="${o.code}">${o.label}</option>`).join('');
+  const destOpt=opts.find(o=>o.label===pk.dest_label);
+  if(destOpt)$('fDest').value=destOpt.code;
+  $('unverifiedNote').hidden=!!destOpt||!item;
+  if(item)$('fPrice').value=pk.price;
+  if(verified){
+    $('fHunger').value=pk.hunger; $('fFriend').value=pk.friendship;
+    $('fAnimA').value=pk.anim_a; $('fAnimB').value=pk.anim_b;
+    const arr=[pk.stats.intelligence,pk.stats.style,pk.stats.charisma,pk.stats.gourmet,pk.stats.strength];
+    for(let i=0;i<5;i++)$('s'+i).value=arr[i];
+    const lk=$('likes'); lk.innerHTML='';
+    const N=pk.likes_slots||32, labels=pk.likes_labels||[], named=pk.model==='4U';
+    const order=[];
+    if(named){for(let r=0;r<8;r++)for(let c=0;c<4;c++)order.push(c*8+r);}
+    else for(let i=0;i<N;i++)order.push(i);
+    order.forEach(id=>{
+      const b=document.createElement('button');
+      b.textContent=labels[id]||(id+1);
+      b.title=labels[id]?`${id+1} · ${labels[id]}`:`슬롯 ${id+1}`;
+      b.className='l'+pk.likes[id];
+      b.onclick=()=>{pk.likes[id]=(pk.likes[id]+1)%3;b.className='l'+pk.likes[id]};
+      lk.appendChild(b);
+    });
+    const roster=pk.likes_roster;
+    $('likesNote').hidden=named;
+    $('likesNote').innerHTML=roster
+      ? `이 기종은 캐릭터 <b>${N}명</b>입니다. 슬롯↔캐릭터 대응은 아직 일부만 확인돼 번호로 표시합니다.`
+        +`<br>수록 캐릭터: ${roster.join(', ')}`
+      : '이 기종은 슬롯↔캐릭터 대응이 아직 확인되지 않아 번호로 표시합니다.';
+  }
+  // iD device/firmware version
+  $('verCard').hidden=!pk.version;
+  if(pk.version)renderVersion();
+  // cross-model conversion
+  $('cvCard').hidden=!pk.convert;
+  if(pk.convert)renderConvert();
+  // character stat block (download characters only)
+  $('charCard').hidden=!pk.char_stats;
+  if(pk.char_stats)renderCharStats();
+  // dialogue / embedded text runs
+  $('textCard').hidden=!(pk.texts&&pk.texts.length);
+  if(pk.texts){
+    $('texts').innerHTML='';
+    pk.texts.forEach((t,i)=>{
+      const l=document.createElement('label');
+      l.textContent=`${t.label||('@0x'+t.offset.toString(16))} · 최대 ${t.chars}자`+
+        (t.parts&&t.parts.length>1?` (${t.parts.length}줄 합침)`:'');
+      const inp=document.createElement('input');
+      inp.value=t.text.replace(/　+$/,''); inp.maxLength=t.chars; inp.dataset.i=i;
+      inp.oninput=()=>{pk.texts[i].text=inp.value;
+        l.textContent=`${t.label} · ${inp.value.length}/${t.chars}자`+
+          (t.parts&&t.parts.length>1?` (${t.parts.length}줄 합침)`:'')};
+      $('texts').append(l,inp);
+    });
+  }
+  // flatten banks -> frames (loose records share one palette)
+  flat=[];
+  (pk.banks||[]).forEach((bank,bi)=>{
+    if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
+    bank.frames.forEach((fr,fi)=>flat.push({bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
+  });
+  $('spriteCard').style.display=flat.length?'':'none';
+  $('metaCard').style.display=(item||pk.name)?'':'none';
+  $('emptyNote').hidden=!(!flat.length&&!(pk.texts&&pk.texts.length)&&!item);
+  $('transHint').textContent=isOpaque()?'배경(방)은 불투명 — 팔레트 0번도 일반 색.':'팔레트 0번(T)은 투명색.';
+  $('canvasWrap').classList.toggle('opaque',isOpaque());
+  $('bankInfo').textContent=(pk.banks&&pk.banks.length>1)?`— 뱅크 ${pk.banks.length}개 발견 (프로그램 내장 스프라이트 포함)`:'';
+  if(flat.length){cur=0;animIdx=0;undoStack=[];renderTabs();renderFrame();animStart()}
+  else {animStop();$('stripRow').hidden=true;$('animRow').style.display='none'}
+  simStep=0; renderAccGrid();
+  drawSim(); if(simSupported())simStart(); else simStop();
+}
+
+// ---- sprite editor ----
+function renderTabs(){
+  const el=$('frameTabs'); el.innerHTML='';
+  let lastBank=-1;
+  flat.forEach((e,i)=>{
+    if(e.bank!==lastBank&&pk.banks.length>1){
+      const s=document.createElement('span');s.className='bank-label';
+      s.textContent=`뱅크@0x${e.offset.toString(16)}`;el.appendChild(s);lastBank=e.bank;
+    }
+    const b=document.createElement('button');
+    b.textContent=`${e.idx+1} (${e.frame.w}×${e.frame.h})`;
+    b.className=i===cur?'on':'';
+    b.onclick=()=>{cur=i;undoStack=[];renderTabs();renderFrame()};
+    el.appendChild(b);
+  });
+}
+function scaleFor(f){return Math.max(3,Math.min(16,Math.floor(560/Math.max(f.w,f.h))))}
+let showGrid=true;
+$('gridChk').onchange=()=>{showGrid=$('gridChk').checked;renderFrame()};
+function renderFrame(){
+  const f=curFrame(), sc=scaleFor(f), cv=$('cv');
+  cv.width=f.w*sc; cv.height=f.h*sc;
+  const g=cv.getContext('2d');
+  g.clearRect(0,0,cv.width,cv.height);
+  const opaque=frOpaque(f);
+  $('canvasWrap').classList.toggle('opaque',opaque);
+  $('transHint').textContent=opaque?'이 스프라이트는 불투명(배경) — 팔레트 0번도 일반 색.':'팔레트 0번(T)은 투명색.';
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!opaque)continue;
+    const[cr,cg,cb]=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${cr},${cg},${cb})`;g.fillRect(x*sc,y*sc,sc,sc);
+  }
+  if(showGrid&&sc>=4){
+    g.strokeStyle='rgba(0,0,0,.18)'; g.lineWidth=1;
+    for(let x=0;x<=f.w;x++){g.beginPath();g.moveTo(x*sc+.5,0);g.lineTo(x*sc+.5,f.h*sc);g.stroke()}
+    for(let y=0;y<=f.h;y++){g.beginPath();g.moveTo(0,y*sc+.5);g.lineTo(f.w*sc,y*sc+.5);g.stroke()}
+  }
+  renderPal();
+}
+function paletteUse(f){                 // how many pixels use each index
+  const n=new Array(f.palette.length).fill(0);
+  f.pixels.forEach(v=>{if(v<n.length)n[v]++});
+  return n;
+}
+function snap565(rgb){                  // quantise to what BGR565 can store
+  const [r,gg,b]=rgb, R=r>>3, G=gg>>2, B=b>>3;
+  return [R<<3|R>>2, G<<2|G>>4, B<<3|B>>2];
+}
+function renderPal(){
+  const f=curFrame(), el=$('pal'); el.innerHTML='';
+  const use=paletteUse(f);
+  f.palette.forEach((c,i)=>{
+    const d=document.createElement('div');
+    d.className='sw'+(i===palIdx?' on':'')+(i===0&&!frOpaque(f)?' t':'');
+    d.style.background=`rgb(${c[0]},${c[1]},${c[2]})`;
+    const used=use[i];
+    d.title=`인덱스 ${i} · 사용 ${used}px\n클릭: 선택 · 더블클릭: 색 변경`+(used?'':'\n우클릭: 삭제(미사용)');
+    if(!used)d.style.borderStyle='dashed';
+    d.onclick=()=>{palIdx=i;renderPal()};
+    d.ondblclick=()=>{
+      const inp=document.createElement('input');inp.type='color';
+      inp.value='#'+c.map(v=>v.toString(16).padStart(2,'0')).join('');
+      inp.oninput=()=>{
+        const rgb=[1,3,5].map(k=>parseInt(inp.value.substr(k,2),16));
+        f.palette[i]=snap565(rgb);      // device stores BGR565
+        renderFrame();
+      };
+      inp.click();
+    };
+    d.oncontextmenu=e=>{
+      e.preventDefault();
+      if(used){toast(`인덱스 ${i}은 ${used}픽셀에서 사용 중이라 삭제할 수 없습니다`);return}
+      if(f.palette.length<=1)return;
+      f.palette.splice(i,1);
+      f.pixels=f.pixels.map(v=>v>i?v-1:v);
+      if(palIdx>=f.palette.length)palIdx=f.palette.length-1;
+      renderFrame();
+    };
+    el.appendChild(d);
+  });
+  if(f.palette.length<16&&!flat[cur].loose){
+    const add=document.createElement('div');add.className='sw';add.textContent='+';
+    add.style.cssText='display:grid;place-items:center;color:#999';
+    add.onclick=()=>{f.palette.push([0,0,0]);palIdx=f.palette.length-1;renderFrame()};
+    el.appendChild(add);
+  }
+}
+function pixAt(e){
+  const f=curFrame(), sc=scaleFor(f), r=$('cv').getBoundingClientRect();
+  const x=Math.floor((e.clientX-r.left)/sc), y=Math.floor((e.clientY-r.top)/sc);
+  return (x>=0&&y>=0&&x<f.w&&y<f.h)?{x,y,f}:null;
+}
+$('cv').addEventListener('contextmenu',e=>{
+  e.preventDefault();const p=pixAt(e);if(p){palIdx=p.f.pixels[p.y*p.f.w+p.x];renderPal()}
+});
+$('cv').addEventListener('mousedown',e=>{
+  if(e.button!==0)return;const p=pixAt(e);if(!p)return;
+  undoStack.push(p.f.pixels.slice());if(undoStack.length>50)undoStack.shift();
+  drawing=true;paint(e);
+});
+window.addEventListener('mouseup',()=>drawing=false);
+$('cv').addEventListener('mousemove',e=>{if(drawing)paint(e)});
+function paint(e){
+  const p=pixAt(e);if(!p)return;
+  p.f.pixels[p.y*p.f.w+p.x]=palIdx;
+  const sc=scaleFor(p.f),g=$('cv').getContext('2d');
+  if(palIdx===0&&!frOpaque(p.f))g.clearRect(p.x*sc,p.y*sc,sc,sc);
+  else{const[cr,cg,cb]=p.f.palette[palIdx];g.fillStyle=`rgb(${cr},${cg},${cb})`;g.fillRect(p.x*sc,p.y*sc,sc,sc)}
+  if(!animTimer)drawAnim();
+}
+window.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='z'&&undoStack.length){
+    e.preventDefault();curFrame().pixels=undoStack.pop();renderFrame();
+  }
+});
+
+// ---- animation simulation (loops frames of the current bank) ----
+let animTimer=null, animIdx=0;
+const bankFrames=()=>flat.length?pk.banks[flat[cur].bank].frames:[];
+// the frame-cycling preview only makes sense where the bank really is an
+// animation: characters and food.  Clothes/accessories are per-pose pieces,
+// so those get a composite strip on the body instead.
+const ANIM_KINDS=['gh','oy'];
+function animAllowed(){
+  if(!pk)return false;
+  if(pk.is_wardrobe)return true;                 // character pose bank
+  return ANIM_KINDS.includes(pk.kind);
+}
+function drawAnim(){
+  const frames=bankFrames();
+  const strip=!!(pk&&pk.banks&&pk.banks.length&&!pk.is_wardrobe
+                 &&['fk','ac'].includes(pk.kind)&&chara);
+  $('stripRow').hidden=!strip;
+  if(strip)drawStrip();
+  drawCharAcc();
+  $('animRow').style.display=(frames.length&&animAllowed())?'':'none';
+  if(!frames.length||!animAllowed()){animStop();return}
+  animIdx%=frames.length;
+  const f=frames[animIdx];
+  const maxW=Math.max(...frames.map(x=>x.w)), maxH=Math.max(...frames.map(x=>x.h));
+  const sc=Math.max(2,Math.min(8,Math.floor(150/Math.max(maxW,maxH))));
+  const cv=$('animCv'); cv.width=maxW*sc; cv.height=maxH*sc;
+  const g=cv.getContext('2d'); g.clearRect(0,0,cv.width,cv.height);
+  if(frOpaque(f)){g.fillStyle='#fff';g.fillRect(0,0,cv.width,cv.height)}
+  const ox=(maxW-f.w)>>1, oy=maxH-f.h; // bottom-aligned like on device
+  const opaque=frOpaque(f);
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!opaque)continue;
+    const c=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    g.fillRect((ox+x)*sc,(oy+y)*sc,sc,sc);
+  }
+  $('animInfo').textContent=`— 프레임 ${animIdx+1}/${frames.length}`;
+  $('animNote').textContent=flat[cur].loose&&frames.length>1
+    ?'프로그램 내장 스트립: 실제 재생 순서'
+    :(frames.length>1?'뱅크 프레임 순환 재생 (실제 순서·타이밍은 기기 내장 동작 ID를 따름)':'단일 프레임');
+}
+// ---- character + built-in accessory ----------------------------------
+// The wardrobe bank's frames 23-26 are the character's own accessory, and the
+// parent packet carries wear coordinates for them: 112 bytes right at the end,
+// *after* the nested wardrobe packet (4 body types x 14 frames x x/y, the same
+// format accessory items use).  17 of 69 4U characters fill it in; the rest
+// leave it zero, and for those a plain top-left overlay is correct.  Stored
+// values are the accessory's centre on the device stage, where the pose is
+// centred at (64, 50).
+//
+// All 14 table rows drive a tile: rows 0-10 are poses 1-11, row 11 is pose 13,
+// and rows 12-13 are the two 44x52 poses (14, 15).
+const CHAR_ACC=[[[1,2,3,4,5,6,11],23],[[7,8,9,10],24],[[13],25],[[14,15],26]];
+const CHAR_ACC_ROW={1:0,2:1,3:2,4:3,5:4,6:5,7:6,8:7,9:8,10:9,11:10,13:11,14:12,15:13};
+const CHAR_ACC_ORDER=[1,2,3,4,5,6,7,8,9,10,11,13,14,15];
+const accOf=p=>(CHAR_ACC.find(([ps])=>ps.includes(p))||[,0])[1];
+
+// the wear table lives on the *parent* character packet, not the wardrobe
+function charParent(){
+  if(!pk||!doc||!pk.path.length)return null;
+  return doc.packets.find(q=>q.path.length===pk.path.length-1
+    && q.path.every((v,i)=>v===pk.path[i])) || null;
+}
+// the 112 bytes are always physically present; an all-zero table just means
+// "no offset", so editing only ever writes values -- never resizes anything
+function charAccTable(create){
+  const p=charParent(); if(!p||!p.char_extra)return null;
+  if(!p.char_extra.acc_pos){
+    if(!create)return null;
+    // seed from what is already on screen, so creating a table never makes
+    // the composite jump: the plain overlay is (64,42) for the 30x20 frames
+    // and (64,39) for the 44x30 one
+    const seed=CHAR_ACC_ORDER.map(pose=>{
+      const t=accTiles.find(x=>x.pose===pose);
+      return t?defaultXY(t):[64,42];
+    });
+    p.char_extra.acc_pos=[0,1,2,3].map(()=>seed.map(xy=>[xy[0],xy[1]]));
+  }
+  return p.char_extra.acc_pos;
+}
+// the (x,y) that reproduces a plain top-left overlay for this pose/accessory
+function defaultXY(t){
+  return [64-(t.cf.w>>1)+(t.af.w>>1), 50-(t.cf.h>>1)+(t.af.h>>1)];
+}
+// stage anchor: pose centred at (64,50); stored (x,y) is the accessory centre
+function accDelta(cf,af,pose,table){
+  if(!table)return[0,0];
+  const r=CHAR_ACC_ROW[pose]; if(r==null)return[0,0];
+  const [x,y]=table[0][r];      // one body type: row 0 is authoritative
+  return [(x-(af.w>>1))-(64-(cf.w>>1)), (y-(af.h>>1))-(50-(cf.h>>1))];
+}
+
+let accTiles=[], accBuiltFor=null;
+const TILE_S=3;
+function paintAccTile(t){
+  const table=charAccTable(false);
+  const dx=+$('chAccDx').value||0, dy=+$('chAccDy').value||0;
+  const g=t.cv.getContext('2d'); g.clearRect(0,0,t.cv.width,t.cv.height);
+  const put=(f,x,y)=>{for(let yy=0;yy<f.h;yy++)for(let xx=0;xx<f.w;xx++){
+    const v=f.pixels[yy*f.w+xx]; if(v===0&&!frOpaque(f))continue;
+    const c=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    g.fillRect((x+xx)*TILE_S,(y+yy)*TILE_S,TILE_S,TILE_S);}};
+  const cx=(t.W-t.cf.w)>>1, cy=2;
+  if(!$('chAccOnly').checked)put(t.cf,cx,cy);
+  const [ax,ay]=accDelta(t.cf,t.af,t.pose,table);
+  put(t.af,cx+ax+dx,cy+ay+dy);
+}
+function syncAccInputs(){
+  const table=charAccTable(false);
+  accTiles.forEach(t=>{
+    // with no table the fields still show the effective values (greyed), so
+    // typing in one only moves that pose instead of shifting everything
+    const [x,y]=table?table[0][t.row]:defaultXY(t);
+    t.xi.classList.toggle('off',!table); t.yi.classList.toggle('off',!table);
+    if(document.activeElement!==t.xi)t.xi.value=x;
+    if(document.activeElement!==t.yi)t.yi.value=y;
+  });
+}
+function buildCharAcc(){
+  const el=$('chAcc'); el.innerHTML=''; accTiles=[];
+  const frames=pk.banks[flat.length?flat[cur].bank:0].frames;
+  CHAR_ACC_ORDER.forEach(pose=>{
+    const accNo=accOf(pose), cf=frames[pose-1], af=frames[accNo-1];
+    if(!cf||!af)return;
+    const row=CHAR_ACC_ROW[pose];
+    const W=Math.max(cf.w,af.w)+4, H=cf.h+4;
+    const cv=document.createElement('canvas');
+    cv.width=W*TILE_S; cv.height=H*TILE_S;
+    cv.style.cssText='image-rendering:pixelated;border-radius:6px;background:#f3f6f1;cursor:grab;display:block;margin:0 auto';
+    cv.title=`캐릭터 ${pose} + 액세서리 ${accNo}`;
+    const box=document.createElement('div');
+    box.style.cssText='border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center;background:#fff';
+    const lab=document.createElement('div');
+    lab.style.cssText='font-size:11px;color:#8a8172;margin:4px 0 3px';
+    lab.textContent=`포즈 ${pose} · 액 ${accNo}`;
+    const mk=k=>{const i=document.createElement('input');
+      i.type='number'; i.min=0; i.max=255;
+      i.style.cssText='width:48px;padding:1px 3px;font-size:11px;text-align:center';
+      i.oninput=()=>{const t2=charAccTable(true); if(!t2)return;
+        const v=Math.max(0,Math.min(255,+i.value||0));
+        t2.forEach(r=>r[row][k]=v);       // one body type: keep all four in step
+        paintAccTile(tile);};
+      return i};
+    const xi=mk(0), yi=mk(1);
+    const row2=document.createElement('div');
+    row2.style.cssText='display:flex;gap:3px;justify-content:center;align-items:center;font-size:10px;color:#8a8172';
+    row2.append('X',xi,'Y',yi);
+    box.append(cv,lab,row2); el.appendChild(box);
+    const tile={cv,pose,accNo,cf,af,row,W,xi,yi};
+    cv.onmousedown=ev=>startCharAccDrag(ev,tile);
+    accTiles.push(tile);
+  });
+}
+function drawCharAcc(){
+  const on=!!(pk&&pk.is_wardrobe&&pk.banks&&pk.banks.length);
+  $('chAccRow').hidden=!on;
+  if(!on){accBuiltFor=null;return}
+  const key=pk.path.join(',')+'/'+(flat.length?flat[cur].bank:0);
+  if(accBuiltFor!==key){buildCharAcc();accBuiltFor=key}
+  accTiles.forEach(paintAccTile);
+  syncAccInputs();
+  const table=charAccTable(false);
+  $('chAccInfo').textContent=`— ${accTiles.length}쌍`;
+  $('chAccNote').innerHTML='스프라이트 <b>23~26</b>은 이 캐릭터 전용 액세서리입니다 '
+    +'(1~6·11→23, 7~10→24, 13→25, 14·15→26). 타일을 <b>드래그</b>하거나 아래 X·Y를 고치면 '
+    +'그 포즈의 착용 좌표가 바뀝니다.<br>'
+    +(table
+      ? `<b>착용 좌표표 있음</b> — 부모 패킷 끝 112바이트(4체형×14프레임). 정지 포즈 (${table[0][0][0]}, ${table[0][0][1]}).`
+      : '이 캐릭터는 좌표표가 비어 있어(전부 0) 그대로 겹칩니다. 값을 넣으면 표가 생성됩니다.');
+}
+$('chAccFill').onclick=()=>{
+  const t=charAccTable(true); if(!t)return;
+  const [x,y]=t[0][0];
+  t.forEach(r=>r.forEach(xy=>{xy[0]=x;xy[1]=y}));
+  drawCharAcc();
+  toast(`14행 전부 (${x}, ${y}) 로 맞췄습니다`);
+};
+$('chAccClear').onclick=()=>{
+  const p=charParent(); if(!p||!p.char_extra)return;
+  p.char_extra.acc_pos=[0,1,2,3].map(()=>CHAR_ACC_ORDER.map(()=>[0,0]));
+  drawCharAcc();
+  toast('좌표표를 비웠습니다 — 저장하면 그대로 겹치기로 돌아갑니다');
+};
+$('chAccDx').oninput=drawCharAcc; $('chAccDy').oninput=drawCharAcc;
+$('chAccOnly').onchange=()=>accTiles.forEach(paintAccTile);
+
+// drag a tile's accessory: 1px snap, writes straight into the wear table
+function startCharAccDrag(ev,tile){
+  const t=charAccTable(true); if(!t)return;
+  ev.preventDefault();
+  const r=tile.cv.getBoundingClientRect(), sx=tile.cv.width/r.width;
+  const x0=ev.clientX, y0=ev.clientY;
+  const base=[t[0][tile.row][0],t[0][tile.row][1]];
+  tile.cv.style.cursor='grabbing';
+  const move=e=>{
+    // CSS px -> canvas px -> sprite px, snapped to the 1px grid
+    const dx=Math.round((e.clientX-x0)*sx/TILE_S);
+    const dy=Math.round((e.clientY-y0)*sx/TILE_S);
+    t.forEach(rr=>{rr[tile.row][0]=Math.max(0,Math.min(255,base[0]+dx));
+                   rr[tile.row][1]=Math.max(0,Math.min(255,base[1]+dy))});
+    paintAccTile(tile); syncAccInputs();
+  };
+  const up=()=>{tile.cv.style.cursor='grab';
+    window.removeEventListener('mousemove',move);
+    window.removeEventListener('mouseup',up)};
+  window.addEventListener('mousemove',move);
+  window.addEventListener('mouseup',up);
+}
+
+function drawStrip(){
+  const el=$('strip'); el.innerHTML='';
+  const steps=simScenario();
+  $('stripInfo').textContent=`— Body type ${bodyType+1} · ${steps.length}포즈`;
+  steps.forEach(st=>{
+    const S=3, cv=document.createElement('canvas');
+    cv.width=44*S; cv.height=52*S;
+    cv.style.cssText='image-rendering:pixelated;border:1px solid var(--line);border-radius:6px;background:#f3f6f1;flex:0 0 auto';
+    cv.title=`프레임 ${st.label}`;
+    const g=cv.getContext('2d');
+    const ox=(44-st.cf.w)>>1, oy=(52-st.cf.h)>>1;
+    const put=(f,x,y)=>{for(let yy=0;yy<f.h;yy++)for(let xx=0;xx<f.w;xx++){
+      const v=f.pixels[yy*f.w+xx]; if(v===0&&!frOpaque(f))continue;
+      const c=f.palette[v]||[255,0,255];
+      g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+      g.fillRect((x+xx)*S,(y+yy)*S,S,S);}};
+    put(st.cf,ox,oy);
+    st.layers.forEach(l=>put(l.f,ox+(l.x-st.cx),oy+(l.y-st.cy)));
+    el.appendChild(cv);
+  });
+}
+function animStart(){
+  animStop();
+  drawAnim();                    // sets row visibility + composite strip
+  if(!animAllowed())return;
+  animTimer=setInterval(()=>{animIdx++;drawAnim()},1000/+$('animFps').value);
+  $('animBtn').textContent='⏸';
+}
+function animStop(){if(animTimer){clearInterval(animTimer);animTimer=null}$('animBtn').textContent='▶'}
+$('animBtn').onclick=()=>animTimer?animStop():animStart();
+$('animFps').oninput=()=>{$('animFpsLabel').textContent=$('animFps').value+' fps';if(animTimer)animStart()};
+
+// ---- thumbnail: regenerate the file's JPEG preview from the current frame
+let newJpegB64=null;
+$('thumbBtn').onclick=()=>{
+  const f=curFrame(); if(!f)return;
+  const S=Math.max(1,Math.floor(96/Math.max(f.w,f.h)));
+  const c=document.createElement('canvas');
+  c.width=f.w*S; c.height=f.h*S;
+  const g=c.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height);   // JPEG has no alpha
+  const opaque=frOpaque(f);
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!opaque)continue;
+    const col=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;
+    g.fillRect(x*S,y*S,S,S);
+  }
+  const url=c.toDataURL('image/jpeg',0.92);
+  newJpegB64=url.split(',')[1];
+  $('preview').src=url;
+  $('thumbNote').textContent=`프레임 ${flat[cur].idx+1} 적용됨 — 저장 시 반영`;
+};
+
+// ---- BMP import / export (4bpp indexed, matches the CLI's format) ----
+function frameToBMP(f){
+  const rowsz=((f.w*4+31)>>5)*4, size=54+64+rowsz*f.h;
+  const b=new Uint8Array(size), dv=new DataView(b.buffer);
+  b[0]=0x42;b[1]=0x4D; dv.setUint32(2,size,true); dv.setUint32(10,54+64,true);
+  dv.setUint32(14,40,true); dv.setInt32(18,f.w,true); dv.setInt32(22,f.h,true);
+  dv.setUint16(26,1,true); dv.setUint16(28,4,true); dv.setUint32(34,rowsz*f.h,true);
+  dv.setUint32(46,16,true);
+  for(let i=0;i<16;i++){const c=f.palette[i]||[0,0,0];
+    b[54+4*i]=c[2];b[54+4*i+1]=c[1];b[54+4*i+2]=c[0];}
+  for(let y=0;y<f.h;y++){
+    const row=54+64+(f.h-1-y)*rowsz;
+    for(let x=0;x<f.w;x++){const v=f.pixels[y*f.w+x]&0xF;
+      if(x%2===0)b[row+(x>>1)]|=v<<4; else b[row+(x>>1)]|=v;}
+  }
+  return b;
+}
+function bmpToFrame(buf){
+  const b=new Uint8Array(buf), dv=new DataView(buf);
+  const off=dv.getUint32(10,true), w=dv.getInt32(18,true), h=dv.getInt32(22,true);
+  const bpp=dv.getUint16(28,true);
+  if(bpp!==4)throw new Error('4bpp 인덱스 BMP만 가져올 수 있습니다');
+  const ncol=dv.getUint32(46,true)||16, pal=[];
+  for(let i=0;i<ncol;i++)pal.push([b[54+4*i+2],b[54+4*i+1],b[54+4*i]]);
+  const rowsz=((w*bpp+31)>>5)*4, px=[];
+  for(let y=h-1;y>=0;y--){const row=off+y*rowsz;
+    for(let x=0;x<w;x++)px.push(x%2===0?(b[row+(x>>1)]>>4):(b[row+(x>>1)]&0xF));}
+  return {w,h,palette:pal,pixels:px};
+}
+$('expBtn').onclick=()=>{
+  const f=curFrame(); if(!f)return;
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([frameToBMP(f)],{type:'image/bmp'}));
+  a.download=`${(pk.name||'sprite')}_${flat[cur].idx+1}.bmp`; a.click();
+};
+$('impBtn').onclick=()=>$('bmpInput').click();
+$('bmpInput').onchange=async e=>{
+  const file=e.target.files[0]; if(!file)return;
+  e.target.value='';
+  try{
+    const src=bmpToFrame(await file.arrayBuffer()), f=curFrame();
+    if(src.w!==f.w||src.h!==f.h){
+      toast(`크기가 다릅니다: ${src.w}×${src.h} → ${f.w}×${f.h} 필요`);return;
+    }
+    undoStack.push(f.pixels.slice());
+    f.pixels=src.pixels;
+    f.palette=src.palette.slice(0,Math.max(...src.pixels)+1).map(snap565);
+    renderFrame(); drawSim();
+    toast('BMP 가져오기 완료');
+  }catch(err){toast('가져오기 실패: '+err.message)}
+};
+
+// ---- device simulation (composite: body-type sprites + item) --------
+// clothes piece per pose within a 7-piece set; a shop clothes item holds
+// 4 sets back to back (one per body type)
+const FK_MAP={0:0,3:0, 2:1,4:1,5:1,10:1, 6:2,7:2,12:2, 8:3, 9:4, 13:5, 14:6};
+const AC_PRIMARY={0:0,2:0,3:0,4:0,5:0,10:0, 6:1,7:1,8:1,9:1, 12:2, 13:3,14:3};
+const PIECES_PER_SET=7;
+let chara=null, simTimer=null, simStep=0, bodyType=0;
+// The wear-coordinate space puts the character sprite's CENTRE at (64, 50)
+// — that is what acposeditor means by "centre position". Bottom-aligning
+// instead skews the accessory on the tall 44x52 poses. Stage is 4px taller
+// than the 128x72 room so those poses aren't clipped.
+const SIMS=4, STAGE_W=128, STAGE_H=76, ANCHOR_X=64, ANCHOR_Y=50, FLOOR_Y=68;
+
+chara=null;   // no reference sprites in the web build (see README)
+
+function simSupported(){
+  if(!pk||!pk.banks||!pk.banks[0]||!chara)return false;
+  return !!((pk.kind==='ac'&&pk.acc_pos)||(pk.kind==='fk'&&!pk.is_wardrobe
+         &&pk.banks[0].frames.length>=PIECES_PER_SET));
+}
+function clothesXY(cf,cx,cy,f){   // centred horizontally, bottom aligned
+  return {x:cx+((cf.w-f.w)>>1), y:cy+cf.h-f.h};
+}
+function simScenario(){
+  const it=pk.banks[0].frames;
+  const rows=pk.acc_rows||[0,1,2,3,4,5,6,7,8,9,10,12,14,15];
+  const LABELS=[0,1,2,3,4,5,6,7,8,9,10,12,13,14];   // row -> BMP frame label
+  const POSES=[0,2,6,8,9,10,12,14];
+  return POSES.map(p=>{
+    const row=rows.indexOf(p);
+    const label=row>=0?LABELS[row]:0;
+    const cf=(chara[bodyType]||[])[label]||chara[0][0];
+    const cx=ANCHOR_X-(cf.w>>1), cy=ANCHOR_Y-(cf.h>>1);
+    const layers=[];
+    if(pk.kind==='fk'){
+      const piece=FK_MAP[p];
+      const f=piece!==undefined?it[bodyType*PIECES_PER_SET+piece]:null;
+      if(f&&f.w>2)layers.push({f,...clothesXY(cf,cx,cy,f)});
+    }else if(pk.kind==='ac'){
+      const pri=AC_PRIMARY[p], xy=(row>=0&&pk.acc_pos)?pk.acc_pos[bodyType][row]:null;
+      if(pri!==undefined&&it[pri]&&xy)
+        layers.push({f:it[pri], x:xy[0]-(it[pri].w>>1), y:xy[1]-(it[pri].h>>1)});
+    }
+    return {pose:p, row, label, cf, cx, cy, layers};
+  });
+}
+function blit(g,f,px,py,opaqueAll){
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!opaqueAll)continue;
+    const c=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    g.fillRect((px+x)*SIMS,(py+y)*SIMS,SIMS,SIMS);
+  }
+}
+function drawSim(){
+  $('simSection').hidden=!simSupported();
+  $('accPosCard').hidden=!(pk&&pk.acc_pos);
+  if(!simSupported())return;
+  const cv=$('simCv'); cv.width=STAGE_W*SIMS; cv.height=STAGE_H*SIMS;
+  const g=cv.getContext('2d');
+  const steps=simScenario();
+  const st=steps[simStep%steps.length];
+  g.fillStyle='#e9f3e4';g.fillRect(0,0,cv.width,cv.height);
+  g.fillStyle='#d5e6cd';g.fillRect(0,FLOOR_Y*SIMS,cv.width,(STAGE_H-FLOOR_Y)*SIMS);
+  blit(g,st.cf,st.cx,st.cy,false);
+  st.layers.forEach(l=>blit(g,l.f,l.x,l.y,false));
+  if(simGrid){
+    g.strokeStyle='rgba(0,0,0,.12)'; g.lineWidth=1;
+    for(let x=0;x<=STAGE_W;x+=4){g.beginPath();g.moveTo(x*SIMS+.5,0);g.lineTo(x*SIMS+.5,STAGE_H*SIMS);g.stroke()}
+    for(let y=0;y<=STAGE_H;y+=4){g.beginPath();g.moveTo(0,y*SIMS+.5);g.lineTo(STAGE_W*SIMS,y*SIMS+.5);g.stroke()}
+    g.strokeStyle='rgba(232,86,74,.5)';
+    g.beginPath();g.moveTo(ANCHOR_X*SIMS+.5,0);g.lineTo(ANCHOR_X*SIMS+.5,STAGE_H*SIMS);g.stroke();
+    g.beginPath();g.moveTo(0,ANCHOR_Y*SIMS+.5);g.lineTo(STAGE_W*SIMS,ANCHOR_Y*SIMS+.5);g.stroke();
+  }
+  const empty=pk.kind==='fk'&&!st.layers.length;
+  $('simLabel').textContent=`${pk.kind==='ac'?'액세서리':'옷'} · 프레임 ${st.label}`+
+    ` · ${simStep%steps.length+1}/${steps.length} · Body type ${bodyType+1}`+
+    (empty?' — 이 체형 세트는 비어 있음(더미)':'');
+}
+function simStart(){
+  simStop();
+  simTimer=setInterval(()=>{simStep++;drawSim()},450);
+  $('simBtn').textContent='⏸';
+  drawSim();
+}
+function simStop(){if(simTimer){clearInterval(simTimer);simTimer=null}$('simBtn').textContent='▶'}
+let simGrid=false, simDrag=null;
+$('simGridChk').onchange=()=>{simGrid=$('simGridChk').checked;drawSim()};
+$('simBtn').onclick=()=>simTimer?simStop():simStart();
+
+// drag the accessory straight on the preview; positions are whole pixels,
+// so the pointer is simply rounded to the 1px grid
+$('simCv').addEventListener('mousedown',e=>{
+  if(!pk||!pk.acc_pos)return;
+  const steps=simScenario(), st=steps[simStep%steps.length];
+  const row=st.row; if(row<0||!st.layers.length)return;
+  const L=st.layers[st.layers.length-1];
+  const r=$('simCv').getBoundingClientRect();
+  const x=(e.clientX-r.left)/SIMS, y=(e.clientY-r.top)/SIMS;
+  if(x<L.x||x>L.x+L.f.w||y<L.y||y>L.y+L.f.h)return;
+  simStop();
+  simDrag={row, dx:x-(L.x+(L.f.w>>1)), dy:y-(L.y+(L.f.h>>1))};
+  e.preventDefault();
+});
+window.addEventListener('mousemove',e=>{
+  if(!simDrag)return;
+  const r=$('simCv').getBoundingClientRect();
+  const cx=Math.round((e.clientX-r.left)/SIMS-simDrag.dx);
+  const cy=Math.round((e.clientY-r.top)/SIMS-simDrag.dy);
+  pk.acc_pos[bodyType][simDrag.row]=[Math.max(0,Math.min(255,cx)),Math.max(0,Math.min(255,cy))];
+  renderAccGrid(); drawSim(); drawStripIfVisible();
+});
+window.addEventListener('mouseup',()=>{simDrag=null});
+function drawStripIfVisible(){if(!$('stripRow').hidden)drawStrip()}
+$('simBody').onchange=()=>{
+  bodyType=+$('simBody').value;
+  renderAccGrid(); drawSim(); drawStripIfVisible();   // strip follows the body type
+};
+
+function renderAccGrid(){
+  const el=$('accGrid'); if(!pk||!pk.acc_pos){el.innerHTML='';return}
+  const LABELS=[0,1,2,3,4,5,6,7,8,9,10,12,13,14];
+  el.innerHTML='<b>프레임</b><b>X</b><b>Y</b><span></span><span></span>';
+  pk.acc_pos[bodyType].forEach((xy,i)=>{
+    const lab=document.createElement('span'); lab.textContent=LABELS[i];
+    const mk=(k)=>{const inp=document.createElement('input');
+      inp.type='number';inp.min=0;inp.max=255;inp.value=xy[k];
+      inp.style.cssText='width:56px;padding:2px 4px';
+      inp.oninput=()=>{pk.acc_pos[bodyType][i][k]=+inp.value||0;drawSim()};
+      return inp};
+    el.append(lab,mk(0),mk(1),document.createElement('span'),document.createElement('span'));
+  });
+}
+
+// ---- iD device version / Lovely Melody conversion ----
+// Only the girls' accessory shop and girls' photo-studio costumes are
+// version-specific; the rest of the catalogue is shared. The split exists
+// because LM swapped Uwasatchi out for Melodytchi, and both the wear
+// coordinates and the like mask are per character.
+const ROSTER_SENSITIVE=[2,3];      // section 2 accessory, 3 clothes/costume
+function renderVersion(){
+  const v=pk.version, P=pk.version_presets||{};
+  $('verNow').textContent=`— 현재 ${v.label} (0x${v.version.toString(16).padStart(4,'0')})`
+    +` · 인덱스 0x${v.index.toString(16)}`;
+  $('verSel').innerHTML=Object.entries(P).map(([k,o])=>
+    `<option value="${k}">${o.label}</option>`).join('');
+  const curKey=Object.keys(P).find(k=>P[k].version===v.version
+    &&P[k].compat[0]===v.compat[0]&&P[k].compat[1]===v.compat[1]);
+  if(curKey)$('verSel').value=curKey;
+  $('verIdx').value=v.index;
+  $('verC0').value=v.compat[0].toString(16).padStart(4,'0');
+  $('verC1').value=v.compat[1].toString(16).padStart(4,'0');
+  const risky=ROSTER_SENSITIVE.includes(pk.section);
+  $('verNote').innerHTML=risky
+    ? '⚠️ 액세서리·코스튬은 <b>캐릭터 로스터에 묶인 카테고리</b>입니다. LM 버전에서 '
+      +'우와삿치가 빠지고 멜로딧치가 들어갔으므로, 버전 바이트만 바꿔도 '
+      +'<b>착용 좌표 행과 호불호 비트</b>는 그 캐릭터 자리만큼 어긋날 수 있습니다. '
+      +'변환 후 시뮬레이션으로 확인하세요.'
+    : '이 카테고리는 버전 간 공통이라 버전 바이트만 맞추면 됩니다.';
+  $('verSel').onchange=()=>{
+    const o=P[$('verSel').value]; if(!o)return;
+    $('verC0').value=o.compat[0].toString(16).padStart(4,'0');
+    $('verC1').value=o.compat[1].toString(16).padStart(4,'0');
+    const [lo,hi]=o.index_range, cur=+$('verIdx').value;
+    if(cur<lo||cur>hi)$('verIdx').value=lo;
+    $('verNote').dataset.range=`대상 인덱스 범위 0x${lo.toString(16)}~0x${hi.toString(16)}`;
+    toast(`대상 인덱스 범위 0x${lo.toString(16)}~0x${hi.toString(16)} — 빈 슬롯인지 확인하세요`);
+  };
+  $('verApply').onclick=()=>{
+    const o=P[$('verSel').value]; if(!o)return;
+    pk.version={version:o.version,
+                compat:[parseInt($('verC0').value,16)||0, parseInt($('verC1').value,16)||0],
+                index:+$('verIdx').value,
+                label:o.label};
+    $('verNow').textContent=`— ${o.label} (0x${o.version.toString(16).padStart(4,'0')})`
+      +` · 인덱스 0x${(+$('verIdx').value).toString(16)} — 저장하면 반영`;
+    toast(`${o.label} 로 변환 준비됨 — 저장하세요`);
+  };
+}
+
+// ---- cross-model conversion ----
+const CV_MODELS=['iD','iDL',"P's",'4U'];
+function renderConvert(){
+  $('cvNow').textContent=`— 현재 ${pk.model}`;
+  const btns=$('cvBtns'); btns.innerHTML='';
+  let note='';
+  CV_MODELS.filter(m=>m!==pk.model).forEach(m=>{
+    const pl=(pk.convert||{})[m]; if(!pl)return;
+    const box=document.createElement('div');
+    const b=document.createElement('button');
+    b.className='btn'; b.textContent=`→ ${m}`; b.style.width='100%';
+    b.disabled=!pl.ok;
+    b.title=pl.ok?pl.changes.join('\n'):pl.blockers.join('\n');
+    b.onclick=async()=>{
+      if(pl.warnings.length&&!confirm(`${m}로 변환합니다.\n\n`+pl.warnings.map(w=>'· '+w).join('\n')))return;
+      let blob;
+      try { blob=new Blob([await apiBuild({file_b64:fileB64,edits:[{path:pk.path,convert:m}]})]); }
+      catch(err){ toast('변환 실패: '+err.message); return }
+      load(new File([blob],($('fName').value.trim()||'custom')+`_${m}.jpg`));
+      toast(`${m} 로 변환했습니다 — 확인 후 저장하세요`);
+    };
+    box.appendChild(b);
+    if(!pl.ok){const h=document.createElement('div');h.className='hint';
+      h.style.margin='4px 0 0';h.textContent=pl.blockers[0];box.appendChild(h)}
+    btns.appendChild(box);
+    if(pl.ok&&!note)note=pl.warnings.map(w=>'· '+w).join('<br>');
+  });
+  const cp=$('cvCompat'); cp.innerHTML='';
+  const have=new Set((pk.compat||{}).models||[]);
+  ['iDL',"P's",'4U'].forEach(m=>{
+    const b=document.createElement('button');
+    b.textContent=m; b.className=have.has(m)?'l1':'';
+    b.onclick=()=>{have.has(m)?have.delete(m):have.add(m);
+      pk.compat={mask:0,models:[...have]}; renderCompatBtns()};
+    cp.appendChild(b);
+  });
+  function renderCompatBtns(){
+    [...cp.children].forEach(b=>b.className=have.has(b.textContent)?'l1':'');
+    $('cvCompatNote').innerHTML=compatNote();
+  }
+  const compatNote=()=>pk.model==='iD'
+    ? 'iD는 이 필드를 쓰지 않습니다 (항상 0).'
+    : `0xFF 비트마스크. <b>iD L + P's 둘 다 체크</b>하면 Mr.Blinky의 <code>itemidlps_*</code> 파일과 같은 상태가 되어 양쪽 기기에서 받을 수 있습니다.`;
+  $('cvCompatNote').innerHTML=compatNote();
+  $('cvNote').innerHTML=note||'변환은 헤더만 다시 쓰고 스프라이트는 그대로 옮깁니다.';
+}
+
+// ---- character stats ----
+const CHAR_FIELDS=[
+  ['tama_id','Tamagotchi ID (로스터)','roster'],
+  ['revert_id','Revert ID (되돌아갈 캐릭터)','roster'],
+  ['graphics','Graphics index','u16'],
+  ['stage','스테이지','enum'],
+  ['body_type','체형','enum'], ['personality','성격 타입','u8'],
+  ['weight_std','표준 체중','u8'], ['weight_min','최소 체중','u8'],
+  ['hunger_dep','공복 감소율','u8'], ['happy_dep','행복 감소율','u8'],
+  ['sickness','병 확률','u8'],
+  ['wake','기상 시각','u8'], ['sleep','취침 시각','u8'],
+  ['birth_month','생일 월','u8'], ['birth_day','생일 일','u8'],
+  ['sep_clothes','옷 분리','yesno'], ['sep_accessory','액세서리 분리','yesno'],
+  ['like_index','호불호 인덱스','enum'],
+  ['transform_type','변신 아이템 타입','enum'],
+  ['transform_serial','변신 아이템 시리얼','item'],
+];
+const YESNO={0:'No',1:'Yes'};
+function renderCharStats(){
+  const el=$('charFields'); el.innerHTML='';
+  const cs=pk.char_stats, en=pk.char_enums||{};
+  const grid=document.createElement('div');
+  grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px';
+  CHAR_FIELDS.forEach(([key,label,type])=>{
+    const box=document.createElement('div');
+    const l=document.createElement('label'); l.textContent=label; box.appendChild(l);
+    let inp;
+    if(type==='roster'){
+      const r=(pk.char_extra||{})[key==='tama_id'?'tama_roster':'revert_roster']||{};
+      const wrap=document.createElement('div'); wrap.className='row';
+      const gsel=document.createElement('select');
+      gsel.innerHTML='<option value="Boy">남자</option><option value="Girl">여자</option>';
+      gsel.value=r.gender||'Boy';
+      const sl=document.createElement('input');
+      sl.type='number'; sl.min=0; sl.max=255; sl.value=r.slot||0;
+      const page=()=>gsel.value==='Girl'?0x1B:0x13;
+      const push=()=>{pk.char_stats[key]=(page()<<8)|(+sl.value&0xFF);
+        l.textContent=`${label} · 0x${pk.char_stats[key].toString(16)}`};
+      gsel.onchange=push; sl.oninput=push;
+      wrap.appendChild(gsel); wrap.appendChild(sl);
+      box.appendChild(wrap); grid.appendChild(box);
+      l.textContent=`${label} · 0x${(cs[key]||0).toString(16)}`;
+      return;
+    }
+    if(type==='item'){
+      // serial + the name the packet itself stores at 0x232 (10 chars)
+      inp=document.createElement('input');
+      inp.type='number'; inp.min=0; inp.max=65535; inp.value=cs[key];
+      const nm=document.createElement('input');
+      nm.value=(pk.char_extra||{}).transform_name||'';
+      nm.maxLength=10; nm.placeholder='아이템 이름';
+      nm.style.marginTop='4px';
+      nm.oninput=()=>{pk.char_extra.transform_name=nm.value};
+      inp.oninput=()=>{pk.char_stats[key]=+inp.value};
+      l.textContent=`${label} + 이름 (파일에 함께 저장)`;
+      box.appendChild(inp); box.appendChild(nm); grid.appendChild(box); return;
+    }
+    if(type==='yesno'){
+      inp=document.createElement('select');
+      inp.innerHTML='<option value="0">No</option><option value="1">Yes</option>';
+      inp.value=cs[key]?1:0;
+      inp.onchange=()=>{pk.char_stats[key]=+inp.value};
+      box.appendChild(inp); grid.appendChild(box); return;
+    }
+    if(type==='enum'&&en[key]){
+      inp=document.createElement('select');
+      const opts=Object.entries(en[key]);
+      // keep the stored value selectable even when it is not in the table
+      if(!opts.some(([k])=>+k===cs[key]))opts.unshift([cs[key],`(0x${(cs[key]||0).toString(16)})`]);
+      inp.innerHTML=opts.map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+      inp.value=cs[key];
+    }else{
+      inp=document.createElement('input');
+      inp.type='number'; inp.min=0; inp.max=type==='u16'?65535:255;
+      inp.value=cs[key];
+    }
+    inp.oninput=()=>{pk.char_stats[key]=+inp.value};
+    box.appendChild(inp); grid.appendChild(box);
+  });
+  el.appendChild(grid);
+  const sk=document.createElement('div');
+  sk.innerHTML='<label>스킬 1~5</label>';
+  const row=document.createElement('div'); row.className='row';
+  (cs.skills||[]).forEach((v,i)=>{
+    const s=document.createElement('input'); s.type='number'; s.min=0; s.max=255; s.value=v;
+    s.oninput=()=>{pk.char_stats.skills[i]=+s.value};
+    row.appendChild(s);
+  });
+  sk.appendChild(row); el.appendChild(sk);
+  const note=document.createElement('div');
+  note.className='hint';
+  note.textContent='취침 시각은 파일에 표시값−1로 저장되며, 여기서는 표시값 기준으로 편집합니다.';
+  el.appendChild(note);
+}
+
+// ---- packet swap: drop another .jpg's packet into this slot ----
+$('swapBtn').onclick=()=>$('swapInput').click();
+$('swapInput').onchange=async e=>{
+  const file=e.target.files[0]; e.target.value=''; if(!file||!pk)return;
+  const buf=new Uint8Array(await file.arrayBuffer());
+  const info=await apiParse(buf);
+  if(info.error){toast('교체 실패: '+info.error);return}
+  const src=info.packets[0];
+  if(src.model!==pk.model&&!confirm(
+      `기종이 다릅니다 (${src.model} → ${pk.model}). 그래도 교체할까요?`))return;
+  let blob;
+  try { blob=new Blob([await apiBuild({file_b64:fileB64,
+    edits:[{path:pk.path, replace_b64:arrayToB64(buf)}]})]); }
+  catch(err){ toast('교체 실패: '+err.message); return }
+  const nb=new Uint8Array(await blob.arrayBuffer());
+  await load(new File([nb],$('fname').textContent||'custom.jpg'));
+  toast(`"${src.name||src.ansi_id}" 로 교체됨 — 저장하면 반영됩니다`);
+};
+
+// the top-level packet's download name is the file's identity: the display
+// part of "DL_T4UA_<name>.jpg", falling back to its internal item name
+function downloadStem(){
+  const top=doc&&doc.packets.find(q=>q.path.length===1);
+  if(!top)return $('fName').value.trim();
+  const u=top.unicode_name||'';
+  if(u.startsWith('DL_')&&u.indexOf('_',3)>0){
+    const tail=u.slice(u.indexOf('_',3)+1);
+    const stem=tail.includes('.')?tail.slice(0,tail.lastIndexOf('.')):tail;
+    if(stem)return stem;
+  }
+  return (top.name||'').trim()||$('fName').value.trim();
+}
+
+// ---- save ----
+$('saveBtn').onclick=async()=>{
+  const edit={path:pk.path,
+    name:$('fName').value.trim(),
+    unicode_name:$('fName').value.trim().slice(0,10),
+    serial:+$('fSerial').value};
+  if(pk.char_extra){edit.name2=$('fName2').value.trim();
+    if(pk.char_extra.transform_name!=null)edit.transform_name=pk.char_extra.transform_name}
+  if(pk.compat&&pk.model!=='iD')edit.compat=pk.compat.models;
+  if(pk.is_item&&(!pk.fields||pk.fields.includes('price')))edit.price=+$('fPrice').value;
+  if(pk.is_item&&pk.stats_verified){
+    const F=pk.fields||[];
+    edit.dest=$('fDest').value;
+    if(F.includes('likes'))edit.likes=pk.likes;
+    if(F.includes('stats'))edit.stats={intelligence:+$('s0').value,style:+$('s1').value,
+      charisma:+$('s2').value,gourmet:+$('s3').value,strength:+$('s4').value};
+    if(F.includes('hunger'))edit.hunger=+$('fHunger').value;
+    if(F.includes('friendship'))edit.friendship=+$('fFriend').value;
+    if(F.includes('anim')){edit.anim_a=+$('fAnimA').value;edit.anim_b=+$('fAnimB').value}
+  }
+  if(pk.acc_pos)edit.acc_pos=pk.acc_pos;
+  if(pk.banks)edit.banks=pk.banks;
+  if(pk.texts)edit.texts=pk.texts;   // parts[] carries the run layout
+  if(pk.char_stats)edit.char_stats=pk.char_stats;
+  if(pk.version)edit.version=pk.version;
+  const edits=[edit];
+  const par=charParent();
+  if(par&&par.char_extra&&par.char_extra.acc_pos)
+    edits.push({path:par.path,char_acc_pos:par.char_extra.acc_pos});
+  if(pk.char_extra&&pk.char_extra.acc_pos)edit.char_acc_pos=pk.char_extra.acc_pos;
+  const payload={file_b64:fileB64,edits};
+  if(newJpegB64)payload.jpeg_b64=newJpegB64;
+  let blob;
+  try { blob=new Blob([await apiBuild(payload)]); }
+  catch(err){ toast('저장 실패: '+err.message); return }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  // name the download after the *file*, not whichever sub-packet happens to
+  // be selected -- a character's wardrobe packet has its own separate name,
+  // so saving from it used to produce a differently-named file with
+  // byte-identical contents
+  a.download=(downloadStem()||'custom')+'_custom.jpg';
+  a.click();
+  toast('저장 완료 — 체크섬 검증 통과 ✓');
+};
+</script>
+</body>
+</html>

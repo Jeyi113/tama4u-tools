@@ -206,5 +206,13 @@ def set_roster(pkt, off, gender=None, slot=None):
     struct.pack_into('<H', pkt.raw, off, (page << 8) | (int(slot) & 0xFF))
 
 
+# 0x272 + 14 dialogue slots x 150 bytes
+CHAR_MIN_SIZE = OFF_DIALOGUE + 14 * 150
+
+
 def is_character(pkt):
-    return pkt.type_sig[4:6] == b'\x48\x03'
+    """The 0x50-0x51 signature alone is not enough: those two bytes are the
+    tail of the destination code, so an iD item whose destination happens to
+    end 48 03 matches it.  A character also has to be big enough to hold the
+    stat block and all 14 dialogue slots."""
+    return pkt.type_sig[4:6] == b'\x48\x03' and pkt.size >= CHAR_MIN_SIZE
