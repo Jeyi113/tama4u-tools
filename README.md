@@ -1,8 +1,13 @@
 # tama4u-tools
 
-Tamagotchi 4U 다운로드 아이템(.jpg) 파서/에디터 라이브러리.
-리버스 엔지니어링 기반 포맷 스펙 포함. Mr.Blinky의 Tama Image Editor /
-Tama 4U character data editor와 교차 검증됨.
+### ▶ [브라우저에서 바로 열기 — jeyi113.github.io/tama4u-tools](https://jeyi113.github.io/tama4u-tools/)
+
+컬러 다마고치 4기종(**iD / iD L / P's / 4U**) 다운로드 아이템(.jpg)의
+파서·에디터. 공개된 포맷 문서가 없어 배포 파일 5,706개의 통계 분석으로
+필드 위치를 역산했고, 그 결과를 이 README에 스펙으로 정리했다.
+Mr.Blinky의 Tama Image Editor / Tama 4U character data editor와 교차 검증됨.
+
+설치할 것도, 올릴 것도 없다 — 파일은 브라우저 안에서만 처리된다.
 
 ```
 python3 -m tama4u charset <download-pack>      # 내부 문자코드 테이블 생성 (최초 1회)
@@ -13,8 +18,7 @@ python3 -m tama4u export <file.jpg> -o out/    # 스프라이트 → 4bpp BMP
 
 ## 실행
 
-**웹 데모** — 설치 없이 브라우저에서 바로:
-<https://jeyi113.github.io/tama4u-tools/>
+**웹 데모** — <https://jeyi113.github.io/tama4u-tools/>
 
 `docs/index.html` 은 자기 완결형이라 내려받아 더블클릭해도 똑같이 동작한다.
 파일은 브라우저 안에서만 처리되고 어디로도 전송되지 않는다. 참조 스프라이트를
