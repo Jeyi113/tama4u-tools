@@ -1588,8 +1588,9 @@ const isOpaque=()=>pk&&pk.opaque;
 // Anything else — room wallpapers, photo-studio backdrops, the odd opaque
 // item — is real artwork and renders solid.  Verified across ~24k frames
 // of the iD / iD L / P's / 4U packs.
-// palette[0] is the transparent slot everywhere except room backgrounds
-// (128x72), which are opaque and keep a real colour there.
+// palette[0] is the transparent slot only when it actually holds the green
+// marker.  Size is not the test: 100 of the 128x72 frames are transparent
+// and 116 smaller ones are opaque.
 const TRANSPARENT=[0,255,0];
 const transGreen=f=>{const c=f&&f.palette&&f.palette[0];return c&&c[1]===255&&c[0]<128&&c[2]<128};
 const frOpaque=f=>!!f&&!transGreen(f);
@@ -2216,13 +2217,16 @@ $('bmpInput').onchange=async e=>{
     if(src.w!==f.w||src.h!==f.h){
       toast(`크기가 다릅니다: ${src.w}×${src.h} → ${f.w}×${f.h} 필요`);return;
     }
+    // 투명 여부는 크기가 아니라 이 프레임의 0번 색이 정한다. 원래 투명이던
+    // 자리에 외부 BMP(보통 0번이 검정)를 넣으면 투명이어야 할 픽셀이 검게
+    // 찍히므로, 그때만 0번을 투명 마커로 맞춘다. 원래 0번이 실제 색이던
+    // 프레임(방 배경 등)은 가져온 색을 그대로 둔다.
+    const wasTransparent=!frOpaque(f);
     undoStack.push(f.pixels.slice());
     f.pixels=src.pixels;
     f.palette=src.palette.slice(0,Math.max(...src.pixels)+1).map(snap565);
-    // 방 배경(128×72)만 0번이 실제 색이고, 나머지는 0번이 투명이다.
-    // 가져온 BMP의 0번이 무슨 색이든 투명 마커(녹색)로 맞춰준다.
     let note='';
-    if(!(f.w===128&&f.h===72)&&!transGreen(f)){
+    if(wasTransparent&&!transGreen(f)){
       f.palette[0]=TRANSPARENT;
       note=' · 0번을 투명색으로 맞췄습니다';
     }
