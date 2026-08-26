@@ -27,6 +27,12 @@
   .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 90px;min-width:90px}
   .statgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;text-align:center}
   .statgrid label{margin:0;font-size:11px}
+  table.vdp{width:100%;border-collapse:collapse;font-size:12px}
+  table.vdp td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+  table.vdp td.nm{font-weight:600}
+  table.vdp td.ad{color:#8a8172;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .vdp-ok{color:var(--ok);font-weight:600}
+  .vdp-guess{color:#8a8172}
   .likes{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:3px;
     max-height:260px;overflow:auto}
   .likes button{font-size:10px;padding:3px 1px;border:1px solid var(--line);border-radius:4px;background:#fdfcfa;cursor:pointer;overflow:hidden;white-space:nowrap}
@@ -172,6 +178,17 @@
     <div class="card" id="textCard" hidden>
       <h2>대사 / 텍스트 <span style="font-weight:400;text-transform:none">(길이 고정, 남는 칸은 공백 처리)</span></h2>
       <div id="texts"></div>
+    </div>
+    <div class="card" id="vdpCard" hidden>
+      <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
+      <table class="vdp"><tbody id="vdpRows"></tbody></table>
+      <div class="hint">
+        <b>확인</b>은 레코드가 시그니처와 행선지를 그대로 갖고 있는 항목,
+        <b>추정</b>은 이름과 시리얼만 남아 행선지를 단정할 수 없는 항목입니다
+        (식사·간식과 메뉴 아이콘이 여기 해당 — 기기 표에 직접 심습니다).<br>
+        VDP 그래픽은 대부분 별도 형식으로 묶여 있어, 아래 스프라이트 탭에는
+        평범한 레코드로 들어간 것만 나옵니다.
+      </div>
     </div>
     <div class="card" id="likesCard">
       <h2>좋아함 / 싫어함 <span style="font-weight:400;text-transform:none">(클릭: 없음→<span style="color:var(--ok)">좋아함</span>→<span style="color:var(--accent)">싫어함</span>)</span></h2>
@@ -384,7 +401,10 @@ const DEST_CATALOG = {
     ['타마모리 · 액세서리 2', '81023500', 'ffffffff'],
     ['게임센터 · 게임', '94025b01', 'ffffffff'],
     ['외출지', '94024702', 'ffffffff'],
-    ['VDP · 미해독 프로그램', '94025b02', 'ffffffff'],
+    ['VDP · 아이템 묶음', '94025b02', 'ffffffff'],
+    // only ever seen inside VDPs, never as a standalone P's download, but
+    // it is the iD L code for the same shop shelf
+    ['타마데파 · 생활용품', '81042902', 'ffffffff'],
   ],
   '4U': [...COMMON,
     ['냉장고 직행 · 식사 (비매품)', '81010101', 'ffffffff'],
@@ -446,7 +466,14 @@ class Packet {
     while (pos !== -1) {
       const declared = pos + OFF_PACKET_SIZE + 2 <= this.raw.length
         ? u16(this.raw, pos + OFF_PACKET_SIZE) : 0;
-      if (declared < 0x60 || pos + declared > this.raw.length) {
+      const sig = pos + OFF_TYPE_SIG + 2 <= this.raw.length
+        ? u16(this.raw, pos + OFF_TYPE_SIG) : 0;
+      // A size check alone is not enough: a VDP's program blob spells
+      // TAMAGO often enough that false hits passed and then masked the
+      // regions the sprite scan would have read.  A real nested packet
+      // always carries a model signature at 0x4C.
+      if (declared < 0x60 || pos + declared > this.raw.length
+          || !SIGNATURES[sig]) {
         pos = find(this.raw, MAGIC, pos + MAGIC.length);   // false hit in pixels
         continue;
       }
@@ -1139,6 +1166,50 @@ function likeLabels(p) {
 const likeRoster = p => (ROSTERS[p.model] || []).filter(Boolean).length
   ? (ROSTERS[p.model] || []).filter(Boolean) : null;
 
+// ---- Virtual Deco Pierce bundles (destination 94 02 5b 02) ----------
+// A VDP installs a whole item set at once.  Each embedded item keeps the
+// tail of an ordinary packet header -- [u16 serial][00 00][name] at 0x5A /
+// 0x5C / 0x5E -- and, where the front bytes survived, the P's signature 18
+// bytes before the name and the destination 16.  See tama4u/vdp.py.
+const VDP_DEST = '94025b02';
+const VDP_SIG = 0x8dc0, VDP_MIN_NAME = 3, VDP_MAX_UNCONFIRMED = 12;
+const VDP_NAME_CHARS = new Set(
+  [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 　★▽・♪＋']);
+const isVdp = p =>
+  Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4))
+    .map(x => x.toString(16).padStart(2, '0')).join('') === VDP_DEST;
+
+function vdpContents(p) {
+  const raw = p.raw, table = tableFor(p.model), out = [];
+  for (let n = 18; n < raw.length - 2; n++) {
+    if (raw[n - 2] || raw[n - 1]) continue;
+    const serial = (raw[n - 4] << 8) | raw[n - 3];
+    if (!serial) continue;
+    let j = n;
+    while (j < raw.length && VDP_NAME_CHARS.has(table[raw[j]])) j++;
+    const name = decode(Array.from(raw.slice(n, j)), table).replace(/^[　 ]+|[　 ]+$/g, '');
+    if (name.length < VDP_MIN_NAME || !/[A-Z]/.test(name)) continue;
+    const dest = Array.from(raw.slice(n - 16, n - 12));
+    const sig = (raw[n - 18] << 8) | raw[n - 17];
+    const ok = sig === VDP_SIG && (dest[0] === 0x81 || PROGRAM_DESTS.includes(dest[0]));
+    const hex = dest.map(x => x.toString(16).padStart(2, '0')).join('');
+    out.push({ offset: n - 18, name_offset: n, serial, name, confirmed: ok,
+               dest: ok ? hex : null,
+               dest_label: ok ? destMatch(p.model, dest, p.raw) : null });
+  }
+  const guesses = out.filter(r => !r.confirmed).length;
+  return guesses > VDP_MAX_UNCONFIRMED ? out.filter(r => r.confirmed) : out;
+}
+
+function vdpAttributeSprites(records, banks) {
+  for (const b of banks) {
+    let owner = null;
+    for (const r of records) if (r.offset <= b.offset) owner = r.name;
+    b.vdp_item = owner;
+  }
+  return banks;
+}
+
 // ---- character stats ------------------------------------------------
 const CH = {
   TAMA_ID: 0x204, REVERT_ID: 0x206, GRAPHICS: 0x208, PERSONALITY: 0x20c,
@@ -1571,6 +1642,10 @@ function describe(data, opts = {}) {
     if (banks.length)
       info.banks = banks.map(b => ({ offset: b.offset, loose: b.loose ?? null,
                                      frames: b.frames.map(frameOut) }));
+    if (isVdp(pkt)) {
+      info.vdp = vdpContents(pkt);
+      vdpAttributeSprites(info.vdp, info.banks || []);
+    }
     out.packets.push(info);
   }
   return out;
@@ -1788,6 +1863,7 @@ function selectPacket(path){
   gate('animBox', on('anim'), '장난감 전용');
   gate('statCard', on('stats'), pk.model==='iD'||pk.model==='iDL'?'이 기종에 없음':'해당 없음');
   gate('likesCard', on('likes'), '해당 없음');
+  renderVdp();
   $('animBox').hidden=false;
   $('statCard').style.display=''; $('likesCard').style.display='';
   $('priceBox').style.display=''; $('hungerBox').style.display='';
@@ -2056,6 +2132,29 @@ window.addEventListener('keydown',e=>{
     e.preventDefault(); nudge(...ARROWS[e.key]);
   }
 });
+
+// A VDP bundles a whole item set into one download; list what is inside.
+function renderVdp(){
+  const rows=pk.vdp||[];
+  $('vdpCard').hidden=!rows.length;
+  if(!rows.length)return;
+  const ok=rows.filter(r=>r.confirmed).length;
+  $('vdpInfo').textContent=`— ${rows.length}개 (확인 ${ok} · 추정 ${rows.length-ok})`;
+  const spr={};
+  (pk.banks||[]).forEach(b=>{ if(b.vdp_item)spr[b.vdp_item]=(spr[b.vdp_item]||0)+b.frames.length });
+  $('vdpRows').innerHTML=rows.map(r=>{
+    const n=spr[r.name]||0;
+    return `<tr>`
+      +`<td class="ad">0x${r.offset.toString(16).toUpperCase().padStart(5,'0')}</td>`
+      +`<td class="nm">${r.name}</td>`
+      +`<td class="ad">시리얼 0x${r.serial.toString(16).toUpperCase().padStart(4,'0')}`
+        +` (${r.serial})</td>`
+      +`<td>${r.confirmed
+          ? `<span class="vdp-ok">확인</span> ${r.dest_label||('행선지 '+r.dest)}`
+          : `<span class="vdp-guess">추정 · 행선지 없음</span>`}</td>`
+      +`<td class="ad">${n?`스프라이트 ${n}`:''}</td></tr>`;
+  }).join('');
+}
 
 // ---- animation simulation (loops frames of the current bank) ----
 let animTimer=null, animIdx=0;

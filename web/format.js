@@ -347,6 +347,50 @@ export function likeLabels(p) {
 export const likeRoster = p => (ROSTERS[p.model] || []).filter(Boolean).length
   ? (ROSTERS[p.model] || []).filter(Boolean) : null;
 
+// ---- Virtual Deco Pierce bundles (destination 94 02 5b 02) ----------
+// A VDP installs a whole item set at once.  Each embedded item keeps the
+// tail of an ordinary packet header -- [u16 serial][00 00][name] at 0x5A /
+// 0x5C / 0x5E -- and, where the front bytes survived, the P's signature 18
+// bytes before the name and the destination 16.  See tama4u/vdp.py.
+export const VDP_DEST = '94025b02';
+const VDP_SIG = 0x8dc0, VDP_MIN_NAME = 3, VDP_MAX_UNCONFIRMED = 12;
+const VDP_NAME_CHARS = new Set(
+  [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 　★▽・♪＋']);
+export const isVdp = p =>
+  Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4))
+    .map(x => x.toString(16).padStart(2, '0')).join('') === VDP_DEST;
+
+export function vdpContents(p) {
+  const raw = p.raw, table = tableFor(p.model), out = [];
+  for (let n = 18; n < raw.length - 2; n++) {
+    if (raw[n - 2] || raw[n - 1]) continue;
+    const serial = (raw[n - 4] << 8) | raw[n - 3];
+    if (!serial) continue;
+    let j = n;
+    while (j < raw.length && VDP_NAME_CHARS.has(table[raw[j]])) j++;
+    const name = decode(Array.from(raw.slice(n, j)), table).replace(/^[　 ]+|[　 ]+$/g, '');
+    if (name.length < VDP_MIN_NAME || !/[A-Z]/.test(name)) continue;
+    const dest = Array.from(raw.slice(n - 16, n - 12));
+    const sig = (raw[n - 18] << 8) | raw[n - 17];
+    const ok = sig === VDP_SIG && (dest[0] === 0x81 || PROGRAM_DESTS.includes(dest[0]));
+    const hex = dest.map(x => x.toString(16).padStart(2, '0')).join('');
+    out.push({ offset: n - 18, name_offset: n, serial, name, confirmed: ok,
+               dest: ok ? hex : null,
+               dest_label: ok ? destMatch(p.model, dest, p.raw) : null });
+  }
+  const guesses = out.filter(r => !r.confirmed).length;
+  return guesses > VDP_MAX_UNCONFIRMED ? out.filter(r => r.confirmed) : out;
+}
+
+export function vdpAttributeSprites(records, banks) {
+  for (const b of banks) {
+    let owner = null;
+    for (const r of records) if (r.offset <= b.offset) owner = r.name;
+    b.vdp_item = owner;
+  }
+  return banks;
+}
+
 // ---- character stats ------------------------------------------------
 export const CH = {
   TAMA_ID: 0x204, REVERT_ID: 0x206, GRAPHICS: 0x208, PERSONALITY: 0x20c,

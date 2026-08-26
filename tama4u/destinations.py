@@ -56,7 +56,10 @@ CATALOG = {
         ('타마모리 · 액세서리 2',  '81023500', 'ffffffff'),
         ('게임센터 · 게임',        '94025b01', 'ffffffff'),
         ('외출지',                 '94024702', 'ffffffff'),
-        ('VDP · 미해독 프로그램',  '94025b02', 'ffffffff'),
+        ('VDP · 아이템 묶음',      '94025b02', 'ffffffff'),
+        # only ever seen inside VDPs, never as a standalone P's download,
+        # but it is the iD L code for the same shop shelf
+        ('타마데파 · 생활용품',    '81042902', 'ffffffff'),
     ],
     '4U': _COMMON + [
         ('냉장고 직행 · 식사 (비매품)', '81010101', 'ffffffff'),

@@ -188,6 +188,10 @@ export function describe(data, opts = {}) {
     if (banks.length)
       info.banks = banks.map(b => ({ offset: b.offset, loose: b.loose ?? null,
                                      frames: b.frames.map(frameOut) }));
+    if (F.isVdp(pkt)) {
+      info.vdp = F.vdpContents(pkt);
+      F.vdpAttributeSprites(info.vdp, info.banks || []);
+    }
     out.packets.push(info);
   }
   return out;

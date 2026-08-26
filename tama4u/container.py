@@ -40,7 +40,16 @@ class Packet:
         while pos != -1:
             declared = struct.unpack_from('>H', self.raw, pos + OFF_PACKET_SIZE)[0] \
                 if pos + OFF_PACKET_SIZE + 2 <= len(self.raw) else 0
-            if declared < 0x60 or pos + declared > len(self.raw):
+            sig = struct.unpack_from('>H', self.raw, pos + OFF_TYPE_SIG)[0] \
+                if pos + OFF_TYPE_SIG + 2 <= len(self.raw) else 0
+            # A size check alone is not enough: a VDP's program blob spells
+            # TAMAGO often enough that three of its false hits passed, and
+            # the bogus children then masked the regions the sprite scan
+            # would have read.  A real nested packet always carries a model
+            # signature at 0x4C (21 bad children across the four packs, all
+            # inside VDPs; no genuine child is affected).
+            if declared < 0x60 or pos + declared > len(self.raw) \
+                    or models.from_signature(sig) is None:
                 # false MAGIC inside pixel data — skip past it
                 pos = self.raw.find(MAGIC, pos + len(MAGIC))
                 continue

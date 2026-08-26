@@ -12,7 +12,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (character, charset, container, convert, destinations, items,
-               sprites)
+               sprites, vdp)
 
 HTML_PATH = os.path.join(os.path.dirname(__file__), 'editor.html')
 CHARA_DIR = os.path.join(os.path.dirname(__file__), 'charasprites')
@@ -269,6 +269,9 @@ def describe(data):
                                           'pixels': f.pixels}
                                          for f in b['frames']]}
                              for b in banks]
+        if vdp.is_vdp(pkt):
+            info['vdp'] = vdp.contents(pkt)
+            vdp.attribute_sprites(info['vdp'], info.get('banks') or [])
         out['packets'].append(info)
     return out
 
