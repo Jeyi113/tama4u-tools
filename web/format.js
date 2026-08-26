@@ -403,29 +403,42 @@ export const isCharacter = p =>
 // coordinates at the very end of the parent packet, *after* the nested
 // wardrobe packet: 4 body types x 14 frames x (x, y).
 export const ACC_TAIL_LEN = 4 * 14 * 2;
+export const ACC_ROW_LEN = 14 * 2;        // one body type
 export const ACC_FRAME_FOR_POSE = { 1: 23, 2: 23, 3: 23, 4: 23, 5: 23, 6: 23, 11: 23,
   7: 24, 8: 24, 9: 24, 10: 24, 13: 25, 14: 26, 15: 26 };
 export const ACC_ROW_TO_FRAME = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15];
 
+// 68 of 69 characters leave exactly 112 bytes, but fk00024_1-yumemitchi
+// ships 108 -- its last body-type row is two pairs short.  Requiring an
+// exact 112 dropped that file's table entirely.
 export function accTailOffset(p) {
   if (!p.children.length) return null;
   const end = Math.max(...p.children.map(c => c.offset + c.size));
-  return p.size - 2 - end === ACC_TAIL_LEN ? end : null;
+  const tail = p.size - 2 - end;
+  return tail >= ACC_ROW_LEN && tail <= ACC_TAIL_LEN ? [end, tail] : null;
 }
+// A character has one body type, so the four rows are identical in every
+// retail file; entries past a short tail fall back to row 0.
 export function getCharAccPositions(p) {
-  const o = accTailOffset(p);
-  if (o === null) return null;
-  const tail = p.raw.slice(o, o + ACC_TAIL_LEN);
+  const got = accTailOffset(p);
+  if (!got) return null;
+  const [o, length] = got;
+  const tail = p.raw.slice(o, o + length);
   if (!tail.some(x => x)) return null;
+  const pair = k => (2 * k + 1 < length ? [tail[2 * k], tail[2 * k + 1]] : null);
+  const base = Array.from({ length: 14 }, (_, i) => pair(i) || [64, 42]);
   return Array.from({ length: 4 }, (_, b) =>
-    Array.from({ length: 14 }, (_, i) => [tail[2 * (b * 14 + i)], tail[2 * (b * 14 + i) + 1]]));
+    Array.from({ length: 14 }, (_, i) => pair(b * 14 + i) || base[i]));
 }
 export function setCharAccPositions(p, table) {
-  const o = accTailOffset(p);
-  if (o === null) throw new Error('this packet has no wear-coordinate table');
+  const got = accTailOffset(p);
+  if (!got) throw new Error('this packet has no wear-coordinate table');
+  const [o, length] = got;
   table.slice(0, 4).forEach((rows, b) => rows.slice(0, 14).forEach(([x, y], i) => {
-    p.raw[o + 2 * (b * 14 + i)] = x & 0xff;
-    p.raw[o + 2 * (b * 14 + i) + 1] = y & 0xff;
+    const k = 2 * (b * 14 + i);
+    if (k + 1 >= length) return;          // short tail: nothing to write into
+    p.raw[o + k] = x & 0xff;
+    p.raw[o + k + 1] = y & 0xff;
   }));
 }
 

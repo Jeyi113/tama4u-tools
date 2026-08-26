@@ -148,6 +148,7 @@ def item_name(model, serial):
 # it; the rest leave it zero and fall back to a plain top-left overlay.
 # All four body-type rows are identical, since a character has one body.
 ACC_TAIL_LEN = 4 * 14 * 2
+ACC_ROW_LEN = 14 * 2        # one body type
 # coordinate row -> wardrobe pose frame (1-based).  Rows 12/13 are the two
 # 44x52 poses, which is why they are the rows that differ from the rest.
 ACC_ROW_TO_FRAME = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15]
@@ -158,33 +159,52 @@ ACC_FRAME_FOR_POSE = {1: 23, 2: 23, 3: 23, 4: 23, 5: 23, 6: 23, 11: 23,
 
 
 def acc_tail_offset(pkt):
-    """Where the 112-byte wear table starts, or None."""
+    """(offset, length) of the wear table, or None.
+
+    68 of 69 characters leave exactly 112 bytes, but fk00024_1-yumemitchi
+    ships 108 -- its last body-type row is two pairs short.  Requiring an
+    exact 112 dropped that file's table entirely, so accept anything from
+    one full row up to the full table and read what is actually there.
+    """
     if not pkt.children:
         return None
     end = max(c.offset + c.size for c in pkt.children)
-    return end if pkt.size - 2 - end == ACC_TAIL_LEN else None
+    tail = pkt.size - 2 - end
+    return (end, tail) if ACC_ROW_LEN <= tail <= ACC_TAIL_LEN else None
 
 
 def get_acc_positions(pkt):
-    """[body_type][row] -> (x, y); None when the packet has no table."""
-    o = acc_tail_offset(pkt)
-    if o is None:
+    """[body_type][row] -> (x, y); None when the packet has no table.
+
+    A character has one body type, so the four rows are identical in every
+    retail file; entries past a short tail fall back to row 0 rather than
+    reading zeros.
+    """
+    got = acc_tail_offset(pkt)
+    if got is None:
         return None
-    tail = pkt.raw[o:o + ACC_TAIL_LEN]
+    o, length = got
+    tail = pkt.raw[o:o + length]
     if not any(tail):
         return None
-    return [[(tail[2 * (b * 14 + i)], tail[2 * (b * 14 + i) + 1])
-             for i in range(14)] for b in range(4)]
+    def pair(k):
+        return (tail[2 * k], tail[2 * k + 1]) if 2 * k + 1 < length else None
+    base = [pair(i) or (64, 42) for i in range(14)]
+    return [[pair(b * 14 + i) or base[i] for i in range(14)] for b in range(4)]
 
 
 def set_acc_positions(pkt, table):
-    o = acc_tail_offset(pkt)
-    if o is None:
+    got = acc_tail_offset(pkt)
+    if got is None:
         raise ValueError('this packet has no wear-coordinate table')
+    o, length = got
     for b, rows in enumerate(table[:4]):
         for i, (x, y) in enumerate(rows[:14]):
-            pkt.raw[o + 2 * (b * 14 + i)] = int(x) & 0xFF
-            pkt.raw[o + 2 * (b * 14 + i) + 1] = int(y) & 0xFF
+            k = 2 * (b * 14 + i)
+            if k + 1 >= length:          # short tail: nothing to write into
+                continue
+            pkt.raw[o + k] = int(x) & 0xFF
+            pkt.raw[o + k + 1] = int(y) & 0xFF
 
 
 def roster(value):
