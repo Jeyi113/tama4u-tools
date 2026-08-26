@@ -8,6 +8,8 @@ internal item name at 0x5E across a corpus (zero conflicts over the
 """
 import glob
 import json
+import unicodedata
+from collections import Counter
 import os
 
 from .container import MAGIC, OFF_ITEM_NAME
@@ -65,11 +67,67 @@ def save_table(table, path=_TABLE_PATH):
               open(path, 'w'), ensure_ascii=False, indent=0)
 
 
+MODELS = ('4U', 'iD', 'iDL', "P's")
+_CANON = None
+
+
+def _fold(ch):
+    """Key that treats Ｓ and S as one character, and nothing else.
+
+    Folding must stay narrow: NFKC also expands … into three dots and
+    turns （ into (, which would break the 1:1 code<->character mapping
+    the encoder depends on.  So only accept the result when it is a
+    single ASCII letter or digit.
+    """
+    n = unicodedata.normalize('NFKC', ch)
+    if len(n) == 1 and n.isascii() and n.isalnum():
+        return n.upper()
+    return ch
+
+
+def canonical_bytes():
+    """One byte->char table for all four models.
+
+    The four per-model tables were each derived from the strings that
+    happen to appear in that pack, so each one has holes and a few wrong
+    guesses -- iD L reads 0xF2 as マ and P's reads 0xE8/0xF8 as n/e, which
+    is why encoding an English name used to fail with "no internal code
+    known for 'S'".  The device charset is one shared table (README), so
+    merge the four by majority vote and pin the two blocks that are
+    provably contiguous: A-Z at 0xE0-0xF9 and 0-9 at 0x6D-0x76.  Each
+    outlier's character already lives at its own real code (ー 0x51,
+    マ 0x95), which is what gives the vote away.
+    """
+    global _CANON
+    if _CANON is not None:
+        return _CANON
+    votes = {}
+    for m in MODELS:
+        path = _path(m)
+        if not os.path.exists(path):
+            continue
+        for k, v in json.load(open(path)).items():
+            votes.setdefault(int(k, 16) & 0xFF, []).append(v)
+    table = {}
+    for code, vals in votes.items():
+        key = Counter(_fold(v) for v in vals).most_common(1)[0][0]
+        # letters/digits settle on the plain ASCII form; everything else
+        # keeps whichever exact string the models agree on
+        table[code] = key if (key.isascii() and key.isalnum()) else \
+            Counter(v for v in vals if _fold(v) == key).most_common(1)[0][0]
+    for k in range(26):
+        table[0xE0 + k] = chr(ord('A') + k)
+    for k in range(10):
+        table[0x6D + k] = str(k)
+    _CANON = table or {0xE0 + k: chr(ord('A') + k) for k in range(26)}
+    return _CANON
+
+
 def load_table(path=None, model='4U'):
-    path = path or _path(model)
-    if not os.path.exists(path):
-        return {0x04E0 + k: chr(ord('A') + k) for k in range(26)}
-    return {int(k, 16): v for k, v in json.load(open(path)).items()}
+    if path is not None:
+        return {int(k, 16): v for k, v in json.load(open(path)).items()}
+    page = 0x0400 if model == '4U' else 0
+    return {page + c: v for c, v in canonical_bytes().items()}
 
 
 def decode(codes, table=None):
@@ -167,15 +225,24 @@ def _fullwidth(ch):
 
 
 def encode(text, table=None):
+    """Text -> internal codes.
+
+    The device font carries A-Z but no lowercase, so lowercase input is
+    folded up rather than rejected -- the device would render it that way
+    regardless.  Half/full-width twins map to the same code.
+    """
     table = table or load_table()
     rev = {v: k for k, v in table.items()}
     out = []
     for ch in text:
-        code = rev.get(ch)
-        if code is None:
-            alt = _fullwidth(ch)
-            code = rev.get(alt) if alt else None
-        if code is None:
-            raise ValueError(f'no internal code known for {ch!r}')
-        out.append(code)
+        for cand in (ch, _fullwidth(ch), ch.upper(),
+                     _fullwidth(ch.upper()) if ch.isalpha() else None):
+            if cand is not None and cand in rev:
+                out.append(rev[cand])
+                break
+        else:
+            raise ValueError(
+                f'{ch!r} 은(는) 기기 문자표에 없습니다 '
+                '(쓸 수 있는 것: A-Z, 0-9, 가나, 한자 일부, 일부 기호. '
+                '소문자는 대문자로 저장됩니다)')
     return out

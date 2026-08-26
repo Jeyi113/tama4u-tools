@@ -23,14 +23,19 @@ const fullwidth = ch => {
   const o = ch.charCodeAt(0);
   return o >= 0x21 && o <= 0x7e ? String.fromCharCode(0xff01 + o - 0x21) : null;
 };
+// The device font carries A-Z but no lowercase, so lowercase input is
+// folded up rather than rejected -- the device renders it that way anyway.
 export function encode(text, model) {
   const rev = REV[model] || REV['4U'];
   const out = [];
   for (const ch of text) {
-    let code = rev[ch];
-    if (code === undefined) { const alt = fullwidth(ch); code = alt ? rev[alt] : undefined; }
-    if (code === undefined) throw new Error(`no internal code known for '${ch}'`);
-    out.push(code);
+    const up = ch.toUpperCase();
+    const cands = [ch, fullwidth(ch), up, fullwidth(up)];
+    const hit = cands.find(c => c != null && rev[c] !== undefined);
+    if (hit === undefined) throw new Error(
+      `'${ch}' 은(는) 기기 문자표에 없습니다 (쓸 수 있는 것: A-Z, 0-9, 가나, `
+      + `한자 일부, 일부 기호. 소문자는 대문자로 저장됩니다)`);
+    out.push(rev[hit]);
   }
   return out;
 }
