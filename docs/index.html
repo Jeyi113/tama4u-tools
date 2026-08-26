@@ -1757,6 +1757,11 @@ function describe(data, opts = {}) {
       size: pkt.size,
       dest: Array.from(pkt.raw.slice(OFF_DEST, OFF_DEST + 4))
         .map(x => x.toString(16).padStart(2, '0')).join(''),
+      // the model/firmware signature sits right in front of the
+      // destination and is what makes the field differ between models that
+      // share a category code -- see tama4u/editor.py
+      dest_sig: Array.from(pkt.raw.slice(OFF_TYPE_SIG, OFF_TYPE_SIG + 2))
+        .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: path.includes('vdp')
         ? vdpContentLabel(pkt, getDestination(pkt)) : getDestination(pkt),
       // the mask travels with the code so the UI can show iD's free
@@ -1906,6 +1911,7 @@ function describe(data, opts = {}) {
         label: vdpContentLabel(sub, getDestination(sub)),
         model: sub.model, size: sub.size, serial: sub.serial,
         dest: hexDest(sub),
+        dest_sig: Array.from(sub.raw.slice(76, 78)).map(x => x.toString(16).padStart(2, '0')).join(''),
         price: getPrice(sub),
         sprites: scanLoose(sub.raw, 0x40).length,
       }));
@@ -2100,7 +2106,7 @@ async function load(f){
           ? p.dest_label : p.kind+' · 프로그램/정의'));
     const n=(p.banks||[]).reduce((a,b)=>a+b.frames.length,0);
     const bits=[tag];
-    if(p.dest)bits.push('0x'+p.dest.toUpperCase());
+    if(p.dest)bits.push((p.dest_sig||'').toUpperCase()+' '+p.dest.toUpperCase());
     if(n)bits.push(`스프라이트 ${n}`);
     if(p.texts&&p.texts.length)bits.push(`대사 ${p.texts.length}`);
     const b=document.createElement('button');
@@ -2158,7 +2164,8 @@ function selectPacket(path){
   gate('friendBox', on('friendship'), pk.model==='iD'&&pk.kind==='as'?'iD 장난감 미사용':'해당 없음');
   gate('destBox', on('dest'));
   $('destLabel').firstChild.textContent=
-    `행선지 (destination) · 0x${(pk.dest||'').toUpperCase()}`;
+    `행선지 · 0x4C ${(pk.dest_sig||'').toUpperCase()} ${(pk.dest||'').toUpperCase()}`
+    + `  (앞 2바이트 = 기종/펌웨어)`;
   gate('animBox', on('anim'), '장난감 전용');
   gate('statCard', on('stats'), pk.model==='iD'||pk.model==='iDL'?'이 기종에 없음':'해당 없음');
   gate('likesCard', on('likes'), '해당 없음');
@@ -2180,10 +2187,17 @@ function selectPacket(path){
   // 01010001 where every later model uses 81010201), so the code is part of
   // the choice, not decoration.  ** marks the byte iD keeps for its per-item
   // index, which a destination change must leave alone.
+  // The value that actually identifies a destination is six bytes at 0x4C:
+  // the model/firmware signature, then the four-byte category code.  The
+  // code alone is shared -- 레스토랑 · 식사 is 81010201 on iD L, P's and 4U
+  // alike -- so showing only that makes every model look the same.  With
+  // the signature in front they read apart, and iD splits by firmware too
+  // (cd80 original, 0dc0 Lovely Melody).
+  const sig=(pk.dest_sig||'').toUpperCase();
   const codeText=(code,mask)=>(code.match(/../g)||[])
     .map((b,i)=>((mask||'ffffffff').slice(i*2,i*2+2)==='00'?'**':b.toUpperCase())).join(' ');
   $('fDest').innerHTML=opts.map(o=>
-    `<option value="${o.code}">${o.label} — ${codeText(o.code,o.mask)}</option>`).join('');
+    `<option value="${o.code}">${o.label} — ${sig} ${codeText(o.code,o.mask)}</option>`).join('');
   // iD files games and outings under one code and splits them at 0x64,
   // so the label picks the entry, not the code
   const destOpt=opts.find(o=>o.label===pk.dest_label);
@@ -2451,7 +2465,8 @@ function renderVdp(){
   $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`;
   $('vdpRows').innerHTML=rows.map(r=>`<tr class="pick" data-i="${r.index}">`
     +`<td class="nm">${r.name||'<span class="vdp-guess">(이름 없음)</span>'}</td>`
-    +`<td>${r.label}<span class="ad" style="margin-left:6px">0x${(r.dest||'').toUpperCase()}</span></td>`
+    +`<td>${r.label}<span class="ad" style="margin-left:6px">`
+    +`${(r.dest_sig||'').toUpperCase()} ${(r.dest||'').toUpperCase()}</span></td>`
     +`<td class="ad">${r.price?r.price.toLocaleString()+'G':''}</td>`
     +`<td class="ad">${r.sprites?`스프라이트 ${r.sprites}`:''}</td>`
     +`<td class="ad">${r.model} · ${r.size.toLocaleString()}B</td></tr>`).join('');

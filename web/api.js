@@ -5,6 +5,7 @@ import {
   parseFile, buildFile, Packet, u16, putU16, OFF_PACKET_SIZE,
   parseBank, writeBank, scanBanks, scanLoose, readLoose, writeLoose,
   destOptions,
+  OFF_TYPE_SIG,
 } from './core.js';
 import * as F from './format.js';
 
@@ -58,6 +59,11 @@ export function describe(data, opts = {}) {
       name: F.decode(pkt.itemNameCodes, table),
       size: pkt.size,
       dest: Array.from(pkt.raw.slice(F.OFF_DEST, F.OFF_DEST + 4))
+        .map(x => x.toString(16).padStart(2, '0')).join(''),
+      // the model/firmware signature sits right in front of the
+      // destination and is what makes the field differ between models that
+      // share a category code -- see tama4u/editor.py
+      dest_sig: Array.from(pkt.raw.slice(OFF_TYPE_SIG, OFF_TYPE_SIG + 2))
         .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: path.includes('vdp')
         ? F.vdpContentLabel(pkt, F.getDestination(pkt)) : F.getDestination(pkt),
@@ -208,6 +214,7 @@ export function describe(data, opts = {}) {
         label: F.vdpContentLabel(sub, F.getDestination(sub)),
         model: sub.model, size: sub.size, serial: sub.serial,
         dest: hexDest(sub),
+        dest_sig: Array.from(sub.raw.slice(76, 78)).map(x => x.toString(16).padStart(2, '0')).join(''),
         price: F.getPrice(sub),
         sprites: scanLoose(sub.raw, 0x40).length,
       }));

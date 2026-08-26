@@ -98,6 +98,13 @@ def describe(data):
             'name': charset.decode(pkt.item_name_codes, table),
             'size': pkt.size,
             'dest': bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex(),
+            # the model/firmware signature sits right in front of the
+            # destination, and it is what makes the field differ between
+            # models that share a category code: 레스토랑 · 식사 is
+            # 8dc0 81010201 on P's but 0101 81010201 on 4U, and iD splits
+            # further by firmware (cd80 vs 0dc0).
+            'dest_sig': bytes(pkt.raw[container.OFF_TYPE_SIG:
+                                      container.OFF_TYPE_SIG + 2]).hex(),
             'dest_label': (vdp.content_label(pkt, items.get_destination(pkt))
                            if 'vdp' in path else items.get_destination(pkt)),
             # the mask travels with the code so the UI can show iD's free
@@ -296,6 +303,8 @@ def describe(data):
                  'label': vdp.content_label(sub, items.get_destination(sub)),
                  'model': sub.model, 'size': sub.size, 'serial': sub.serial,
                  'dest': bytes(sub.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex(),
+                 'dest_sig': bytes(sub.raw[container.OFF_TYPE_SIG:
+                                           container.OFF_TYPE_SIG + 2]).hex(),
                  'price': items.get_price(sub),
                  'sprites': len(sprites.scan_loose(sub.raw, lo=0x40))}
                 for k, sub in enumerate(got[2])]
