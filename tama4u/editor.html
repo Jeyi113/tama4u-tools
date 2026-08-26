@@ -185,22 +185,11 @@
     <div class="card" id="vdpCard" hidden>
       <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
       <table class="vdp"><tbody id="vdpRows"></tbody></table>
-      <div id="vdpEdit" hidden style="margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:6px;background:#fdfcfa">
-        <div style="font-size:12px;font-weight:600;margin-bottom:6px" id="vdpEditTitle"></div>
-        <label>이름 (최대 14자)</label>
-        <input id="vdpName" maxlength="14">
-        <label style="margin-top:6px">행선지 (destination)</label>
-        <select id="vdpDest"></select>
-        <div class="hint" style="margin-top:6px">고치면 압축을 다시 해서 저장합니다. 이 내용물의 스프라이트는 아래 탭에만 표시됩니다.</div>
-      </div>
-      <div id="vdpSpr" style="margin-top:10px"></div>
       <div class="hint">
-        <b>확인</b>은 레코드가 시그니처와 행선지를 그대로 갖고 있는 항목,
-        <b>추정</b>은 이름과 시리얼만 남아 행선지를 단정할 수 없는 항목입니다
-        (식사·간식과 메뉴 아이콘이 여기 해당 — 기기 표에 직접 심습니다).<br>
-        스프라이트는 파일 안에 LZ77로 묶여 있습니다. 로더의 압축 해제
-        루틴을 디스어셈블해 그대로 구현했으므로, 아래 탭의 그림은
-        <b>풀어낸 결과</b>입니다(주소는 압축 해제 후 기준).
+        내용물 하나하나가 온전한 P's 아이템 패킷입니다. 줄을 누르면 그 패킷으로
+        이동해 <b>이름 · 가격 · 만복도 · 친밀도 · 5스탯 · 호불호 · 행선지 ·
+        스프라이트</b>를 단독 다운로드와 똑같이 편집할 수 있습니다.<br>
+        저장할 때 압축을 다시 해서 스트림을 새로 만듭니다.
       </div>
     </div>
     <div class="card" id="likesCard">
@@ -486,7 +475,11 @@ function selectPacket(path){
     });
   }
   // flatten banks -> frames (loose records share one palette)
-  rebuildFrames();
+  flat=[];
+  (pk.banks||[]).forEach((bank,bi)=>{
+    if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
+    bank.frames.forEach((fr,fi)=>flat.push({bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
+  });
   $('spriteCard').style.display=flat.length?'':'none';
   $('metaCard').style.display=(item||pk.name)?'':'none';
   $('emptyNote').hidden=!(!flat.length&&!(pk.texts&&pk.texts.length)&&!item);
@@ -676,78 +669,21 @@ window.addEventListener('keydown',e=>{
   }
 });
 
-// Frame tabs come from the packet's banks, narrowed to one VDP content
-// when the reader picks a row in the VDP card.
-function rebuildFrames(){
-  flat=[];
-  const list=pk.banks||[];
-  const show=(vdpPick==null)?list:list.filter(b=>b.vdp_item_offset===vdpPick);
-  show.forEach(bank=>{
-    const bi=list.indexOf(bank);
-    if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
-    bank.frames.forEach((fr,fi)=>flat.push(
-      {bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
-  });
-  cur=0; undoStack=[];
-  $('spriteCard').style.display=flat.length?'':'none';
-  if(flat.length){renderTabs();renderFrame();animStart()}
-}
-
-// A VDP bundles a whole item set into one download; list what is inside,
-// and let one be picked so the sprite tabs below show only its frames.
-let vdpPick=null;
-function vdpBanks(){
-  const all=pk.banks||[];
-  return vdpPick==null?all:all.filter(b=>b.vdp_item_offset===vdpPick);
-}
-function pickVdp(off){
-  vdpPick=(vdpPick===off?null:off);
-  const rows=pk.vdp||[];
-  [...document.querySelectorAll('#vdpRows tr')].forEach((tr,i)=>
-    tr.classList.toggle('on',rows[i]&&rows[i].offset===vdpPick));
-  const it=rows.find(r=>r.offset===vdpPick);
-  $('vdpEdit').hidden=!it;
-  if(it){
-    $('vdpEditTitle').textContent=`0x${it.offset.toString(16).toUpperCase().padStart(5,'0')} · 시리얼 0x${it.serial.toString(16).toUpperCase().padStart(4,'0')}`;
-    $('vdpName').value=it.name||'';
-    const opts=pk.dest_options||[];
-    $('vdpDest').innerHTML='<option value="">(그대로 두기)</option>'
-      +opts.map(o=>`<option value="${o.code}">${o.label}</option>`).join('');
-    $('vdpDest').value=it.dest||'';
-  }
-  rebuildFrames();
-}
+// A VDP bundles a whole item set into one download.  Each content is a
+// real packet in the list above, so the card is a map into it.
 function renderVdp(){
   const rows=pk.vdp||[];
   $('vdpCard').hidden=!rows.length;
   if(!rows.length)return;
-  const ok=rows.filter(r=>r.confirmed).length;
-  $('vdpInfo').textContent=`— ${rows.length}개 (확인 ${ok} · 추정 ${rows.length-ok})`;
-  const spr={};
-  (pk.banks||[]).forEach(b=>{ if(b.vdp_item)spr[b.vdp_item]=(spr[b.vdp_item]||0)+b.frames.length });
-  const sp=pk.vdp_sprites||[];
-  $('vdpSpr').innerHTML=!sp.length?'':
-    `<div style="font-size:12px;color:#8a8172;margin-bottom:4px">스프라이트 레코드 ${sp.length}개</div>`
-    +sp.map(s=>`<div style="font-size:12px;padding:2px 0">`
-      +`<span class="ad" style="color:#8a8172">0x${s.offset.toString(16).toUpperCase().padStart(5,'0')}</span> `
-      +`${s.w}×${s.h} · ${s.colors}색 · ${s.frames}프레임 — `
-      +`<span class="vdp-ok">${s.need}B 복원</span>`
-      +`</div>`).join('');
-  $('vdpRows').innerHTML=rows.map(r=>{
-    const n=spr[r.name]||0;
-    return `<tr class="pick" data-off="${r.offset}">`
-      +`<td class="ad">0x${r.offset.toString(16).toUpperCase().padStart(5,'0')}</td>`
-      +`<td class="nm">${r.name}</td>`
-      +`<td class="ad">시리얼 0x${r.serial.toString(16).toUpperCase().padStart(4,'0')}`
-        +` (${r.serial})</td>`
-      +`<td>${r.confirmed
-          ? `<span class="vdp-ok">확인</span> ${r.dest_label||('행선지 '+r.dest)}`
-          : `<span class="vdp-guess">추정 · 행선지 없음</span>`}</td>`
-      +`<td class="ad">${n?`스프라이트 ${n}`:''}</td></tr>`;
-  }).join('');
+  $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`;
+  $('vdpRows').innerHTML=rows.map(r=>`<tr class="pick" data-i="${r.index}">`
+    +`<td class="nm">${r.name||'<span class="vdp-guess">(이름 없음)</span>'}</td>`
+    +`<td>${r.label}</td>`
+    +`<td class="ad">${r.price?r.price.toLocaleString()+'G':''}</td>`
+    +`<td class="ad">${r.sprites?`스프라이트 ${r.sprites}`:''}</td>`
+    +`<td class="ad">${r.model} · ${r.size.toLocaleString()}B</td></tr>`).join('');
   [...document.querySelectorAll('#vdpRows tr.pick')].forEach(tr=>
-    tr.onclick=()=>pickVdp(+tr.dataset.off));
-  vdpPick=null; $('vdpEdit').hidden=true;
+    tr.onclick=()=>selectPacket([...pk.path,'vdp',+tr.dataset.i]));
 }
 
 // ---- animation simulation (loops frames of the current bank) ----
@@ -1468,23 +1404,6 @@ $('saveBtn').onclick=async()=>{
     if(F.includes('hunger'))edit.hunger=+$('fHunger').value;
     if(F.includes('friendship'))edit.friendship=+$('fFriend').value;
     if(F.includes('anim')){edit.anim_a=+$('fAnimA').value;edit.anim_b=+$('fAnimB').value}
-  }
-  if(pk.vdp&&pk.vdp.length){
-    // a VDP's records and sprites live in the packed stream, so they go
-    // through vdp_edit and the whole stream is rebuilt on save
-    const items=[];
-    if(vdpPick!=null){
-      const it=pk.vdp.find(r=>r.offset===vdpPick);
-      const nm=$('vdpName').value.trim(), ds=$('vdpDest').value;
-      if(it&&(nm!==(it.name||'')||(ds&&ds!==it.dest))){
-        const one={offset:vdpPick};
-        if(nm!==(it.name||''))one.name=nm;
-        if(ds&&ds!==it.dest)one.dest=ds;
-        items.push(one);
-      }
-    }
-    const banks=(pk.banks||[]).filter(b=>b.loose).map(b=>({loose:b.loose,frames:b.frames}));
-    if(items.length||banks.length)edit.vdp_edit={items,banks};
   }
   if(pk.acc_pos)edit.acc_pos=pk.acc_pos;
   if(pk.banks)edit.banks=pk.banks;

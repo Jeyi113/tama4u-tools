@@ -185,22 +185,11 @@
     <div class="card" id="vdpCard" hidden>
       <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
       <table class="vdp"><tbody id="vdpRows"></tbody></table>
-      <div id="vdpEdit" hidden style="margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:6px;background:#fdfcfa">
-        <div style="font-size:12px;font-weight:600;margin-bottom:6px" id="vdpEditTitle"></div>
-        <label>이름 (최대 14자)</label>
-        <input id="vdpName" maxlength="14">
-        <label style="margin-top:6px">행선지 (destination)</label>
-        <select id="vdpDest"></select>
-        <div class="hint" style="margin-top:6px">고치면 압축을 다시 해서 저장합니다. 이 내용물의 스프라이트는 아래 탭에만 표시됩니다.</div>
-      </div>
-      <div id="vdpSpr" style="margin-top:10px"></div>
       <div class="hint">
-        <b>확인</b>은 레코드가 시그니처와 행선지를 그대로 갖고 있는 항목,
-        <b>추정</b>은 이름과 시리얼만 남아 행선지를 단정할 수 없는 항목입니다
-        (식사·간식과 메뉴 아이콘이 여기 해당 — 기기 표에 직접 심습니다).<br>
-        스프라이트는 파일 안에 LZ77로 묶여 있습니다. 로더의 압축 해제
-        루틴을 디스어셈블해 그대로 구현했으므로, 아래 탭의 그림은
-        <b>풀어낸 결과</b>입니다(주소는 압축 해제 후 기준).
+        내용물 하나하나가 온전한 P's 아이템 패킷입니다. 줄을 누르면 그 패킷으로
+        이동해 <b>이름 · 가격 · 만복도 · 친밀도 · 5스탯 · 호불호 · 행선지 ·
+        스프라이트</b>를 단독 다운로드와 똑같이 편집할 수 있습니다.<br>
+        저장할 때 압축을 다시 해서 스트림을 새로 만듭니다.
       </div>
     </div>
     <div class="card" id="likesCard">
@@ -415,9 +404,10 @@ const DEST_CATALOG = {
     ['게임센터 · 게임', '94025b01', 'ffffffff'],
     ['외출지', '94024702', 'ffffffff'],
     ['VDP · 아이템 묶음', '94025b02', 'ffffffff'],
-    // only ever seen inside VDPs, never as a standalone P's download, but
-    // it is the iD L code for the same shop shelf
-    ['타마데파 · 생활용품', '81042902', 'ffffffff'],
+    // iD L files this code under daily necessities, but on P's every VDP
+    // uses it for one ~7.5 KB packet holding the menu icon set -- two
+    // 128x28 bars and ten 24x28 icons.  Same code, different shelf.
+    ['메뉴 아이콘 세트', '81042902', 'ffffffff'],
   ],
   '4U': [...COMMON,
     ['냉장고 직행 · 식사 (비매품)', '81010101', 'ffffffff'],
@@ -1190,78 +1180,17 @@ const likeRoster = p => (ROSTERS[p.model] || []).filter(Boolean).length
 // serial +12, name +16 (= 0x4C / 0x4E / 0x52 / 0x5A / 0x5E).  Pixels are
 // packed and are not drawn -- see tama4u/vdp.py.
 const VDP_DEST = '94025b02';
-const VDP_SIG = 0x8dc0, VDP_NAME_MAX = 14, VDP_MIN_NAME = 3;
-const VDP_MAX_UNCONFIRMED = 12;
-const VDP_NAME_CHARS = new Set(
-  [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 　★▽・♪＋']);
-const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
-const isVdp = p =>
-  hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_DEST;
-
-function vdpKnownDests(model) {
-  const out = {};
-  for (const m of [model, 'iDL'])
-    for (const e of destOptions(m)) if (!(e[1] in out)) out[e[1]] = e[0];
-  return out;
-}
-function vdpName(raw, o, table) {
-  let s = '';
-  for (let k = 0; k < VDP_NAME_MAX && o + k < raw.length; k++) {
-    const ch = table[raw[o + k]];
-    if (ch === undefined || !VDP_NAME_CHARS.has(ch)) break;
-    s += ch;
-  }
-  return s.replace(/^[　 ]+|[　 ]+$/g, '');
-}
-
-// Read from the unpacked payload where there is one -- only there do the
-// records line up with the sprites, and only there are they all present.
-function vdpContents(p) {
-  const data = vdpPayload(p);
-  return vdpContentsIn(data || p.raw, p.model);
-}
-
-function vdpContentsIn(raw, model) {
-  const table = tableFor(model);
-  const known = vdpKnownDests(model), out = [], claimed = new Set();
-  for (let i = 2; i < raw.length - 17; i++) {
-    if (raw[i] !== 0x81 && raw[i] !== 0x94) continue;
-    const hex = hex4(raw.slice(i, i + 4));
-    if (!(hex in known)) continue;
-    if (((raw[i - 2] << 8) | raw[i - 1]) !== VDP_SIG) continue;
-    out.push({ offset: i - 2, serial: (raw[i + 12] << 8) | raw[i + 13],
-               name: vdpName(raw, i + 16, table), confirmed: true,
-               dest: hex, dest_label: known[hex] });
-    for (let k = i - 2; k < i + 16 + VDP_NAME_MAX; k++) claimed.add(k);
-  }
-  for (let n = 4; n < raw.length - 2; n++) {
-    if (claimed.has(n) || raw[n - 2] || raw[n - 1]) continue;
-    const serial = (raw[n - 4] << 8) | raw[n - 3];
-    if (!serial) continue;
-    const name = vdpName(raw, n, table);
-    if (name.length < VDP_MIN_NAME || !/[A-Z]/.test(name)) continue;
-    out.push({ offset: n - 18, serial, name, confirmed: false,
-               dest: null, dest_label: null });
-  }
-  const guesses = out.filter(r => !r.confirmed).length;
-  const keep = guesses > VDP_MAX_UNCONFIRMED ? out.filter(r => r.confirmed) : out;
-  return keep.sort((a, b) => a.offset - b.offset);
-}
-
-// The artwork is behind an LZ77 stream covering everything after the loader
-// stub; the sprite headers visible in the raw file are coincidences inside
-// it.  Algorithm read out of the loader with the S1C33 disassembler -- see
-// tama4u/vdp.py.  Only vdp-009 uses this packer; the earlier ones use an
-// older halfword-control variant that is not decoded, and are left alone.
 const VDP_LOAD_BASE = 0x02000000, VDP_STUB_END = 0x600;
-// each packer identified by a few bytes of its run branch -- see vdp.py
 const VDP_ROUTINES = [
   ['lz', [0x8a, 0x8c, 0x4a, 0x36]],
   ['rle', [0x02, 0x54, 0x12, 0x54, 0x12, 0x27, 0x92, 0x23]],
 ];
 const VDP_UNPACK_LIMIT = 1 << 20;
+const VDP_CHAR_DEST = '81033300', VDP_ICON_DEST = '81042902', VDP_STUB_MAX = 0x200;
+const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
+const isVdp = p =>
+  hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_DEST;
 
-// vdp-001..008: halfword control word, literal runs and byte runs
 function vdpUnpackRle(raw, start, limit = VDP_UNPACK_LIMIT) {
   const out = [];
   let ip = start;
@@ -1344,19 +1273,6 @@ function vdpPayload(p) {
   return (kind === 'lz' ? vdpUnpack : vdpUnpackRle)(p.raw, start);
 }
 
-function vdpSpriteRecords(p) {
-  const data = vdpPayload(p);
-  if (!data) return [];
-  const out = [];
-  for (const rec of scanLoose(data, 0)) {
-    const [offset, w, h, colors, frames, have] = rec;
-    const need = pixelBytes(w, h, frames, colors);
-    if (have < need) continue;
-    out.push({ offset, w, h, colors, frames, need, loose: rec,
-               frames_data: readLoose(data, rec) });
-  }
-  return out;
-}
 
 const VDP_MAX_LIT = 128, VDP_MAX_RUN = 128, VDP_MAX_MATCH = 16, VDP_WINDOW = 4096;
 const hwAt = (d, k) => (d[2 * k] << 8) | d[2 * k + 1];   // compare key only
@@ -1468,33 +1384,47 @@ function vdpRepack(p, data) {
 
 // Fixed-width in place: the name pads to its 14 slots with the ideographic
 // space, so the payload never changes length.
-function vdpWriteItem(data, item, model) {
-  const off = item.offset, table = tableFor(model);
-  if (item.dest) {
-    const code = item.dest.match(/../g).map(x => parseInt(x, 16));
-    if (code.length !== 4) throw new Error('행선지는 4바이트여야 합니다');
-    data.set(code, off + 2);
-  }
-  if ('name' in item) {
-    const codes = encode(item.name.slice(0, VDP_NAME_MAX), model);
-    const pad = spaceCode(model);
-    for (let k = 0; k < VDP_NAME_MAX; k++)
-      data[off + 2 + 16 + k] = (k < codes.length ? codes[k] : pad) & 0xff;
-  }
+
+
+
+// What a content packet really is, where the destination misleads --
+// see tama4u/vdp.py.
+function vdpContentLabel(sub, plain) {
+  const dest = hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4));
+  if (dest === VDP_CHAR_DEST) return '캐릭터 (육성)';
+  if (dest === VDP_ICON_DEST) return '메뉴 아이콘 세트';
+  if (sub.size <= VDP_STUB_MAX) return `빈 슬롯 (${plain})`;
+  return plain;
 }
 
-function vdpAttributeSprites(records, banks) {
-  for (const b of banks) {
-    let owner = null;
-    for (const r of records) if (r.offset <= b.offset) owner = r;
-    b.vdp_item = owner
-      ? (owner.name || `0x${owner.offset.toString(16).toUpperCase().padStart(5, '0')}`)
-      : null;
-    b.vdp_item_offset = owner ? owner.offset : null;
-  }
-  return banks;
+// The payload is a run of complete packets, TAMAGO header and all, so the
+// container parses it and every content gets the ordinary item treatment.
+function vdpSubPackets(p) {
+  if (!isVdp(p)) return null;
+  const data = vdpPayload(p);
+  if (!data) return null;
+  let base = -1;
+  for (let i = 0; i + MAGIC.length <= data.length && base < 0; i++)
+    if (MAGIC.every((v, k) => data[i + k] === v)) base = i;
+  if (base < 0) return null;
+  try {
+    const { packets } = parseFile(data.slice(base));
+    return [data, base, packets];
+  } catch (e) { return null; }
 }
 
+// Recompressing changes the packet's length, so the size it declares at
+// 0x4A has to move with it.
+function vdpWriteSubs(p, data, base, packets) {
+  const buf = new Uint8Array(data);
+  for (const sub of packets) {
+    sub.fixChecksums();
+    buf.set(sub.raw, base + sub.offset);
+  }
+  const out = vdpRepack(p, buf);
+  putU16(out, OFF_PACKET_SIZE, out.length);
+  return out;
+}
 // ---- character stats ------------------------------------------------
 const CH = {
   TAMA_ID: 0x204, REVERT_ID: 0x206, GRAPHICS: 0x208, PERSONALITY: 0x20c,
@@ -1749,10 +1679,16 @@ function convert(p, target, serial = null) {
 
 const findPacket = (packets, path) => path.slice(1).reduce((p, i) => p.children[i], packets[path[0]]);
 
+// A VDP's contents are whole packets inside its packed stream, so they are
+// walked too, under a 'vdp' step -- [0, 'vdp', 2].  Each then gets the
+// ordinary item treatment: price, stats, likes, all of it.
 function* iterPackets(packets) {
   function* walk(pkt, path) {
     yield [path, pkt];
     for (let i = 0; i < pkt.children.length; i++) yield* walk(pkt.children[i], [...path, i]);
+    const subs = vdpSubPackets(pkt);
+    if (subs) for (let i = 0; i < subs[2].length; i++)
+      yield* walk(subs[2][i], [...path, 'vdp', i]);
   }
   for (let i = 0; i < packets.length; i++) yield* walk(packets[i], [i]);
 }
@@ -1790,7 +1726,8 @@ function describe(data, opts = {}) {
       size: pkt.size,
       dest: Array.from(pkt.raw.slice(OFF_DEST, OFF_DEST + 4))
         .map(x => x.toString(16).padStart(2, '0')).join(''),
-      dest_label: getDestination(pkt),
+      dest_label: path.includes('vdp')
+        ? vdpContentLabel(pkt, getDestination(pkt)) : getDestination(pkt),
       dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1] })),
       is_item: !isChar && !isProgram(pkt)
         && (BANK_OFFSETS[effectiveKind(pkt)] !== undefined || model !== '4U'),
@@ -1927,20 +1864,17 @@ function describe(data, opts = {}) {
     if (banks.length)
       info.banks = banks.map(b => ({ offset: b.offset, loose: b.loose ?? null,
                                      frames: b.frames.map(frameOut) }));
-    if (isVdp(pkt)) {
-      info.vdp = vdpContents(pkt);
-      const recs = vdpSpriteRecords(pkt);
-      info.vdp_sprites = recs.map(({ frames_data, loose, ...r }) => r);
-      if (recs.length) {
-        // the packed stream is what holds the artwork; records sitting in
-        // the raw file are coincidences inside it
-        info.banks = recs.map(r => ({
-          offset: r.offset, loose: r.loose, unpacked: true,
-          frames: r.frames_data.map(f => ({ slot: f.slot_size, w: f.w, h: f.h,
-                                            palette: f.palette, pixels: f.pixels })),
-        }));
-      }
-      vdpAttributeSprites(info.vdp, info.banks || []);
+    if (isVdp(pkt) && path.length === 1) {
+      const got = vdpSubPackets(pkt);
+      info.vdp = !got ? [] : got[2].map((sub, k) => ({
+        index: k,
+        name: decode(Array.from(sub.itemNameCodes), tableFor(sub.model))
+               .replace(/[　 ]+$/, ''),
+        label: vdpContentLabel(sub, getDestination(sub)),
+        model: sub.model, size: sub.size, serial: sub.serial,
+        price: getPrice(sub),
+        sprites: scanLoose(sub.raw, 0x40).length,
+      }));
     }
     out.packets.push(info);
   }
@@ -1984,8 +1918,7 @@ function applyEdits(data, edits, newJpeg = null) {
     for (const p of packets) p.shiftDeclaredSize(delta);
     jpeg = newJpeg;
   }
-  for (const edit of edits) {
-    const pkt = findPacket(packets, edit.path);
+  const applyOne = (pkt, edit) => {
     const model = pkt.model;
     if ('serial' in edit) pkt.setSerial(+edit.serial);
     if ('name' in edit) pkt.setItemNameCodes(encode(edit.name, model));
@@ -1993,17 +1926,6 @@ function applyEdits(data, edits, newJpeg = null) {
     if ('price' in edit) setPrice(pkt, +edit.price);
     if ('hunger' in edit) setHunger(pkt, edit.hunger);
     if ('friendship' in edit) setFriendship(pkt, edit.friendship);
-    if (edit.vdp_edit) {
-      // a VDP's records and sprites are inside the packed stream, so edits
-      // go into the payload and the stream is rebuilt
-      const data = vdpPayload(pkt);
-      if (!data) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
-      const buf = new Uint8Array(data);
-      for (const it of edit.vdp_edit.items || []) vdpWriteItem(buf, it, model);
-      for (const b of edit.vdp_edit.banks || [])
-        writeLoose(buf, b.loose, b.frames[0].palette, b.frames.map(f => f.pixels));
-      pkt.raw = vdpRepack(pkt, buf);
-    }
     if ('dest' in edit) setDestination(pkt, edit.dest, edit.dest_label);
     if ('likes' in edit) setLikesRaw(pkt, edit.likes);
     if ('stats' in edit) setStats(pkt, edit.stats);
@@ -2032,6 +1954,29 @@ function applyEdits(data, edits, newJpeg = null) {
       if (off + blobLen !== oldEnd) throw new Error('bank size mismatch — frame slots must be kept');
       writeBank(pkt.raw, frames, off);
     }
+  };
+  for (const edit of edits) {
+    if (!edit.path.includes('vdp')) applyOne(findPacket(packets, edit.path), edit);
+  }
+  // VDP contents live inside the packed stream: unpack once per bundle,
+  // apply everything, then rebuild the stream once.
+  const groups = new Map();
+  for (const edit of edits) {
+    const k = edit.path.indexOf('vdp');
+    if (k < 0) continue;
+    const key = edit.path.slice(0, k).join(',');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push([edit.path[k + 1], edit]);
+  }
+  for (const [key, jobs] of groups) {
+    const pkt = findPacket(packets, key.split(',').map(Number));
+    const got = vdpSubPackets(pkt);
+    if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
+    const [data, base, subs] = got;
+    for (const [idx, edit] of jobs) applyOne(subs[idx], edit);
+    const before = pkt.size;
+    pkt.raw = vdpWriteSubs(pkt, data, base, subs);
+    for (const q of packets) q.shiftDeclaredSize(pkt.size - before);
   }
   return buildFile(jpeg, packets, trailing);
 }
@@ -2246,7 +2191,11 @@ function selectPacket(path){
     });
   }
   // flatten banks -> frames (loose records share one palette)
-  rebuildFrames();
+  flat=[];
+  (pk.banks||[]).forEach((bank,bi)=>{
+    if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
+    bank.frames.forEach((fr,fi)=>flat.push({bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
+  });
   $('spriteCard').style.display=flat.length?'':'none';
   $('metaCard').style.display=(item||pk.name)?'':'none';
   $('emptyNote').hidden=!(!flat.length&&!(pk.texts&&pk.texts.length)&&!item);
@@ -2436,78 +2385,21 @@ window.addEventListener('keydown',e=>{
   }
 });
 
-// Frame tabs come from the packet's banks, narrowed to one VDP content
-// when the reader picks a row in the VDP card.
-function rebuildFrames(){
-  flat=[];
-  const list=pk.banks||[];
-  const show=(vdpPick==null)?list:list.filter(b=>b.vdp_item_offset===vdpPick);
-  show.forEach(bank=>{
-    const bi=list.indexOf(bank);
-    if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
-    bank.frames.forEach((fr,fi)=>flat.push(
-      {bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
-  });
-  cur=0; undoStack=[];
-  $('spriteCard').style.display=flat.length?'':'none';
-  if(flat.length){renderTabs();renderFrame();animStart()}
-}
-
-// A VDP bundles a whole item set into one download; list what is inside,
-// and let one be picked so the sprite tabs below show only its frames.
-let vdpPick=null;
-function vdpBanks(){
-  const all=pk.banks||[];
-  return vdpPick==null?all:all.filter(b=>b.vdp_item_offset===vdpPick);
-}
-function pickVdp(off){
-  vdpPick=(vdpPick===off?null:off);
-  const rows=pk.vdp||[];
-  [...document.querySelectorAll('#vdpRows tr')].forEach((tr,i)=>
-    tr.classList.toggle('on',rows[i]&&rows[i].offset===vdpPick));
-  const it=rows.find(r=>r.offset===vdpPick);
-  $('vdpEdit').hidden=!it;
-  if(it){
-    $('vdpEditTitle').textContent=`0x${it.offset.toString(16).toUpperCase().padStart(5,'0')} · 시리얼 0x${it.serial.toString(16).toUpperCase().padStart(4,'0')}`;
-    $('vdpName').value=it.name||'';
-    const opts=pk.dest_options||[];
-    $('vdpDest').innerHTML='<option value="">(그대로 두기)</option>'
-      +opts.map(o=>`<option value="${o.code}">${o.label}</option>`).join('');
-    $('vdpDest').value=it.dest||'';
-  }
-  rebuildFrames();
-}
+// A VDP bundles a whole item set into one download.  Each content is a
+// real packet in the list above, so the card is a map into it.
 function renderVdp(){
   const rows=pk.vdp||[];
   $('vdpCard').hidden=!rows.length;
   if(!rows.length)return;
-  const ok=rows.filter(r=>r.confirmed).length;
-  $('vdpInfo').textContent=`— ${rows.length}개 (확인 ${ok} · 추정 ${rows.length-ok})`;
-  const spr={};
-  (pk.banks||[]).forEach(b=>{ if(b.vdp_item)spr[b.vdp_item]=(spr[b.vdp_item]||0)+b.frames.length });
-  const sp=pk.vdp_sprites||[];
-  $('vdpSpr').innerHTML=!sp.length?'':
-    `<div style="font-size:12px;color:#8a8172;margin-bottom:4px">스프라이트 레코드 ${sp.length}개</div>`
-    +sp.map(s=>`<div style="font-size:12px;padding:2px 0">`
-      +`<span class="ad" style="color:#8a8172">0x${s.offset.toString(16).toUpperCase().padStart(5,'0')}</span> `
-      +`${s.w}×${s.h} · ${s.colors}색 · ${s.frames}프레임 — `
-      +`<span class="vdp-ok">${s.need}B 복원</span>`
-      +`</div>`).join('');
-  $('vdpRows').innerHTML=rows.map(r=>{
-    const n=spr[r.name]||0;
-    return `<tr class="pick" data-off="${r.offset}">`
-      +`<td class="ad">0x${r.offset.toString(16).toUpperCase().padStart(5,'0')}</td>`
-      +`<td class="nm">${r.name}</td>`
-      +`<td class="ad">시리얼 0x${r.serial.toString(16).toUpperCase().padStart(4,'0')}`
-        +` (${r.serial})</td>`
-      +`<td>${r.confirmed
-          ? `<span class="vdp-ok">확인</span> ${r.dest_label||('행선지 '+r.dest)}`
-          : `<span class="vdp-guess">추정 · 행선지 없음</span>`}</td>`
-      +`<td class="ad">${n?`스프라이트 ${n}`:''}</td></tr>`;
-  }).join('');
+  $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`;
+  $('vdpRows').innerHTML=rows.map(r=>`<tr class="pick" data-i="${r.index}">`
+    +`<td class="nm">${r.name||'<span class="vdp-guess">(이름 없음)</span>'}</td>`
+    +`<td>${r.label}</td>`
+    +`<td class="ad">${r.price?r.price.toLocaleString()+'G':''}</td>`
+    +`<td class="ad">${r.sprites?`스프라이트 ${r.sprites}`:''}</td>`
+    +`<td class="ad">${r.model} · ${r.size.toLocaleString()}B</td></tr>`).join('');
   [...document.querySelectorAll('#vdpRows tr.pick')].forEach(tr=>
-    tr.onclick=()=>pickVdp(+tr.dataset.off));
-  vdpPick=null; $('vdpEdit').hidden=true;
+    tr.onclick=()=>selectPacket([...pk.path,'vdp',+tr.dataset.i]));
 }
 
 // ---- animation simulation (loops frames of the current bank) ----
@@ -3227,23 +3119,6 @@ $('saveBtn').onclick=async()=>{
     if(F.includes('hunger'))edit.hunger=+$('fHunger').value;
     if(F.includes('friendship'))edit.friendship=+$('fFriend').value;
     if(F.includes('anim')){edit.anim_a=+$('fAnimA').value;edit.anim_b=+$('fAnimB').value}
-  }
-  if(pk.vdp&&pk.vdp.length){
-    // a VDP's records and sprites live in the packed stream, so they go
-    // through vdp_edit and the whole stream is rebuilt on save
-    const items=[];
-    if(vdpPick!=null){
-      const it=pk.vdp.find(r=>r.offset===vdpPick);
-      const nm=$('vdpName').value.trim(), ds=$('vdpDest').value;
-      if(it&&(nm!==(it.name||'')||(ds&&ds!==it.dest))){
-        const one={offset:vdpPick};
-        if(nm!==(it.name||''))one.name=nm;
-        if(ds&&ds!==it.dest)one.dest=ds;
-        items.push(one);
-      }
-    }
-    const banks=(pk.banks||[]).filter(b=>b.loose).map(b=>({loose:b.loose,frames:b.frames}));
-    if(items.length||banks.length)edit.vdp_edit={items,banks};
   }
   if(pk.acc_pos)edit.acc_pos=pk.acc_pos;
   if(pk.banks)edit.banks=pk.banks;

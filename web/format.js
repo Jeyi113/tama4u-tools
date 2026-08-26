@@ -5,7 +5,7 @@ import {
   pixelBytes, scanLoose, readLoose,
   parseBank, LAYOUTS, COMPAT_BIT, OFF_COMPAT_MASK, SIGNATURES,
   OFF_ANSI_ID, OFF_PACKET_SIZE, OFF_FILE_SIZE, OFF_UNICODE_NAME,
-  OFF_TYPE_SIG, OFF_TOKEN, OFF_SERIAL, MAGIC, sum16, Packet,
+  OFF_TYPE_SIG, OFF_TOKEN, OFF_SERIAL, MAGIC, sum16, Packet, parseFile,
 } from './core.js';
 import { CHARSET } from './charset-data.js';
 
@@ -359,78 +359,17 @@ export const likeRoster = p => (ROSTERS[p.model] || []).filter(Boolean).length
 // serial +12, name +16 (= 0x4C / 0x4E / 0x52 / 0x5A / 0x5E).  Pixels are
 // packed and are not drawn -- see tama4u/vdp.py.
 export const VDP_DEST = '94025b02';
-const VDP_SIG = 0x8dc0, VDP_NAME_MAX = 14, VDP_MIN_NAME = 3;
-const VDP_MAX_UNCONFIRMED = 12;
-const VDP_NAME_CHARS = new Set(
-  [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 　★▽・♪＋']);
-const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
-export const isVdp = p =>
-  hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_DEST;
-
-function vdpKnownDests(model) {
-  const out = {};
-  for (const m of [model, 'iDL'])
-    for (const e of destOptions(m)) if (!(e[1] in out)) out[e[1]] = e[0];
-  return out;
-}
-function vdpName(raw, o, table) {
-  let s = '';
-  for (let k = 0; k < VDP_NAME_MAX && o + k < raw.length; k++) {
-    const ch = table[raw[o + k]];
-    if (ch === undefined || !VDP_NAME_CHARS.has(ch)) break;
-    s += ch;
-  }
-  return s.replace(/^[　 ]+|[　 ]+$/g, '');
-}
-
-// Read from the unpacked payload where there is one -- only there do the
-// records line up with the sprites, and only there are they all present.
-export function vdpContents(p) {
-  const data = vdpPayload(p);
-  return vdpContentsIn(data || p.raw, p.model);
-}
-
-export function vdpContentsIn(raw, model) {
-  const table = tableFor(model);
-  const known = vdpKnownDests(model), out = [], claimed = new Set();
-  for (let i = 2; i < raw.length - 17; i++) {
-    if (raw[i] !== 0x81 && raw[i] !== 0x94) continue;
-    const hex = hex4(raw.slice(i, i + 4));
-    if (!(hex in known)) continue;
-    if (((raw[i - 2] << 8) | raw[i - 1]) !== VDP_SIG) continue;
-    out.push({ offset: i - 2, serial: (raw[i + 12] << 8) | raw[i + 13],
-               name: vdpName(raw, i + 16, table), confirmed: true,
-               dest: hex, dest_label: known[hex] });
-    for (let k = i - 2; k < i + 16 + VDP_NAME_MAX; k++) claimed.add(k);
-  }
-  for (let n = 4; n < raw.length - 2; n++) {
-    if (claimed.has(n) || raw[n - 2] || raw[n - 1]) continue;
-    const serial = (raw[n - 4] << 8) | raw[n - 3];
-    if (!serial) continue;
-    const name = vdpName(raw, n, table);
-    if (name.length < VDP_MIN_NAME || !/[A-Z]/.test(name)) continue;
-    out.push({ offset: n - 18, serial, name, confirmed: false,
-               dest: null, dest_label: null });
-  }
-  const guesses = out.filter(r => !r.confirmed).length;
-  const keep = guesses > VDP_MAX_UNCONFIRMED ? out.filter(r => r.confirmed) : out;
-  return keep.sort((a, b) => a.offset - b.offset);
-}
-
-// The artwork is behind an LZ77 stream covering everything after the loader
-// stub; the sprite headers visible in the raw file are coincidences inside
-// it.  Algorithm read out of the loader with the S1C33 disassembler -- see
-// tama4u/vdp.py.  Only vdp-009 uses this packer; the earlier ones use an
-// older halfword-control variant that is not decoded, and are left alone.
 const VDP_LOAD_BASE = 0x02000000, VDP_STUB_END = 0x600;
-// each packer identified by a few bytes of its run branch -- see vdp.py
 const VDP_ROUTINES = [
   ['lz', [0x8a, 0x8c, 0x4a, 0x36]],
   ['rle', [0x02, 0x54, 0x12, 0x54, 0x12, 0x27, 0x92, 0x23]],
 ];
 const VDP_UNPACK_LIMIT = 1 << 20;
+const VDP_CHAR_DEST = '81033300', VDP_ICON_DEST = '81042902', VDP_STUB_MAX = 0x200;
+const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
+export const isVdp = p =>
+  hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_DEST;
 
-// vdp-001..008: halfword control word, literal runs and byte runs
 export function vdpUnpackRle(raw, start, limit = VDP_UNPACK_LIMIT) {
   const out = [];
   let ip = start;
@@ -513,19 +452,6 @@ export function vdpPayload(p) {
   return (kind === 'lz' ? vdpUnpack : vdpUnpackRle)(p.raw, start);
 }
 
-export function vdpSpriteRecords(p) {
-  const data = vdpPayload(p);
-  if (!data) return [];
-  const out = [];
-  for (const rec of scanLoose(data, 0)) {
-    const [offset, w, h, colors, frames, have] = rec;
-    const need = pixelBytes(w, h, frames, colors);
-    if (have < need) continue;
-    out.push({ offset, w, h, colors, frames, need, loose: rec,
-               frames_data: readLoose(data, rec) });
-  }
-  return out;
-}
 
 const VDP_MAX_LIT = 128, VDP_MAX_RUN = 128, VDP_MAX_MATCH = 16, VDP_WINDOW = 4096;
 const hwAt = (d, k) => (d[2 * k] << 8) | d[2 * k + 1];   // compare key only
@@ -637,33 +563,47 @@ export function vdpRepack(p, data) {
 
 // Fixed-width in place: the name pads to its 14 slots with the ideographic
 // space, so the payload never changes length.
-export function vdpWriteItem(data, item, model) {
-  const off = item.offset, table = tableFor(model);
-  if (item.dest) {
-    const code = item.dest.match(/../g).map(x => parseInt(x, 16));
-    if (code.length !== 4) throw new Error('행선지는 4바이트여야 합니다');
-    data.set(code, off + 2);
-  }
-  if ('name' in item) {
-    const codes = encode(item.name.slice(0, VDP_NAME_MAX), model);
-    const pad = spaceCode(model);
-    for (let k = 0; k < VDP_NAME_MAX; k++)
-      data[off + 2 + 16 + k] = (k < codes.length ? codes[k] : pad) & 0xff;
-  }
+
+
+
+// What a content packet really is, where the destination misleads --
+// see tama4u/vdp.py.
+export function vdpContentLabel(sub, plain) {
+  const dest = hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4));
+  if (dest === VDP_CHAR_DEST) return '캐릭터 (육성)';
+  if (dest === VDP_ICON_DEST) return '메뉴 아이콘 세트';
+  if (sub.size <= VDP_STUB_MAX) return `빈 슬롯 (${plain})`;
+  return plain;
 }
 
-export function vdpAttributeSprites(records, banks) {
-  for (const b of banks) {
-    let owner = null;
-    for (const r of records) if (r.offset <= b.offset) owner = r;
-    b.vdp_item = owner
-      ? (owner.name || `0x${owner.offset.toString(16).toUpperCase().padStart(5, '0')}`)
-      : null;
-    b.vdp_item_offset = owner ? owner.offset : null;
-  }
-  return banks;
+// The payload is a run of complete packets, TAMAGO header and all, so the
+// container parses it and every content gets the ordinary item treatment.
+export function vdpSubPackets(p) {
+  if (!isVdp(p)) return null;
+  const data = vdpPayload(p);
+  if (!data) return null;
+  let base = -1;
+  for (let i = 0; i + MAGIC.length <= data.length && base < 0; i++)
+    if (MAGIC.every((v, k) => data[i + k] === v)) base = i;
+  if (base < 0) return null;
+  try {
+    const { packets } = parseFile(data.slice(base));
+    return [data, base, packets];
+  } catch (e) { return null; }
 }
 
+// Recompressing changes the packet's length, so the size it declares at
+// 0x4A has to move with it.
+export function vdpWriteSubs(p, data, base, packets) {
+  const buf = new Uint8Array(data);
+  for (const sub of packets) {
+    sub.fixChecksums();
+    buf.set(sub.raw, base + sub.offset);
+  }
+  const out = vdpRepack(p, buf);
+  putU16(out, OFF_PACKET_SIZE, out.length);
+  return out;
+}
 // ---- character stats ------------------------------------------------
 export const CH = {
   TAMA_ID: 0x204, REVERT_ID: 0x206, GRAPHICS: 0x208, PERSONALITY: 0x20c,

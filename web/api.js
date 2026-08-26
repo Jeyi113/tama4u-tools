@@ -10,10 +10,16 @@ import * as F from './format.js';
 
 const findPacket = (packets, path) => path.slice(1).reduce((p, i) => p.children[i], packets[path[0]]);
 
+// A VDP's contents are whole packets inside its packed stream, so they are
+// walked too, under a 'vdp' step -- [0, 'vdp', 2].  Each then gets the
+// ordinary item treatment: price, stats, likes, all of it.
 function* iterPackets(packets) {
   function* walk(pkt, path) {
     yield [path, pkt];
     for (let i = 0; i < pkt.children.length; i++) yield* walk(pkt.children[i], [...path, i]);
+    const subs = F.vdpSubPackets(pkt);
+    if (subs) for (let i = 0; i < subs[2].length; i++)
+      yield* walk(subs[2][i], [...path, 'vdp', i]);
   }
   for (let i = 0; i < packets.length; i++) yield* walk(packets[i], [i]);
 }
@@ -51,7 +57,8 @@ export function describe(data, opts = {}) {
       size: pkt.size,
       dest: Array.from(pkt.raw.slice(F.OFF_DEST, F.OFF_DEST + 4))
         .map(x => x.toString(16).padStart(2, '0')).join(''),
-      dest_label: F.getDestination(pkt),
+      dest_label: path.includes('vdp')
+        ? F.vdpContentLabel(pkt, F.getDestination(pkt)) : F.getDestination(pkt),
       dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1] })),
       is_item: !isChar && !F.isProgram(pkt)
         && (F.BANK_OFFSETS[F.effectiveKind(pkt)] !== undefined || model !== '4U'),
@@ -188,20 +195,17 @@ export function describe(data, opts = {}) {
     if (banks.length)
       info.banks = banks.map(b => ({ offset: b.offset, loose: b.loose ?? null,
                                      frames: b.frames.map(frameOut) }));
-    if (F.isVdp(pkt)) {
-      info.vdp = F.vdpContents(pkt);
-      const recs = F.vdpSpriteRecords(pkt);
-      info.vdp_sprites = recs.map(({ frames_data, loose, ...r }) => r);
-      if (recs.length) {
-        // the packed stream is what holds the artwork; records sitting in
-        // the raw file are coincidences inside it
-        info.banks = recs.map(r => ({
-          offset: r.offset, loose: r.loose, unpacked: true,
-          frames: r.frames_data.map(f => ({ slot: f.slot_size, w: f.w, h: f.h,
-                                            palette: f.palette, pixels: f.pixels })),
-        }));
-      }
-      F.vdpAttributeSprites(info.vdp, info.banks || []);
+    if (F.isVdp(pkt) && path.length === 1) {
+      const got = F.vdpSubPackets(pkt);
+      info.vdp = !got ? [] : got[2].map((sub, k) => ({
+        index: k,
+        name: F.decode(Array.from(sub.itemNameCodes), F.tableFor(sub.model))
+               .replace(/[　 ]+$/, ''),
+        label: F.vdpContentLabel(sub, F.getDestination(sub)),
+        model: sub.model, size: sub.size, serial: sub.serial,
+        price: F.getPrice(sub),
+        sprites: scanLoose(sub.raw, 0x40).length,
+      }));
     }
     out.packets.push(info);
   }
@@ -245,8 +249,7 @@ export function applyEdits(data, edits, newJpeg = null) {
     for (const p of packets) p.shiftDeclaredSize(delta);
     jpeg = newJpeg;
   }
-  for (const edit of edits) {
-    const pkt = findPacket(packets, edit.path);
+  const applyOne = (pkt, edit) => {
     const model = pkt.model;
     if ('serial' in edit) pkt.setSerial(+edit.serial);
     if ('name' in edit) pkt.setItemNameCodes(F.encode(edit.name, model));
@@ -254,17 +257,6 @@ export function applyEdits(data, edits, newJpeg = null) {
     if ('price' in edit) F.setPrice(pkt, +edit.price);
     if ('hunger' in edit) F.setHunger(pkt, edit.hunger);
     if ('friendship' in edit) F.setFriendship(pkt, edit.friendship);
-    if (edit.vdp_edit) {
-      // a VDP's records and sprites are inside the packed stream, so edits
-      // go into the payload and the stream is rebuilt
-      const data = F.vdpPayload(pkt);
-      if (!data) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
-      const buf = new Uint8Array(data);
-      for (const it of edit.vdp_edit.items || []) F.vdpWriteItem(buf, it, model);
-      for (const b of edit.vdp_edit.banks || [])
-        writeLoose(buf, b.loose, b.frames[0].palette, b.frames.map(f => f.pixels));
-      pkt.raw = F.vdpRepack(pkt, buf);
-    }
     if ('dest' in edit) F.setDestination(pkt, edit.dest, edit.dest_label);
     if ('likes' in edit) F.setLikesRaw(pkt, edit.likes);
     if ('stats' in edit) F.setStats(pkt, edit.stats);
@@ -293,6 +285,29 @@ export function applyEdits(data, edits, newJpeg = null) {
       if (off + blobLen !== oldEnd) throw new Error('bank size mismatch — frame slots must be kept');
       writeBank(pkt.raw, frames, off);
     }
+  };
+  for (const edit of edits) {
+    if (!edit.path.includes('vdp')) applyOne(findPacket(packets, edit.path), edit);
+  }
+  // VDP contents live inside the packed stream: unpack once per bundle,
+  // apply everything, then rebuild the stream once.
+  const groups = new Map();
+  for (const edit of edits) {
+    const k = edit.path.indexOf('vdp');
+    if (k < 0) continue;
+    const key = edit.path.slice(0, k).join(',');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push([edit.path[k + 1], edit]);
+  }
+  for (const [key, jobs] of groups) {
+    const pkt = findPacket(packets, key.split(',').map(Number));
+    const got = F.vdpSubPackets(pkt);
+    if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
+    const [data, base, subs] = got;
+    for (const [idx, edit] of jobs) applyOne(subs[idx], edit);
+    const before = pkt.size;
+    pkt.raw = F.vdpWriteSubs(pkt, data, base, subs);
+    for (const q of packets) q.shiftDeclaredSize(pkt.size - before);
   }
   return buildFile(jpeg, packets, trailing);
 }

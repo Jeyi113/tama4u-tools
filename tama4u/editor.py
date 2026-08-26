@@ -45,11 +45,21 @@ def chara_sprites():
 
 
 def _iter_packets(packets):
-    """Yield (path, packet) depth-first; path like [0] or [0, 1]."""
+    """Yield (path, packet) depth-first; path like [0] or [0, 1].
+
+    A VDP's contents are whole packets inside its packed stream, so they
+    are walked too, under a 'vdp' step -- [0, 'vdp', 2].  That way every
+    one of them gets the ordinary item treatment: price, hunger,
+    friendship, the like grid and the five stats all read and write
+    through the same code as a standalone download."""
     def walk(pkt, path):
         yield path, pkt
         for i, child in enumerate(pkt.children):
             yield from walk(child, path + [i])
+        subs = vdp.sub_packets(pkt)
+        if subs:
+            for i, sub in enumerate(subs[2]):
+                yield from walk(sub, path + ['vdp', i])
     for i, top in enumerate(packets):
         yield from walk(top, [i])
 
@@ -57,6 +67,8 @@ def _iter_packets(packets):
 def _find(packets, path):
     pkt = packets[path[0]]
     for i in path[1:]:
+        if i == 'vdp':
+            raise KeyError('vdp')       # handled by the caller
         pkt = pkt.children[i]
     return pkt
 
@@ -86,7 +98,8 @@ def describe(data):
             'name': charset.decode(pkt.item_name_codes, table),
             'size': pkt.size,
             'dest': bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex(),
-            'dest_label': items.get_destination(pkt),
+            'dest_label': (vdp.content_label(pkt, items.get_destination(pkt))
+                           if 'vdp' in path else items.get_destination(pkt)),
             'dest_options': [{'label': e[0], 'code': e[1]}
                              for e in destinations.options(pkt.model)],
             'is_item': (not character.is_character(pkt)
@@ -269,23 +282,20 @@ def describe(data):
                                           'pixels': f.pixels}
                                          for f in b['frames']]}
                              for b in banks]
-        if vdp.is_vdp(pkt):
-            info['vdp'] = vdp.contents(pkt)
-            recs = vdp.sprite_records(pkt)
-            info['vdp_sprites'] = [{k: v for k, v in r.items()
-                                    if k not in ('frames_data', 'loose')}
-                                   for r in recs]
-            if recs:
-                # the packed stream is what actually holds the artwork; the
-                # records sitting in the raw file are coincidences inside it
-                info['banks'] = [
-                    {'offset': r['offset'], 'loose': r['loose'],
-                     'unpacked': True,
-                     'frames': [{'slot': f.slot_size, 'w': f.width,
-                                 'h': f.height, 'palette': f.palette,
-                                 'pixels': f.pixels} for f in r['frames_data']]}
-                    for r in recs]
-            vdp.attribute_sprites(info['vdp'], info.get('banks') or [])
+        if vdp.is_vdp(pkt) and len(path) == 1:
+            # summary of the bundle's contents; each one is also a real
+            # packet in this list, under a 'vdp' path step
+            got = vdp.sub_packets(pkt)
+            info['vdp'] = [] if got is None else [
+                {'index': k,
+                 'name': charset.decode(sub.item_name_codes,
+                                        charset.load_table(model=sub.model)
+                                        ).rstrip('\u3000'),
+                 'label': vdp.content_label(sub, items.get_destination(sub)),
+                 'model': sub.model, 'size': sub.size, 'serial': sub.serial,
+                 'price': items.get_price(sub),
+                 'sprites': len(sprites.scan_loose(sub.raw, lo=0x40))}
+                for k, sub in enumerate(got[2])]
         out['packets'].append(info)
     return out
 
@@ -306,6 +316,73 @@ def replace_packet(packets, path, new_raw):
     struct.pack_into('>H', raw, container.OFF_PACKET_SIZE, len(raw))
     replace_packet(packets, path[:-1], bytes(raw))
 
+
+def _apply_fields(pkt, edit):
+    """Every field edit for one packet.  Shared by top-level packets
+    and by the content packets inside a VDP, so a bundled item is
+    edited exactly like a standalone download."""
+    table = charset.load_table(model=pkt.model)
+    if 'serial' in edit:
+        pkt.set_serial(int(edit['serial']))
+    if 'name' in edit:
+        pkt.set_item_name_codes(charset.encode(edit['name'], table))
+    if 'unicode_name' in edit:
+        pkt.set_unicode_name(edit['unicode_name'])
+    if 'price' in edit:
+        items.set_price(pkt, int(edit['price']))
+    if 'hunger' in edit:
+        items.set_hunger(pkt, edit['hunger'])
+    if 'friendship' in edit:
+        items.set_friendship(pkt, edit['friendship'])
+    if 'dest' in edit:
+        items.set_destination(pkt, edit['dest'], edit.get('dest_label'))
+    if 'likes' in edit:
+        items.set_likes_raw(pkt, edit['likes'])
+    if 'stats' in edit:
+        items.set_stats(pkt, edit['stats'])
+    if 'acc_pos' in edit:
+        items.set_acc_positions(pkt, edit['acc_pos'])
+    if 'char_stats' in edit:
+        character.set_stats(pkt, edit['char_stats'])
+    if 'transform_name' in edit:
+        charset.write_text(pkt.raw, character.OFF_TRANSFORM_NAME, 10,
+                           edit['transform_name'], table, 2)
+    if 'char_acc_pos' in edit:
+        character.set_acc_positions(pkt, edit['char_acc_pos'])
+    if 'name2' in edit:
+        charset.write_text(pkt.raw, character.OFF_NAME2,
+                           pkt.layout['slots'], edit['name2'], table, 2)
+    if 'version' in edit:
+        v = edit['version']
+        items.set_version(pkt, v.get('version'), v.get('compat'),
+                          v.get('index'))
+    if 'compat' in edit:
+        items.set_compat(pkt, edit['compat'])
+    if 'anim_a' in edit:
+        items.set_anim(pkt, edit['anim_a'], edit.get('anim_b', edit['anim_a']))
+    for t in edit.get('texts', []):
+        if t.get('parts'):
+            charset.write_grouped(pkt.raw, [tuple(p) for p in t['parts']],
+                                  t['text'], table, t.get('width', 2))
+        else:
+            charset.write_text(pkt.raw, t['offset'], t['chars'],
+                               t['text'], table, t.get('width', 2))
+    for bank in edit.get('banks', []):
+        off = bank['offset']
+        if bank.get('loose'):
+            sprites.write_loose(pkt.raw, tuple(bank['loose']),
+                                [tuple(c) for c in bank['frames'][0]['palette']],
+                                [f['pixels'] for f in bank['frames']])
+            continue
+        frames = [sprites.Frame(f['slot'], f['w'], f['h'],
+                                [tuple(c) for c in f['palette']],
+                                f['pixels']) for f in bank['frames']]
+        # in-place rewrite must not change the bank's byte length
+        old_end = sprites.parse_bank(pkt.raw, off)[1]
+        blob_len = 2 + sum(2 + f.slot_size for f in frames)
+        if off + blob_len != old_end:
+            raise ValueError('bank size mismatch — frame slots must be kept')
+        sprites.write_bank(pkt.raw, frames, off)
 
 def apply_edits(data, edits, new_jpeg=None):
     jpeg, packets, trailing = container.parse_file(data)
@@ -333,85 +410,32 @@ def apply_edits(data, edits, new_jpeg=None):
             pkt.shift_declared_size(delta)
         jpeg = new_jpeg
     for edit in edits:
-        pkt = _find(packets, edit['path'])
-        table = charset.load_table(model=pkt.model)
-        if 'serial' in edit:
-            pkt.set_serial(int(edit['serial']))
-        if 'name' in edit:
-            pkt.set_item_name_codes(charset.encode(edit['name'], table))
-        if 'unicode_name' in edit:
-            pkt.set_unicode_name(edit['unicode_name'])
-        if 'price' in edit:
-            items.set_price(pkt, int(edit['price']))
-        if 'hunger' in edit:
-            items.set_hunger(pkt, edit['hunger'])
-        if 'friendship' in edit:
-            items.set_friendship(pkt, edit['friendship'])
-        if 'dest' in edit:
-            items.set_destination(pkt, edit['dest'], edit.get('dest_label'))
-        if 'likes' in edit:
-            items.set_likes_raw(pkt, edit['likes'])
-        if 'stats' in edit:
-            items.set_stats(pkt, edit['stats'])
-        if 'acc_pos' in edit:
-            items.set_acc_positions(pkt, edit['acc_pos'])
-        if 'char_stats' in edit:
-            character.set_stats(pkt, edit['char_stats'])
-        if 'transform_name' in edit:
-            charset.write_text(pkt.raw, character.OFF_TRANSFORM_NAME, 10,
-                               edit['transform_name'], table, 2)
-        if 'char_acc_pos' in edit:
-            character.set_acc_positions(pkt, edit['char_acc_pos'])
-        if 'name2' in edit:
-            charset.write_text(pkt.raw, character.OFF_NAME2,
-                               pkt.layout['slots'], edit['name2'], table, 2)
-        if 'version' in edit:
-            v = edit['version']
-            items.set_version(pkt, v.get('version'), v.get('compat'),
-                              v.get('index'))
-        if 'compat' in edit:
-            items.set_compat(pkt, edit['compat'])
-        if 'anim_a' in edit:
-            items.set_anim(pkt, edit['anim_a'], edit.get('anim_b', edit['anim_a']))
-        for t in edit.get('texts', []):
-            if t.get('parts'):
-                charset.write_grouped(pkt.raw, [tuple(p) for p in t['parts']],
-                                      t['text'], table, t.get('width', 2))
-            else:
-                charset.write_text(pkt.raw, t['offset'], t['chars'],
-                                   t['text'], table, t.get('width', 2))
-        if 'vdp_edit' in edit:
-            # A VDP's sprites and item records live in a packed stream, so
-            # edits go into the unpacked payload and the stream is rebuilt.
-            # Everything ahead of it (header, adaptation tables, loader) is
-            # copied through untouched.
-            data = bytearray(vdp.payload(pkt) or b'')
-            if not data:
-                raise ValueError('이 VDP는 아직 압축을 풀 수 없습니다')
-            for item in edit['vdp_edit'].get('items', []):
-                vdp.write_item(data, item, pkt.model)
-            for bank in edit['vdp_edit'].get('banks', []):
-                rec = tuple(bank['loose'])
-                sprites.write_loose(data, rec,
-                                    [tuple(c) for c in bank['frames'][0]['palette']],
-                                    [f['pixels'] for f in bank['frames']])
-            pkt.raw[:] = bytearray(vdp.repack(pkt, bytes(data)))
-        for bank in edit.get('banks', []):
-            off = bank['offset']
-            if bank.get('loose'):
-                sprites.write_loose(pkt.raw, tuple(bank['loose']),
-                                    [tuple(c) for c in bank['frames'][0]['palette']],
-                                    [f['pixels'] for f in bank['frames']])
-                continue
-            frames = [sprites.Frame(f['slot'], f['w'], f['h'],
-                                    [tuple(c) for c in f['palette']],
-                                    f['pixels']) for f in bank['frames']]
-            # in-place rewrite must not change the bank's byte length
-            old_end = sprites.parse_bank(pkt.raw, off)[1]
-            blob_len = 2 + sum(2 + f.slot_size for f in frames)
-            if off + blob_len != old_end:
-                raise ValueError('bank size mismatch — frame slots must be kept')
-            sprites.write_bank(pkt.raw, frames, off)
+        path = list(edit['path'])
+        if 'vdp' in path:
+            continue                # collected below
+        _apply_fields(_find(packets, path), edit)
+    # VDP contents live inside the packed stream: unpack once per
+    # bundle, apply everything, then rebuild the stream once.
+    groups = collections.defaultdict(list)
+    for edit in edits:
+        path = list(edit['path'])
+        if 'vdp' not in path:
+            continue
+        k = path.index('vdp')
+        groups[tuple(path[:k])].append((path[k + 1], edit))
+    for top, jobs in groups.items():
+        pkt = _find(packets, list(top))
+        got = vdp.sub_packets(pkt)
+        if got is None:
+            raise ValueError('이 VDP는 아직 압축을 풀 수 없습니다')
+        payload, base, subs = got
+        for idx, edit in jobs:
+            _apply_fields(subs[idx], edit)
+        before = pkt.size
+        pkt.raw[:] = bytearray(vdp.write_subs(pkt, payload, base, subs))
+        # the whole file's declared size follows the packet's
+        for q in packets:
+            q.shift_declared_size(pkt.size - before)
     return container.build_file(jpeg, packets, trailing)
 
 

@@ -47,7 +47,7 @@ import collections
 import re
 import struct
 
-from . import charset, destinations, items, s1c33, sprites
+from . import charset, container, destinations, items, s1c33, sprites
 
 VDP_DEST = '94025b02'
 LOADER_PREFIX = 'DecoPierce'
@@ -396,6 +396,78 @@ def sprite_records(pkt):
                     'frames': nf, 'need': need, 'loose': list(rec),
                     'frames_data': sprites.read_loose(data, rec)})
     return out
+
+
+_SUB_CACHE = {}
+
+
+def sub_packets(pkt):
+    """(payload, base offset, packets) for a VDP's contents, or None.
+
+    The payload is not a blob with records scattered through it -- it is a
+    run of complete packets, `TAMAGO` header and all.  Parsing it with the
+    container gives every field an ordinary download has, which is what
+    makes the contents editable rather than merely listable."""
+    if not is_vdp(pkt):
+        return None
+    key = (id(pkt), bytes(pkt.raw[:0x60]), pkt.size)
+    if key in _SUB_CACHE:
+        return _SUB_CACHE[key]
+    data = payload(pkt)
+    if data is None:
+        return None
+    base = data.find(container.MAGIC)
+    if base < 0:
+        return None
+    try:
+        _, packets, _ = container.parse_file(data[base:])
+    except ValueError:
+        return None
+    got = (bytearray(data), base, packets)
+    _SUB_CACHE.clear()          # one bundle at a time is all the editor needs
+    _SUB_CACHE[key] = got
+    return got
+
+
+CHAR_DEST = '81033300'
+ICON_DEST = '81042902'
+STUB_MAX = 0x200            # a slot this small holds nothing but a 2x2 dummy
+
+
+def content_label(sub, plain):
+    """What a content packet really is, where the destination misleads.
+
+    A VDP reuses shop codes for things that are not shop items:
+      * the raisable character rides in a clothes-shop packet (0x81033300)
+        -- every bundle has exactly one, always first, always 14,664 bytes,
+        and its ANSI id says so outright ('Violetchi character')
+      * the menu icon set sits on 0x81042902, which is daily necessities
+        on iD L but icons here
+      * vdp-009 carries two nameless stubs, one of them 272 bytes whose
+        only sprite is a 2x2 dummy -- there is no content in it
+    """
+    dest = bytes(sub.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex()
+    if dest == CHAR_DEST:
+        return '캐릭터 (육성)'
+    if dest == ICON_DEST:
+        return '메뉴 아이콘 세트'
+    if sub.size <= STUB_MAX:
+        return f'빈 슬롯 ({plain})'
+    return plain
+
+
+def write_subs(pkt, data, base, packets):
+    """Fold edited content packets back and rebuild the stream.
+
+    Recompressing changes the packet's length, so the size it declares at
+    0x4A has to move with it -- otherwise the container reads the wrong
+    extent back and the checksum lands in the wrong place."""
+    for sub in packets:
+        sub.fix_checksums()
+        data[base + sub.offset:base + sub.offset + sub.size] = sub.raw
+    out = bytearray(repack(pkt, bytes(data)))
+    struct.pack_into('>H', out, container.OFF_PACKET_SIZE, len(out))
+    return bytes(out)
 
 
 def write_item(data, item, model):
