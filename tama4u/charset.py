@@ -70,6 +70,31 @@ def save_table(table, path=_TABLE_PATH):
 MODELS = ('4U', 'iD', 'iDL', "P's")
 _CANON = None
 
+# Codes the four packs never spelled out, recovered from Mr.Blinky's P's
+# translation patches (github.com/MrBlinky/TamaPsTranslation).  Each patch
+# ships a script listing the strings it writes *and* the compiled download
+# that writes them, so aligning the two reads the codes straight off:
+# 1101 of 1354 strings line up, pinning 0x62 ☼, 0x68 ↓, 0x69 →, 0x6B $ and
+# 0xFF (line break) directly.
+#
+# Those land in a symbol run at 0x51-0x6B that follows the order of the
+# character list in the script header exactly -- 16 of its 27 codes are
+# confirmed one by one, and 0x67 ↑ was already in our table from corpus
+# work, which is what makes the four gaps safe to interpolate.  The two
+# roman extras sit right after Z (0xF9) the same way.
+PATCH_CHARS = {
+    # pinned directly by aligning script text against the compiled patch
+    0x68: '↓', 0x69: '→', 0x6B: '$',
+    0xFF: '<',          # line break inside one speech, not a glyph
+    # gaps in the same run, filled from its order (see above)
+    0x5F: '◯', 0x60: '☓', 0x66: '╬', 0x6A: '←',
+    0xFA: 'i', 0xFB: '_',
+}
+# 0xFF is also the commonest filler byte in a program blob, so letting the
+# dialogue scanner treat it as text would turn code into paragraphs.  It
+# still decodes; it just cannot start or extend a run.
+NOT_TEXT = frozenset({0xFF})
+
 
 def _fold(ch):
     """Key that treats Ｓ and S as one character, and nothing else.
@@ -119,6 +144,7 @@ def canonical_bytes():
         table[0xE0 + k] = chr(ord('A') + k)
     for k in range(10):
         table[0x6D + k] = str(k)
+    table.update(PATCH_CHARS)
     _CANON = table or {0xE0 + k: chr(ord('A') + k) for k in range(26)}
     return _CANON
 
@@ -145,13 +171,14 @@ def scan_texts(raw, table=None, lo=0x200, hi=None, min_len=4, width=2):
     hi = hi or len(raw)
     read = ((lambda o: raw[o]) if width == 1
             else (lambda o: struct.unpack_from('>H', raw, o)[0]))
+    scannable = lambda c: c and c in table and (c & 0xFF) not in NOT_TEXT
     runs, o = [], lo
     while o < hi - width:
-        if read(o) in table and read(o):
+        if scannable(read(o)):
             start, chars = o, []
             while o < hi - width:
                 code = read(o)
-                if code in table and code:
+                if scannable(code):
                     chars.append(table[code])
                     o += width
                 else:

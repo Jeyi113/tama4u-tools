@@ -42,19 +42,24 @@ export function encode(text, model) {
 }
 const spaceCode = model => (REV[model] || REV['4U'])['　'] ?? (REV[model] || REV['4U'])[' '] ?? 0;
 
+// 0xFF is a line break, and also the commonest filler byte in a program
+// blob, so letting the scanner treat it as text would turn code into
+// paragraphs.  It still decodes; it just cannot start or extend a run.
+const NOT_TEXT = new Set([0xff]);
 export function scanTexts(raw, model, lo = 0x200, hi = null, minLen = 4, width = 2) {
   const table = tableFor(model);
   hi = hi ?? raw.length;
   const read = width === 1 ? o => raw[o] : o => u16(raw, o);
+  const ok = c => c && table[c] !== undefined && !NOT_TEXT.has(c & 0xff);
   const runs = [];
   let o = lo;
   while (o < hi - width) {
     const c0 = read(o);
-    if (c0 && table[c0] !== undefined) {
+    if (ok(c0)) {
       const start = o; const chars = [];
       while (o < hi - width) {
         const code = read(o);
-        if (code && table[code] !== undefined) { chars.push(table[code]); o += width; }
+        if (ok(code)) { chars.push(table[code]); o += width; }
         else break;
       }
       if (chars.length >= minLen) runs.push([start, chars.length, chars.join('')]);
