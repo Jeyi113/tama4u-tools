@@ -182,12 +182,13 @@
     <div class="card" id="vdpCard" hidden>
       <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
       <table class="vdp"><tbody id="vdpRows"></tbody></table>
+      <div id="vdpSpr" style="margin-top:10px"></div>
       <div class="hint">
         <b>확인</b>은 레코드가 시그니처와 행선지를 그대로 갖고 있는 항목,
         <b>추정</b>은 이름과 시리얼만 남아 행선지를 단정할 수 없는 항목입니다
         (식사·간식과 메뉴 아이콘이 여기 해당 — 기기 표에 직접 심습니다).<br>
-        VDP 그래픽은 대부분 별도 형식으로 묶여 있어, 아래 스프라이트 탭에는
-        평범한 레코드로 들어간 것만 나옵니다.
+        스프라이트는 <b>헤더와 팔레트만 평문</b>이고 픽셀은 묶여 있습니다.
+        묶인 프레임은 그대로 그리면 노이즈가 나오므로 그리지 않습니다.
       </div>
     </div>
     <div class="card" id="likesCard">
@@ -475,6 +476,10 @@ function selectPacket(path){
   // flatten banks -> frames (loose records share one palette)
   flat=[];
   (pk.banks||[]).forEach((bank,bi)=>{
+    // a VDP stores headers and palettes plainly but packs the pixels, so
+    // drawing those frames only produces noise -- list them in the VDP
+    // card instead of putting a corrupt canvas on screen
+    if(bank.packed)return;
     if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
     bank.frames.forEach((fr,fi)=>flat.push({bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
   });
@@ -676,6 +681,14 @@ function renderVdp(){
   $('vdpInfo').textContent=`— ${rows.length}개 (확인 ${ok} · 추정 ${rows.length-ok})`;
   const spr={};
   (pk.banks||[]).forEach(b=>{ if(b.vdp_item)spr[b.vdp_item]=(spr[b.vdp_item]||0)+b.frames.length });
+  const sp=pk.vdp_sprites||[];
+  $('vdpSpr').innerHTML=!sp.length?'':
+    `<div style="font-size:12px;color:#8a8172;margin-bottom:4px">스프라이트 레코드 ${sp.length}개</div>`
+    +sp.map(s=>`<div style="font-size:12px;padding:2px 0">`
+      +`<span class="ad" style="color:#8a8172">0x${s.offset.toString(16).toUpperCase().padStart(5,'0')}</span> `
+      +`${s.w}×${s.h} · ${s.colors}색 · ${s.frames}프레임 — `
+      +`<span class="vdp-guess">픽셀 묶임 (평문 ${s.have}/${s.need}B) · 그리지 않음</span>`
+      +`</div>`).join('');
   $('vdpRows').innerHTML=rows.map(r=>{
     const n=spr[r.name]||0;
     return `<tr>`

@@ -2,6 +2,7 @@
 // a port of tama4u/{items,character,charset,convert}.py.
 import {
   u16, putU16, u16le, putU16le, layoutFor, destOptions, destMatch, destApply, destExtra,
+  pixelBytes, scanLoose,
   parseBank, LAYOUTS, COMPAT_BIT, OFF_COMPAT_MASK, SIGNATURES,
   OFF_ANSI_ID, OFF_PACKET_SIZE, OFF_FILE_SIZE, OFF_UNICODE_NAME,
   OFF_TYPE_SIG, OFF_TOKEN, OFF_SERIAL, MAGIC, sum16, Packet,
@@ -347,45 +348,78 @@ export function likeLabels(p) {
 export const likeRoster = p => (ROSTERS[p.model] || []).filter(Boolean).length
   ? (ROSTERS[p.model] || []).filter(Boolean) : null;
 
-// ---- Virtual Deco Pierce bundles (destination 94 02 5b 02) ----------
-// A VDP installs a whole item set at once.  Each embedded item keeps the
-// tail of an ordinary packet header -- [u16 serial][00 00][name] at 0x5A /
-// 0x5C / 0x5E -- and, where the front bytes survived, the P's signature 18
-// bytes before the name and the destination 16.  See tama4u/vdp.py.
+// ---- Virtual Deco Pierce bundles (destination 94 02 5b 02) ---------
+// Each embedded item keeps the tail of an ordinary P's packet header, so
+// the destination itself is the anchor: sig at -2, dest at 0, token +4,
+// serial +12, name +16 (= 0x4C / 0x4E / 0x52 / 0x5A / 0x5E).  Pixels are
+// packed and are not drawn -- see tama4u/vdp.py.
 export const VDP_DEST = '94025b02';
-const VDP_SIG = 0x8dc0, VDP_MIN_NAME = 3, VDP_MAX_UNCONFIRMED = 12;
+const VDP_SIG = 0x8dc0, VDP_NAME_MAX = 14, VDP_MIN_NAME = 3;
+const VDP_MAX_UNCONFIRMED = 12;
 const VDP_NAME_CHARS = new Set(
   [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 　★▽・♪＋']);
+const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
 export const isVdp = p =>
-  Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4))
-    .map(x => x.toString(16).padStart(2, '0')).join('') === VDP_DEST;
+  hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_DEST;
+
+function vdpKnownDests(model) {
+  const out = {};
+  for (const m of [model, 'iDL'])
+    for (const e of destOptions(m)) if (!(e[1] in out)) out[e[1]] = e[0];
+  return out;
+}
+function vdpName(raw, o, table) {
+  let s = '';
+  for (let k = 0; k < VDP_NAME_MAX && o + k < raw.length; k++) {
+    const ch = table[raw[o + k]];
+    if (ch === undefined || !VDP_NAME_CHARS.has(ch)) break;
+    s += ch;
+  }
+  return s.replace(/^[　 ]+|[　 ]+$/g, '');
+}
 
 export function vdpContents(p) {
-  const raw = p.raw, table = tableFor(p.model), out = [];
-  for (let n = 18; n < raw.length - 2; n++) {
-    if (raw[n - 2] || raw[n - 1]) continue;
+  const raw = p.raw, table = tableFor(p.model);
+  const known = vdpKnownDests(p.model), out = [], claimed = new Set();
+  for (let i = 2; i < raw.length - 17; i++) {
+    if (raw[i] !== 0x81 && raw[i] !== 0x94) continue;
+    const hex = hex4(raw.slice(i, i + 4));
+    if (!(hex in known)) continue;
+    if (((raw[i - 2] << 8) | raw[i - 1]) !== VDP_SIG) continue;
+    out.push({ offset: i - 2, serial: (raw[i + 12] << 8) | raw[i + 13],
+               name: vdpName(raw, i + 16, table), confirmed: true,
+               dest: hex, dest_label: known[hex] });
+    for (let k = i - 2; k < i + 16 + VDP_NAME_MAX; k++) claimed.add(k);
+  }
+  for (let n = 4; n < raw.length - 2; n++) {
+    if (claimed.has(n) || raw[n - 2] || raw[n - 1]) continue;
     const serial = (raw[n - 4] << 8) | raw[n - 3];
     if (!serial) continue;
-    let j = n;
-    while (j < raw.length && VDP_NAME_CHARS.has(table[raw[j]])) j++;
-    const name = decode(Array.from(raw.slice(n, j)), table).replace(/^[　 ]+|[　 ]+$/g, '');
+    const name = vdpName(raw, n, table);
     if (name.length < VDP_MIN_NAME || !/[A-Z]/.test(name)) continue;
-    const dest = Array.from(raw.slice(n - 16, n - 12));
-    const sig = (raw[n - 18] << 8) | raw[n - 17];
-    const ok = sig === VDP_SIG && (dest[0] === 0x81 || PROGRAM_DESTS.includes(dest[0]));
-    const hex = dest.map(x => x.toString(16).padStart(2, '0')).join('');
-    out.push({ offset: n - 18, name_offset: n, serial, name, confirmed: ok,
-               dest: ok ? hex : null,
-               dest_label: ok ? destMatch(p.model, dest, p.raw) : null });
+    out.push({ offset: n - 18, serial, name, confirmed: false,
+               dest: null, dest_label: null });
   }
   const guesses = out.filter(r => !r.confirmed).length;
-  return guesses > VDP_MAX_UNCONFIRMED ? out.filter(r => r.confirmed) : out;
+  const keep = guesses > VDP_MAX_UNCONFIRMED ? out.filter(r => r.confirmed) : out;
+  return keep.sort((a, b) => a.offset - b.offset);
+}
+
+export function vdpSpriteRecords(p) {
+  return scanLoose(p.raw, 0x40).map(([offset, w, h, colors, frames, have]) => {
+    // every VDP record is packed; the shortfall is evidence, not the test
+    // (the last record has nothing after it to truncate its span)
+    const need = pixelBytes(w, h, frames, colors);
+    return { offset, w, h, colors, frames, have, need, packed: true };
+  });
 }
 
 export function vdpAttributeSprites(records, banks) {
   for (const b of banks) {
     let owner = null;
-    for (const r of records) if (r.offset <= b.offset) owner = r.name;
+    for (const r of records)
+      if (r.offset <= b.offset)
+        owner = r.name || `0x${r.offset.toString(16).toUpperCase().padStart(5, '0')}`;
     b.vdp_item = owner;
   }
   return banks;

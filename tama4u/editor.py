@@ -271,7 +271,11 @@ def describe(data):
                              for b in banks]
         if vdp.is_vdp(pkt):
             info['vdp'] = vdp.contents(pkt)
+            info['vdp_sprites'] = vdp.sprite_records(pkt)
             vdp.attribute_sprites(info['vdp'], info.get('banks') or [])
+            packed = {s['offset'] for s in info['vdp_sprites'] if s['packed']}
+            for b in info.get('banks') or []:
+                b['packed'] = b['offset'] in packed
         out['packets'].append(info)
     return out
 

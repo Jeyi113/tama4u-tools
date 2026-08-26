@@ -182,12 +182,13 @@
     <div class="card" id="vdpCard" hidden>
       <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
       <table class="vdp"><tbody id="vdpRows"></tbody></table>
+      <div id="vdpSpr" style="margin-top:10px"></div>
       <div class="hint">
         <b>확인</b>은 레코드가 시그니처와 행선지를 그대로 갖고 있는 항목,
         <b>추정</b>은 이름과 시리얼만 남아 행선지를 단정할 수 없는 항목입니다
         (식사·간식과 메뉴 아이콘이 여기 해당 — 기기 표에 직접 심습니다).<br>
-        VDP 그래픽은 대부분 별도 형식으로 묶여 있어, 아래 스프라이트 탭에는
-        평범한 레코드로 들어간 것만 나옵니다.
+        스프라이트는 <b>헤더와 팔레트만 평문</b>이고 픽셀은 묶여 있습니다.
+        묶인 프레임은 그대로 그리면 노이즈가 나오므로 그리지 않습니다.
       </div>
     </div>
     <div class="card" id="likesCard">
@@ -1166,45 +1167,78 @@ function likeLabels(p) {
 const likeRoster = p => (ROSTERS[p.model] || []).filter(Boolean).length
   ? (ROSTERS[p.model] || []).filter(Boolean) : null;
 
-// ---- Virtual Deco Pierce bundles (destination 94 02 5b 02) ----------
-// A VDP installs a whole item set at once.  Each embedded item keeps the
-// tail of an ordinary packet header -- [u16 serial][00 00][name] at 0x5A /
-// 0x5C / 0x5E -- and, where the front bytes survived, the P's signature 18
-// bytes before the name and the destination 16.  See tama4u/vdp.py.
+// ---- Virtual Deco Pierce bundles (destination 94 02 5b 02) ---------
+// Each embedded item keeps the tail of an ordinary P's packet header, so
+// the destination itself is the anchor: sig at -2, dest at 0, token +4,
+// serial +12, name +16 (= 0x4C / 0x4E / 0x52 / 0x5A / 0x5E).  Pixels are
+// packed and are not drawn -- see tama4u/vdp.py.
 const VDP_DEST = '94025b02';
-const VDP_SIG = 0x8dc0, VDP_MIN_NAME = 3, VDP_MAX_UNCONFIRMED = 12;
+const VDP_SIG = 0x8dc0, VDP_NAME_MAX = 14, VDP_MIN_NAME = 3;
+const VDP_MAX_UNCONFIRMED = 12;
 const VDP_NAME_CHARS = new Set(
   [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 　★▽・♪＋']);
+const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
 const isVdp = p =>
-  Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4))
-    .map(x => x.toString(16).padStart(2, '0')).join('') === VDP_DEST;
+  hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_DEST;
+
+function vdpKnownDests(model) {
+  const out = {};
+  for (const m of [model, 'iDL'])
+    for (const e of destOptions(m)) if (!(e[1] in out)) out[e[1]] = e[0];
+  return out;
+}
+function vdpName(raw, o, table) {
+  let s = '';
+  for (let k = 0; k < VDP_NAME_MAX && o + k < raw.length; k++) {
+    const ch = table[raw[o + k]];
+    if (ch === undefined || !VDP_NAME_CHARS.has(ch)) break;
+    s += ch;
+  }
+  return s.replace(/^[　 ]+|[　 ]+$/g, '');
+}
 
 function vdpContents(p) {
-  const raw = p.raw, table = tableFor(p.model), out = [];
-  for (let n = 18; n < raw.length - 2; n++) {
-    if (raw[n - 2] || raw[n - 1]) continue;
+  const raw = p.raw, table = tableFor(p.model);
+  const known = vdpKnownDests(p.model), out = [], claimed = new Set();
+  for (let i = 2; i < raw.length - 17; i++) {
+    if (raw[i] !== 0x81 && raw[i] !== 0x94) continue;
+    const hex = hex4(raw.slice(i, i + 4));
+    if (!(hex in known)) continue;
+    if (((raw[i - 2] << 8) | raw[i - 1]) !== VDP_SIG) continue;
+    out.push({ offset: i - 2, serial: (raw[i + 12] << 8) | raw[i + 13],
+               name: vdpName(raw, i + 16, table), confirmed: true,
+               dest: hex, dest_label: known[hex] });
+    for (let k = i - 2; k < i + 16 + VDP_NAME_MAX; k++) claimed.add(k);
+  }
+  for (let n = 4; n < raw.length - 2; n++) {
+    if (claimed.has(n) || raw[n - 2] || raw[n - 1]) continue;
     const serial = (raw[n - 4] << 8) | raw[n - 3];
     if (!serial) continue;
-    let j = n;
-    while (j < raw.length && VDP_NAME_CHARS.has(table[raw[j]])) j++;
-    const name = decode(Array.from(raw.slice(n, j)), table).replace(/^[　 ]+|[　 ]+$/g, '');
+    const name = vdpName(raw, n, table);
     if (name.length < VDP_MIN_NAME || !/[A-Z]/.test(name)) continue;
-    const dest = Array.from(raw.slice(n - 16, n - 12));
-    const sig = (raw[n - 18] << 8) | raw[n - 17];
-    const ok = sig === VDP_SIG && (dest[0] === 0x81 || PROGRAM_DESTS.includes(dest[0]));
-    const hex = dest.map(x => x.toString(16).padStart(2, '0')).join('');
-    out.push({ offset: n - 18, name_offset: n, serial, name, confirmed: ok,
-               dest: ok ? hex : null,
-               dest_label: ok ? destMatch(p.model, dest, p.raw) : null });
+    out.push({ offset: n - 18, serial, name, confirmed: false,
+               dest: null, dest_label: null });
   }
   const guesses = out.filter(r => !r.confirmed).length;
-  return guesses > VDP_MAX_UNCONFIRMED ? out.filter(r => r.confirmed) : out;
+  const keep = guesses > VDP_MAX_UNCONFIRMED ? out.filter(r => r.confirmed) : out;
+  return keep.sort((a, b) => a.offset - b.offset);
+}
+
+function vdpSpriteRecords(p) {
+  return scanLoose(p.raw, 0x40).map(([offset, w, h, colors, frames, have]) => {
+    // every VDP record is packed; the shortfall is evidence, not the test
+    // (the last record has nothing after it to truncate its span)
+    const need = pixelBytes(w, h, frames, colors);
+    return { offset, w, h, colors, frames, have, need, packed: true };
+  });
 }
 
 function vdpAttributeSprites(records, banks) {
   for (const b of banks) {
     let owner = null;
-    for (const r of records) if (r.offset <= b.offset) owner = r.name;
+    for (const r of records)
+      if (r.offset <= b.offset)
+        owner = r.name || `0x${r.offset.toString(16).toUpperCase().padStart(5, '0')}`;
     b.vdp_item = owner;
   }
   return banks;
@@ -1644,7 +1678,10 @@ function describe(data, opts = {}) {
                                      frames: b.frames.map(frameOut) }));
     if (isVdp(pkt)) {
       info.vdp = vdpContents(pkt);
+      info.vdp_sprites = vdpSpriteRecords(pkt);
       vdpAttributeSprites(info.vdp, info.banks || []);
+      const packed = new Set(info.vdp_sprites.filter(s => s.packed).map(s => s.offset));
+      for (const b of info.banks || []) b.packed = packed.has(b.offset);
     }
     out.packets.push(info);
   }
@@ -1941,6 +1978,10 @@ function selectPacket(path){
   // flatten banks -> frames (loose records share one palette)
   flat=[];
   (pk.banks||[]).forEach((bank,bi)=>{
+    // a VDP stores headers and palettes plainly but packs the pixels, so
+    // drawing those frames only produces noise -- list them in the VDP
+    // card instead of putting a corrupt canvas on screen
+    if(bank.packed)return;
     if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
     bank.frames.forEach((fr,fi)=>flat.push({bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
   });
@@ -2142,6 +2183,14 @@ function renderVdp(){
   $('vdpInfo').textContent=`— ${rows.length}개 (확인 ${ok} · 추정 ${rows.length-ok})`;
   const spr={};
   (pk.banks||[]).forEach(b=>{ if(b.vdp_item)spr[b.vdp_item]=(spr[b.vdp_item]||0)+b.frames.length });
+  const sp=pk.vdp_sprites||[];
+  $('vdpSpr').innerHTML=!sp.length?'':
+    `<div style="font-size:12px;color:#8a8172;margin-bottom:4px">스프라이트 레코드 ${sp.length}개</div>`
+    +sp.map(s=>`<div style="font-size:12px;padding:2px 0">`
+      +`<span class="ad" style="color:#8a8172">0x${s.offset.toString(16).toUpperCase().padStart(5,'0')}</span> `
+      +`${s.w}×${s.h} · ${s.colors}색 · ${s.frames}프레임 — `
+      +`<span class="vdp-guess">픽셀 묶임 (평문 ${s.have}/${s.need}B) · 그리지 않음</span>`
+      +`</div>`).join('');
   $('vdpRows').innerHTML=rows.map(r=>{
     const n=spr[r.name]||0;
     return `<tr>`

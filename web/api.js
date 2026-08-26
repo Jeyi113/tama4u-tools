@@ -190,7 +190,10 @@ export function describe(data, opts = {}) {
                                      frames: b.frames.map(frameOut) }));
     if (F.isVdp(pkt)) {
       info.vdp = F.vdpContents(pkt);
+      info.vdp_sprites = F.vdpSpriteRecords(pkt);
       F.vdpAttributeSprites(info.vdp, info.banks || []);
+      const packed = new Set(info.vdp_sprites.filter(s => s.packed).map(s => s.offset));
+      for (const b of info.banks || []) b.packed = packed.has(b.offset);
     }
     out.packets.push(info);
   }
