@@ -186,6 +186,13 @@
     <div style="margin:-4px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
       <label style="margin:0;display:flex;gap:4px;align-items:center;font-size:12px;color:var(--ink)">
         <input type="checkbox" id="gridChk" style="width:auto" checked> 그리드</label>
+      <span style="display:inline-flex;gap:2px;align-items:center;font-size:12px;color:var(--ink)">
+        옮기기
+        <button class="btn nudge" data-dx="-1" data-dy="0" title="왼쪽으로 1px">←</button>
+        <button class="btn nudge" data-dx="0" data-dy="-1" title="위로 1px">↑</button>
+        <button class="btn nudge" data-dx="0" data-dy="1" title="아래로 1px">↓</button>
+        <button class="btn nudge" data-dx="1" data-dy="0" title="오른쪽으로 1px">→</button>
+      </span>
       <button class="btn" id="impBtn">BMP 가져오기</button>
       <button class="btn" id="expBtn">BMP 내보내기</button>
       <button class="btn" id="thumbBtn">이 프레임으로 썸네일(JPEG 미리보기) 만들기</button>
@@ -193,7 +200,7 @@
     <input type="file" id="bmpInput" accept=".bmp" hidden>
     <div id="canvasWrap"><canvas id="cv"></canvas></div>
     <div class="pal" id="pal"></div>
-    <div class="hint">좌클릭 그리기 · 우클릭 스포이드 · 팔레트 더블클릭 색 변경 · 팔레트 드래그 순서 변경 · Ctrl/Cmd+Z 되돌리기<br>
+    <div class="hint">좌클릭 그리기 · 우클릭 스포이드 · 팔레트 더블클릭 색 변경 · 팔레트 드래그 순서 변경 · 방향키로 1px 옮기기 · Ctrl/Cmd+Z 되돌리기<br>
       <span id="transHint">팔레트 0번(T)은 투명색.</span> 슬롯 용량 초과 시 저장할 때 알려줍니다.</div>
     <div id="stripRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
       <div style="font-size:12px;color:#8a8172;margin-bottom:6px">
@@ -346,8 +353,9 @@ function selectPacket(path){
     $('nameNote').innerHTML='이건 캐릭터의 <b>옷장 패킷 이름</b>입니다. 캐릭터 본체의 Name 1/2와 별개 필드라 '
       +'커스텀 캐릭터를 만들 때 여기까지 같이 고쳐야 합니다.';
   }
-  $('serialLabel').textContent = pk.packet_class==='A' ? '캐릭터 슬롯 번호'
+  serialLabelBase = pk.packet_class==='A' ? '캐릭터 슬롯 번호'
     : (pk.is_wardrobe ? '카탈로그 번호 (파일 번호)' : '시리얼');
+  showSerialHex();
   const verified=item&&pk.stats_verified;
   const F=pk.fields||[];
   const on=f=>verified&&F.includes(f);
@@ -589,11 +597,42 @@ function paint(e){
   const sc=scaleFor(p.f),g=$('cv').getContext('2d');
   if(palIdx===0&&!frOpaque(p.f))g.clearRect(p.x*sc,p.y*sc,sc,sc);
   else{const[cr,cg,cb]=p.f.palette[palIdx];g.fillStyle=`rgb(${cr},${cg},${cb})`;g.fillRect(p.x*sc,p.y*sc,sc,sc)}
+  // filling the cell paints over the grid lines that bound it, so put that
+  // cell's four edges back instead of redrawing the whole canvas
+  if(showGrid&&sc>=4){
+    g.strokeStyle='rgba(0,0,0,.18)'; g.lineWidth=1;
+    g.strokeRect(p.x*sc+.5,p.y*sc+.5,sc,sc);
+  }
   if(!animTimer)drawAnim();
 }
+// Shift the whole picture by whole pixels.  The frame size is fixed by the
+// slot, so anything pushed past an edge is dropped and the vacated strip
+// becomes index 0 -- transparent on normal sprites, the background colour on
+// opaque ones.
+function nudge(dx,dy){
+  const f=curFrame(); if(!f)return;
+  undoStack.push(f.pixels.slice()); if(undoStack.length>50)undoStack.shift();
+  const out=new Array(f.w*f.h).fill(0);
+  for(let y=0;y<f.h;y++){
+    const sy=y-dy; if(sy<0||sy>=f.h)continue;
+    for(let x=0;x<f.w;x++){
+      const sx=x-dx; if(sx<0||sx>=f.w)continue;
+      out[y*f.w+x]=f.pixels[sy*f.w+sx];
+    }
+  }
+  f.pixels=out; renderFrame(); drawSim(); if(!animTimer)drawAnim();
+}
+document.querySelectorAll('.nudge').forEach(b=>{
+  b.onclick=()=>nudge(+b.dataset.dx,+b.dataset.dy);
+});
+const ARROWS={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
 window.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key==='z'&&undoStack.length){
-    e.preventDefault();curFrame().pixels=undoStack.pop();renderFrame();
+    e.preventDefault();curFrame().pixels=undoStack.pop();renderFrame();drawSim();return;
+  }
+  if(ARROWS[e.key]&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&curFrame()
+     &&!/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){
+    e.preventDefault(); nudge(...ARROWS[e.key]);
   }
 });
 
@@ -1281,6 +1320,16 @@ function downloadStem(){
   }
   return (top.name||'').trim()||$('fName').value.trim();
 }
+
+// The device and other tools show this number in hex, so print both.
+let serialLabelBase='시리얼';
+function showSerialHex(){
+  const v=+$('fSerial').value;
+  const hex=Number.isFinite(v)&&v>=0
+    ? ' · 0x'+(v&0xFFFF).toString(16).toUpperCase().padStart(4,'0') : '';
+  $('serialLabel').textContent=serialLabelBase+hex;
+}
+$('fSerial').addEventListener('input',showSerialHex);
 
 // ---- save ----
 $('saveBtn').onclick=async()=>{
