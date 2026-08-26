@@ -280,13 +280,13 @@ def set_acc_positions(pkt, table):
 
 # character grid, column-major = internal character id order
 CHARACTERS = [
-    'Mametchi', 'Righttchi', 'Knighttchi', 'Tacttchi', 'Nandetchi',
+    'Mametchi', 'Rightchi', 'Knightchi', 'Takutotchi', 'Nandetchi',
     'Kuchipatchi', 'Doyatchi', 'Gotchimotchi',
     'Shirimotchi', 'Charatchi', 'Monakatchi', 'Mogumogutchi', 'Spacytchi',
-    'Karakutchi', 'Acchitchi', 'Yumemitchi',
-    'Kiraritchi', 'Himespetchi', 'Waltztchi', 'Amiamitchi', 'Memetchi',
-    'Chocomakatchi', 'Yukinkotchi', 'Hoshigirltchi',
-    'Chochotchi', 'Harptchi', 'Patitchi', 'Kiramotchi', 'Furifuritchi',
+    'Karakutchi', 'Atchitchi', 'Yumemitchi',
+    'Kiraritchi', 'Himespetchi', 'Warutsutchi', 'Amiamitchi', 'Memetchi',
+    'Chokomakatchi', 'Yukinkotchi', 'Hoshigalutchi',
+    'Chouchoutchi', 'Harputchi', 'Patitchi', 'Kiramotchi', 'Furifuritchi',
     'Amakutchi', 'Julietchi', 'Pekopekotchi',
 ]
 
@@ -394,41 +394,57 @@ def set_destination(pkt, code):
     pkt.raw[0x73] = 0x02 if code[1] == 0x01 else 0x00   # food section flag
 
 
-# iD ships 11 characters in the like mask, but the two firmwares do not
-# use the same 11: Lovely Melody drops Uwasatchi and adds Melodytchi, and
-# the slots after the swap shift by one (proved by バンダナ, which exists in
-# both shops — slot 3 stays put while its dislike moves 8 -> 7).  The two
-# names below are the only slots pinned so far, from iDmakeDL's screen for
-# FlowerHairBand_LMv (Furawatchi like, Kikitchi dislike).
-ID_ROSTER = {
-    'iD original': ['Chamametchi', 'Furawatchi', 'Gozarutchi', 'Kikitchi',
-                    'Kuchipatchi', 'Kuromametchi', 'Lovelitchi', 'Makiko',
-                    'Mametchi', 'Memetchi', 'Uwasatchi'],
-    'Lovely Melody': ['Chamametchi', 'Furawatchi', 'Gozarutchi', 'Kikitchi',
-                      'Kuchipatchi', 'Kuromametchi', 'Lovelitchi', 'Makiko',
-                      'Mametchi', 'Melodytchi', 'Memetchi'],
-}
-ID_KNOWN_SLOTS = {0x0DC0: {4: 'Kikitchi', 9: 'Furawatchi'}}
+# Like-mask rosters, pinned by 44 files that differ only in which pair of
+# characters is set (6_ID/IDL/ps_호불호, 2026-08-26).  Every one of the 44
+# re-encodes byte-identically from the table below, with no slot claimed by
+# two names.  None marks a slot the pack uses but no labelled file covers.
+#
+# P's turned out to be the 4U roster in the same order (only the
+# romanisation differs: Rightchi/Rightchi, Takutotchi/Takutotchi,
+# Atchitchi/Atchitchi, Warutsutchi/Warutsutchi, Chokomakatchi/Chokomakatchi,
+# Hoshigalutchi/Hoshigalutchi, Chouchoutchi/Chouchoutchi, Harputchi/Harputchi),
+# so the two share one list.
+ID_ROSTER = [
+    'Mametchi', 'Kuromametchi', 'Gozarutchi', 'Kuchipatchi',
+    'Kikitchi', 'Lovelitchi', 'Chamametchi', 'Makiko',
+    'Memetchi', 'Furawatchi', 'Uwasatchi', None,
+    'Melodytchi', None, None, None,
+]
+
+# 0-31 is the roster every iD L firmware shares; 32-46 is used by the pack
+# but no labelled file reaches it; 47-57 and 71-73 are what the
+# 15th-anniversary and Spacy line-ups add.  58-70 is never set anywhere.
+IDL_ROSTER = [
+    'Mametchi', 'Kuromametchi', 'Shinshitchi', 'Peintotchi',
+    'Kuishinbotchi', 'Kuchipatchi', 'Shoototchi', 'Gozarutchi',
+    'Sunopotchi', 'Kikitchi', 'Bokutchi', 'Guriguritchi',
+    'Spacytchi', 'Herotchi', 'Meistertchi', 'Lovelitchi',
+    'Melodytchi', 'Moriritchi', 'Chamametchi', 'Memetchi',
+    'Perotchi', 'Shigurehimetchi', 'Makiko', 'Pitchipitchi',
+    'Furawatchi', 'Ponpontchi', 'Agetchi', 'Watawatatchi',
+    'Naturatchi', 'Uwasatchi', 'Madonnatchi', 'Giragiratchi',
+] + [None] * 15 + [
+    'Oyajitchi', 'Otogitchi', 'Prince Tamahiko', 'Akahanatchi',
+    'Nonopotchi', 'Racequeentchi', 'Mimitchi', 'Himetchi',
+    'Momotchi', 'Princess Tamahiko', 'Antoinetchi',
+] + [None] * 13 + [
+    'Pipospetchi', 'Akaspetchi', 'Himespetchi',
+]
+
+ROSTERS = {'iD': ID_ROSTER, 'iDL': IDL_ROSTER, "P's": CHARACTERS,
+           '4U': CHARACTERS}
 
 
 def like_labels(pkt):
     """Button captions for the like grid; None where the slot is unnamed."""
     n = likes_slots(pkt)
-    if pkt.model == '4U':
-        return CHARACTERS[:n]
-    if pkt.model == 'iD':
-        ver = struct.unpack_from('>H', pkt.raw, OFF_VERSION)[0]
-        known = ID_KNOWN_SLOTS.get(ver, {})
-        return [known.get(c) for c in range(n)]
-    return [None] * n
+    r = ROSTERS.get(pkt.model, [])
+    return [r[c] if c < len(r) else None for c in range(n)]
 
 
 def like_roster(pkt):
-    """The 11 names iD can address, for the hint under the grid."""
-    if pkt.model != 'iD':
-        return None
-    ver = struct.unpack_from('>H', pkt.raw, OFF_VERSION)[0]
-    return ID_ROSTER['Lovely Melody' if ver == 0x0DC0 else 'iD original']
+    """Named slots only, for the hint under the grid."""
+    return [x for x in ROSTERS.get(pkt.model, []) if x] or None
 
 
 def get_compat(pkt):

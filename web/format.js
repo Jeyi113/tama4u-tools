@@ -293,33 +293,47 @@ export const letterTextRange = (p, bank) => {
 // iD ships 11 characters in the like mask, and the two firmwares do not use
 // the same 11 (Lovely Melody drops Uwasatchi, adds Melodytchi).
 export const CHARACTERS = [
-  'Mametchi', 'Righttchi', 'Knighttchi', 'Tacttchi', 'Nandetchi',
+  'Mametchi', 'Rightchi', 'Knightchi', 'Takutotchi', 'Nandetchi',
   'Kuchipatchi', 'Doyatchi', 'Gotchimotchi',
   'Shirimotchi', 'Charatchi', 'Monakatchi', 'Mogumogutchi', 'Spacytchi',
-  'Karakutchi', 'Acchitchi', 'Yumemitchi',
-  'Kiraritchi', 'Himespetchi', 'Waltztchi', 'Amiamitchi', 'Memetchi',
-  'Chocomakatchi', 'Yukinkotchi', 'Hoshigirltchi',
-  'Chochotchi', 'Harptchi', 'Patitchi', 'Kiramotchi', 'Furifuritchi',
+  'Karakutchi', 'Atchitchi', 'Yumemitchi',
+  'Kiraritchi', 'Himespetchi', 'Warutsutchi', 'Amiamitchi', 'Memetchi',
+  'Chokomakatchi', 'Yukinkotchi', 'Hoshigalutchi',
+  'Chouchoutchi', 'Harputchi', 'Patitchi', 'Kiramotchi', 'Furifuritchi',
   'Amakutchi', 'Julietchi', 'Pekopekotchi',
 ];
-export const ID_ROSTER = {
-  'iD original': ['Chamametchi', 'Furawatchi', 'Gozarutchi', 'Kikitchi', 'Kuchipatchi',
-    'Kuromametchi', 'Lovelitchi', 'Makiko', 'Mametchi', 'Memetchi', 'Uwasatchi'],
-  'Lovely Melody': ['Chamametchi', 'Furawatchi', 'Gozarutchi', 'Kikitchi', 'Kuchipatchi',
-    'Kuromametchi', 'Lovelitchi', 'Makiko', 'Mametchi', 'Melodytchi', 'Memetchi'],
-};
-const ID_KNOWN_SLOTS = { 0x0dc0: { 4: 'Kikitchi', 9: 'Furawatchi' } };
+// Rosters pinned by the 44 single-difference files (6_*_호불호, 2026-08-26);
+// all 44 re-encode byte-identically.  null = a slot the pack uses but no
+// labelled file names.  P's is the 4U roster in the same order.
+export const ID_ROSTER = [
+  'Mametchi', 'Kuromametchi', 'Gozarutchi', 'Kuchipatchi',
+  'Kikitchi', 'Lovelitchi', 'Chamametchi', 'Makiko',
+  'Memetchi', 'Furawatchi', 'Uwasatchi', null,
+  'Melodytchi', null, null, null,
+];
+export const IDL_ROSTER = [
+  'Mametchi', 'Kuromametchi', 'Shinshitchi', 'Peintotchi',
+  'Kuishinbotchi', 'Kuchipatchi', 'Shoototchi', 'Gozarutchi',
+  'Sunopotchi', 'Kikitchi', 'Bokutchi', 'Guriguritchi',
+  'Spacytchi', 'Herotchi', 'Meistertchi', 'Lovelitchi',
+  'Melodytchi', 'Moriritchi', 'Chamametchi', 'Memetchi',
+  'Perotchi', 'Shigurehimetchi', 'Makiko', 'Pitchipitchi',
+  'Furawatchi', 'Ponpontchi', 'Agetchi', 'Watawatatchi',
+  'Naturatchi', 'Uwasatchi', 'Madonnatchi', 'Giragiratchi',
+  ...new Array(15).fill(null),
+  'Oyajitchi', 'Otogitchi', 'Prince Tamahiko', 'Akahanatchi',
+  'Nonopotchi', 'Racequeentchi', 'Mimitchi', 'Himetchi',
+  'Momotchi', 'Princess Tamahiko', 'Antoinetchi',
+  ...new Array(13).fill(null),
+  'Pipospetchi', 'Akaspetchi', 'Himespetchi',
+];
+export const ROSTERS = { iD: ID_ROSTER, iDL: IDL_ROSTER, "P's": CHARACTERS, '4U': CHARACTERS };
 export function likeLabels(p) {
-  const n = likesSlots(p);
-  if (p.model === '4U') return CHARACTERS.slice(0, n);
-  if (p.model === 'iD') {
-    const known = ID_KNOWN_SLOTS[u16(p.raw, OFF_VERSION)] || {};
-    return Array.from({ length: n }, (_, c) => known[c] ?? null);
-  }
-  return new Array(n).fill(null);
+  const r = ROSTERS[p.model] || [];
+  return Array.from({ length: likesSlots(p) }, (_, c) => r[c] ?? null);
 }
-export const likeRoster = p =>
-  p.model !== 'iD' ? null : ID_ROSTER[u16(p.raw, OFF_VERSION) === 0x0dc0 ? 'Lovely Melody' : 'iD original'];
+export const likeRoster = p => (ROSTERS[p.model] || []).filter(Boolean).length
+  ? (ROSTERS[p.model] || []).filter(Boolean) : null;
 
 // ---- character stats ------------------------------------------------
 export const CH = {
@@ -494,7 +508,7 @@ export function convertPlan(p, target) {
   const nbytes = (likesSlots(p) + 3) >> 2;
   let anyLike = false;
   for (let i = 0; i < nbytes; i++) if (p.raw[L.likes + i]) anyLike = true;
-  if (anyLike) out.warnings.push('호불호는 기종마다 캐릭터 명단이 달라(iD 11명 / 나머지 32명) 옮길 수 없습니다. 전부 해제됩니다.');
+  if (anyLike) out.warnings.push("호불호는 기종마다 캐릭터 명단이 달라(iD 16 / iD L 74 / P's·4U 32칸) 옮길 수 없습니다. 전부 해제됩니다.");
   if (L.stats !== null && M.stats === null) out.warnings.push(`${target}에는 5스탯 칸이 없어 버려집니다.`);
   if (L.anim !== null && M.anim === null) out.warnings.push(`${target}에는 애니메이션 ID 칸이 없어 버려집니다.`);
   if (target === 'iD') out.warnings.push('iD는 카탈로그 인덱스(행선지 3번째 바이트)를 기기가 검사합니다. 변환 후 "기기 버전" 카드에서 인덱스를 지정하세요.');

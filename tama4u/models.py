@@ -24,19 +24,24 @@ A = character, C = clothes.
 #
 #   anim   : u8 pair, toys only (built-in animation program id)
 #   likes  : `likes_slots` characters, 2 bits each, packed low-bits-first
-#            from `likes`.  iD carries 11 characters (22 bits = 0x68-0x6A
-#            low six bits; slot 11 is never set anywhere in the pack and
-#            0x6B is a separate byte), every later model 32.  iD L keeps
-#            three zero bytes after its mask (0x7A-0x7C) and an unrelated
-#            sparse field at 0x7D-0x80; those are not part of the mask.
+#            from `likes`.  Slot counts come from 44 files that differ only
+#            in the like/dislike pair (6_*_호불호), cross-checked against
+#            every packet in the four packs:
+#              iD   0x68-0x6B, 16 slots, all 16 used by the pack
+#              iD L 0x72-0x84, 74 slots; 0-57 and 71-73 used, 58-70 never
+#              P's  0x8A-0x91, 32 slots, all used, same roster+order as 4U
+#              4U   0x94-0x9B, 32 slots
+#            iD L's 0x7A-0x84 is part of the mask, not a separate field --
+#            it holds the characters the 15th-anniversary and Spacy
+#            firmwares add on top of the base 32.
 #   stats  : u8 x5 (intelligence/style/charisma/gourmet/strength), P's onward
 LAYOUTS = {
     'iD':  dict(name=0x5A, width=1, slots=9, price=0x66, bank=0x100,
                 hunger=0x6C, friendship=0x6D, anim=None,
-                likes=0x68, likes_slots=11, stats=None),
+                likes=0x68, likes_slots=16, stats=None),
     'iDL': dict(name=0x5E, width=1, slots=14, price=0x6C, bank=0x100,
                 hunger=0x70, friendship=0x71, anim=0x6E,
-                likes=0x72, likes_slots=32, stats=None),
+                likes=0x72, likes_slots=74, stats=None),
     "P's": dict(name=0x5E, width=1, slots=14, price=0x6C, bank=0x100,
                 hunger=0x70, friendship=0x71, anim=0x6E,
                 likes=0x8A, likes_slots=32, stats=0xAE),

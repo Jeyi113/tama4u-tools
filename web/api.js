@@ -65,6 +65,7 @@ export function describe(data, opts = {}) {
       const anim = F.getAnim(pkt);
       info.fields = F.editableFields(pkt);
       info.likes_slots = F.likesSlots(pkt);
+      info.likes_offset = pkt.layout.likes;
       info.likes_labels = F.likeLabels(pkt);
       info.likes_roster = F.likeRoster(pkt);
       info.hunger = F.getHunger(pkt);

@@ -106,6 +106,7 @@ def describe(data):
             anim = items.get_anim(pkt)
             info['fields'] = sorted(items.editable_fields(pkt))
             info['likes_slots'] = items.likes_slots(pkt)
+            info['likes_offset'] = pkt.layout['likes']
             info['likes_labels'] = items.like_labels(pkt)
             info['likes_roster'] = items.like_roster(pkt)
             info.update(hunger=items.get_hunger(pkt),

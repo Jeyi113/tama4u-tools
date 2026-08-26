@@ -110,7 +110,7 @@ def plan(pkt, target):
 
     if any(pkt.raw[L['likes'] + i] for i in range((items.likes_slots(pkt) + 3) // 4)):
         out['warnings'].append(
-            f'호불호는 기종마다 캐릭터 명단이 달라(iD 11명 / 나머지 32명) '
+            "호불호는 기종마다 캐릭터 명단이 달라(iD 16 / iD L 74 / P's·4U 32칸) "
             '옮길 수 없습니다. 전부 해제됩니다.')
     if L.get('stats') and not M.get('stats'):
         out['warnings'].append(f'{target}에는 5스탯 칸이 없어 버려집니다.')

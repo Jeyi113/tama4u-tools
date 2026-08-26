@@ -31,10 +31,10 @@ function find(hay, needle, from = 0) {
 export const LAYOUTS = {
   'iD':  { name: 0x5a, width: 1, slots: 9,  price: 0x66, bank: 0x100,
            hunger: 0x6c, friendship: 0x6d, anim: null,
-           likes: 0x68, likes_slots: 11, stats: null },
+           likes: 0x68, likes_slots: 16, stats: null },
   'iDL': { name: 0x5e, width: 1, slots: 14, price: 0x6c, bank: 0x100,
            hunger: 0x70, friendship: 0x71, anim: 0x6e,
-           likes: 0x72, likes_slots: 32, stats: null },
+           likes: 0x72, likes_slots: 74, stats: null },
   "P's": { name: 0x5e, width: 1, slots: 14, price: 0x6c, bank: 0x100,
            hunger: 0x70, friendship: 0x71, anim: 0x6e,
            likes: 0x8a, likes_slots: 32, stats: 0xae },

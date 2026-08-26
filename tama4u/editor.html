@@ -269,10 +269,10 @@
 <div id="toast"></div>
 
 <script>
-const CHARS=['Mametchi','Righttchi','Knighttchi','Tacttchi','Nandetchi','Kuchipatchi','Doyatchi','Gotchimotchi',
-'Shirimotchi','Charatchi','Monakatchi','Mogumogutchi','Spacytchi','Karakutchi','Acchitchi','Yumemitchi',
-'Kiraritchi','Himespetchi','Waltztchi','Amiamitchi','Memetchi','Chocomakatchi','Yukinkotchi','Hoshigirltchi',
-'Chochotchi','Harptchi','Patitchi','Kiramotchi','Furifuritchi','Amakutchi','Julietchi','Pekopekotchi'];
+const CHARS=['Mametchi','Rightchi','Knightchi','Takutotchi','Nandetchi','Kuchipatchi','Doyatchi','Gotchimotchi',
+'Shirimotchi','Charatchi','Monakatchi','Mogumogutchi','Spacytchi','Karakutchi','Atchitchi','Yumemitchi',
+'Kiraritchi','Himespetchi','Warutsutchi','Amiamitchi','Memetchi','Chokomakatchi','Yukinkotchi','Hoshigalutchi',
+'Chouchoutchi','Harputchi','Patitchi','Kiramotchi','Furifuritchi','Amakutchi','Julietchi','Pekopekotchi'];
 let fileB64=null, doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
 
 const $=id=>document.getElementById(id);
@@ -397,24 +397,31 @@ function selectPacket(path){
     const arr=[pk.stats.intelligence,pk.stats.style,pk.stats.charisma,pk.stats.gourmet,pk.stats.strength];
     for(let i=0;i<5;i++)$('s'+i).value=arr[i];
     const lk=$('likes'); lk.innerHTML='';
-    const N=pk.likes_slots||32, labels=pk.likes_labels||[], named=pk.model==='4U';
-    const order=[];
-    if(named){for(let r=0;r<8;r++)for(let c=0;c<4;c++)order.push(c*8+r);}
-    else for(let i=0;i<N;i++)order.push(i);
-    order.forEach(id=>{
+    const N=pk.likes_slots||32, labels=pk.likes_labels||[];
+    const base=pk.likes_offset;
+    // Named slots first so the grid reads as a character list; the
+    // unnamed ones the pack still uses go after, kept editable by number.
+    const named=[],rest=[];
+    for(let i=0;i<N;i++)(labels[i]?named:rest).push(i);
+    [...named,...rest].forEach(id=>{
       const b=document.createElement('button');
-      b.textContent=labels[id]||(id+1);
-      b.title=labels[id]?`${id+1} · ${labels[id]}`:`슬롯 ${id+1}`;
+      b.textContent=labels[id]||('#'+id);
+      const at=base!=null
+        ? ` · 0x${(base+(id>>2)).toString(16).toUpperCase()} bit${(id%4)*2}` : '';
+      b.title=`슬롯 ${id}${at}${labels[id]?' · '+labels[id]:' · 이름 미상'}`;
+      if(!labels[id])b.style.opacity=.55;
       b.className='l'+pk.likes[id];
       b.onclick=()=>{pk.likes[id]=(pk.likes[id]+1)%3;b.className='l'+pk.likes[id]};
       lk.appendChild(b);
     });
-    const roster=pk.likes_roster;
-    $('likesNote').hidden=named;
-    $('likesNote').innerHTML=roster
-      ? `이 기종은 캐릭터 <b>${N}명</b>입니다. 슬롯↔캐릭터 대응은 아직 일부만 확인돼 번호로 표시합니다.`
-        +`<br>수록 캐릭터: ${roster.join(', ')}`
-      : '이 기종은 슬롯↔캐릭터 대응이 아직 확인되지 않아 번호로 표시합니다.';
+    const at=base!=null
+      ? `마스크 0x${base.toString(16).toUpperCase()}–0x${(base+((N+3)>>2)-1).toString(16).toUpperCase()}`
+        +` (슬롯당 2비트, ${N}슬롯)` : '';
+    $('likesNote').hidden=false;
+    $('likesNote').innerHTML=rest.length
+      ? `${at} · 이름이 확인된 슬롯 <b>${named.length}개</b>를 먼저 놓았습니다.`
+        +` 뒤쪽 <b>${rest.length}개</b>는 기기가 쓰지만 아직 이름이 확인되지 않아 번호(#슬롯)로 둡니다.`
+      : `${at} · 슬롯 ${N}개 모두 캐릭터가 확인됐습니다.`;
   }
   // iD device/firmware version
   $('verCard').hidden=!pk.version;
