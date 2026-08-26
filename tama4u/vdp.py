@@ -431,6 +431,7 @@ def sub_packets(pkt):
 
 CHAR_DEST = '81033300'
 ICON_DEST = '81042902'
+LOADING_DEST = '81010101'
 STUB_MAX = 0x200            # a slot this small holds nothing but a 2x2 dummy
 
 
@@ -443,6 +444,9 @@ def content_label(sub, plain):
         and its ANSI id says so outright ('Violetchi character')
       * the menu icon set sits on 0x81042902, which is daily necessities
         on iD L but icons here
+      * the emblem the device shows while the pierce loads rides on
+        0x81010101, a fridge-meal code -- always 602 bytes, always one
+        24x24 frame beside two 2x2 dummies, and never named or priced
       * vdp-009 carries two nameless stubs, one of them 272 bytes whose
         only sprite is a 2x2 dummy -- there is no content in it
     """
@@ -451,6 +455,8 @@ def content_label(sub, plain):
         return '캐릭터 (육성)'
     if dest == ICON_DEST:
         return '메뉴 아이콘 세트'
+    if dest == LOADING_DEST:
+        return '로딩 아이콘'
     if sub.size <= STUB_MAX:
         return f'빈 슬롯 ({plain})'
     return plain

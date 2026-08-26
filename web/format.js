@@ -371,7 +371,8 @@ const VDP_ROUTINES = [
   ['rle', [0x02, 0x54, 0x12, 0x54, 0x12, 0x27, 0x92, 0x23]],
 ];
 const VDP_UNPACK_LIMIT = 1 << 20;
-const VDP_CHAR_DEST = '81033300', VDP_ICON_DEST = '81042902', VDP_STUB_MAX = 0x200;
+const VDP_CHAR_DEST = '81033300', VDP_ICON_DEST = '81042902';
+const VDP_LOADING_DEST = '81010101', VDP_STUB_MAX = 0x200;
 const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
 export const isVdp = p =>
   hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_DEST;
@@ -578,6 +579,7 @@ export function vdpContentLabel(sub, plain) {
   const dest = hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4));
   if (dest === VDP_CHAR_DEST) return '캐릭터 (육성)';
   if (dest === VDP_ICON_DEST) return '메뉴 아이콘 세트';
+  if (dest === VDP_LOADING_DEST) return '로딩 아이콘';
   if (sub.size <= VDP_STUB_MAX) return `빈 슬롯 (${plain})`;
   return plain;
 }
