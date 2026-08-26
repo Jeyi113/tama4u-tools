@@ -44,7 +44,7 @@ def chara_sprites():
     return out
 
 
-def _iter_packets(packets):
+def _iter_packets(packets, extra=b''):
     """Yield (path, packet) depth-first; path like [0] or [0, 1].
 
     A VDP's contents are whole packets inside its packed stream, so they
@@ -56,7 +56,7 @@ def _iter_packets(packets):
         yield path, pkt
         for i, child in enumerate(pkt.children):
             yield from walk(child, path + [i])
-        subs = vdp.sub_packets(pkt)
+        subs = vdp.sub_packets(pkt, extra)
         if subs:
             for i, sub in enumerate(subs[2]):
                 yield from walk(sub, path + ['vdp', i])
@@ -73,10 +73,17 @@ def _find(packets, path):
     return pkt
 
 
-def describe(data):
+def describe(data, partner=None):
+    """`partner` is the other half of a VDP+ -- its stream is appended so the
+    bundle unpacks whole."""
     jpeg, packets, trailing = container.parse_file(data)
+    extra = b''
+    if partner:
+        _, ppk, _ = container.parse_file(partner)
+        if vdp.is_part(ppk[0]):
+            extra = vdp.part_stream(ppk[0])
     out = {'jpeg_b64': base64.b64encode(jpeg).decode(), 'packets': []}
-    for path, pkt in _iter_packets(packets):
+    for path, pkt in _iter_packets(packets, extra):
         table = charset.load_table(model=pkt.model)
         info = {
             'model': pkt.model,
@@ -106,7 +113,9 @@ def describe(data):
             'dest_sig': bytes(pkt.raw[container.OFF_TYPE_SIG:
                                       container.OFF_TYPE_SIG + 2]).hex(),
             'dest_label': (vdp.content_label(pkt, items.get_destination(pkt))
-                           if 'vdp' in path else items.get_destination(pkt)),
+                           if 'vdp' in path
+                           else ('VDP+ 뒷부분 (압축 스트림)' if vdp.is_part(pkt)
+                                 else items.get_destination(pkt))),
             # the mask travels with the code so the UI can show iD's free
             # per-item index byte as ** instead of a misleading 00
             'dest_options': [{'label': e[0], 'code': e[1], 'mask': e[2]}
@@ -291,10 +300,14 @@ def describe(data):
                                           'pixels': f.pixels}
                                          for f in b['frames']]}
                              for b in banks]
+        if vdp.is_part(pkt):
+            info['vdp_part'] = {'stream': len(vdp.part_stream(pkt))}
         if vdp.is_vdp(pkt) and len(path) == 1:
             # summary of the bundle's contents; each one is also a real
             # packet in this list, under a 'vdp' path step
-            got = vdp.sub_packets(pkt)
+            got = vdp.sub_packets(pkt, extra)
+            info['vdp_truncated'] = vdp.truncated(pkt, extra)
+            info['vdp_merged'] = bool(extra)
             info['vdp'] = [] if got is None else [
                 {'index': k,
                  'name': charset.decode(sub.item_name_codes,
@@ -510,7 +523,14 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
         try:
             if self.path == '/api/parse':
-                out = describe(body)
+                # raw bytes, or JSON when a VDP+ partner comes along
+                if body[:1] == b'{':
+                    req = json.loads(body)
+                    data = base64.b64decode(req['file_b64'])
+                    pb = req.get('partner_b64')
+                    out = describe(data, base64.b64decode(pb) if pb else None)
+                else:
+                    out = describe(body)
                 self._send(200, json.dumps(out).encode())
             elif self.path == '/api/build':
                 req = json.loads(body)

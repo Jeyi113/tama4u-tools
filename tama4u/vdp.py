@@ -89,6 +89,15 @@ ROUTINES = (
 UNPACK_LIMIT = 1 << 20
 
 
+def truncated(pkt, extra=b''):
+    """True when the bundle's last content is cut short -- the sign that a
+    VDP+ part is missing."""
+    got = sub_packets(pkt, extra)
+    if not got:
+        return False
+    return bool(got[2]) and not got[2][-1].checksum_ok()
+
+
 def unpack_rle(raw, start, limit=UNPACK_LIMIT):
     """vdp-001..008: halfword control word, literal runs and byte runs."""
     out, ip = bytearray(), start
@@ -287,19 +296,45 @@ def _pointer_before(raw, at):
     return best
 
 
-def payload(pkt):
-    """The unpacked body, or None when the packer is not one we read."""
+def payload(pkt, extra=b''):
+    """The unpacked body, or None when the packer is not one we read.
+
+    `extra` is a VDP+ continuation's stream, appended before unpacking."""
     raw = bytes(pkt.raw)
     found = stream_start(raw)
     if found is None:
         return None
     kind, start = found
-    return (unpack if kind == 'lz' else unpack_rle)(raw, start)
+    fn = unpack if kind == 'lz' else unpack_rle
+    return fn(raw[start:] + extra, 0) if extra else fn(raw, start)
 
 
 def is_vdp(pkt):
     dest = bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex()
     return dest == VDP_DEST
+
+
+def is_part(pkt):
+    """A VDP+ continuation: the rest of a bundle's compressed stream.
+
+    One download caps at 32,768 bytes, so a large bundle ships in parts --
+    the first carries the loader and installs, the others ride the
+    connect-play recipe shelf and hold nothing but more stream.  Their
+    header is copied loader boilerplate; the data starts after it, past the
+    zero padding.  Easter (2020) is the one we have: part 1 alone unpacks
+    to 16 contents with the last one cut off, and the two together give 21.
+    """
+    dest = bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex()
+    return dest == PART_DEST and pkt.unicode_name.startswith(PART_NAME)
+
+
+def part_stream(pkt):
+    """The continuation's stream bytes."""
+    raw = bytes(pkt.raw)
+    at = PART_STREAM
+    while at < len(raw) and not raw[at]:
+        at += 1                       # skip the padding after the header
+    return raw[at:]
 
 
 def _known_dests(model):
@@ -401,7 +436,7 @@ def sprite_records(pkt):
 _SUB_CACHE = {}
 
 
-def sub_packets(pkt):
+def sub_packets(pkt, extra=b''):
     """(payload, base offset, packets) for a VDP's contents, or None.
 
     The payload is not a blob with records scattered through it -- it is a
@@ -410,10 +445,10 @@ def sub_packets(pkt):
     makes the contents editable rather than merely listable."""
     if not is_vdp(pkt):
         return None
-    key = (id(pkt), bytes(pkt.raw[:0x60]), pkt.size)
+    key = (id(pkt), bytes(pkt.raw[:0x60]), pkt.size, len(extra))
     if key in _SUB_CACHE:
         return _SUB_CACHE[key]
-    data = payload(pkt)
+    data = payload(pkt, extra)
     if data is None:
         return None
     base = data.find(container.MAGIC)
@@ -430,8 +465,12 @@ def sub_packets(pkt):
 
 
 CHAR_DEST = '81033300'
+CHAR_SIZE = 14664           # every raisable character is exactly this big
 ICON_DEST = '81042902'
 LOADING_DEST = '81010101'
+PART_DEST = '81092900'      # a VDP+ continuation rides the recipe shelf
+PART_NAME = 'DecoPierce'
+PART_STREAM = 0x100         # its header is loader boilerplate; data follows
 STUB_MAX = 0x200            # a slot this small holds nothing but a 2x2 dummy
 
 
@@ -452,7 +491,10 @@ def content_label(sub, plain):
     """
     dest = bytes(sub.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex()
     if dest == CHAR_DEST:
-        return '캐릭터 (육성)'
+        # size is the test, not the code: the Easter bundle puts a 8,824-byte
+        # change dress on the same shelf, priced 1,200, while every raisable
+        # character in every bundle is exactly 14,664 bytes
+        return '캐릭터 (육성)' if sub.size == CHAR_SIZE else '타마모리 · 옷 (변신)'
     if dest == ICON_DEST:
         return '메뉴 아이콘 세트'
     if dest == LOADING_DEST:

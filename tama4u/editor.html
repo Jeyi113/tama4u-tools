@@ -185,6 +185,11 @@
     </div>
     <div class="card" id="vdpCard" hidden>
       <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
+      <div id="vdpPartRow" hidden style="margin-bottom:8px;padding:8px;border:1px dashed var(--accent);border-radius:6px;background:#fff4ee">
+        <div style="font-size:12px;margin-bottom:6px" id="vdpPartNote"></div>
+        <button class="btn" id="vdpPartBtn">짝 파일(.jpg) 불러오기</button>
+        <input type="file" id="vdpPartInput" accept=".jpg,.jpeg" hidden>
+      </div>
       <table class="vdp"><tbody id="vdpRows"></tbody></table>
       <div class="hint">
         내용물 하나하나가 온전한 P's 아이템 패킷입니다. 줄을 누르면 그 패킷으로
@@ -293,7 +298,7 @@ const CHARS=['Mametchi','Rightchi','Knightchi','Takutotchi','Nandetchi','Kuchipa
 'Shirimotchi','Charatchi','Monakatchi','Mogumogutchi','Spacytchi','Karakutchi','Atchitchi','Yumemitchi',
 'Kiraritchi','Himespetchi','Warutsutchi','Amiamitchi','Memetchi','Chokomakatchi','Yukinkotchi','Hoshigalutchi',
 'Chouchoutchi','Harputchi','Patitchi','Kiramotchi','Furifuritchi','Amakutchi','Julietchi','Pekopekotchi'];
-let fileB64=null, doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
+let fileB64=null, partnerB64=null, doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
 
 const $=id=>document.getElementById(id);
 const toast=m=>{const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)};
@@ -320,8 +325,18 @@ $('fileInput').onchange=e=>{if(e.target.files[0])load(e.target.files[0])};
   if(ev==='drop'&&e.dataTransfer.files[0])load(e.dataTransfer.files[0]);
 }));
 function arrayToB64(u8){let s='';const CH=32768;for(let i=0;i<u8.length;i+=CH)s+=String.fromCharCode.apply(null,u8.subarray(i,i+CH));return btoa(s)}
+// re-parse with the VDP+ partner attached, keeping the current selection
+async function reparse(){
+  const r=await fetch('/api/parse',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({file_b64:fileB64,partner_b64:partnerB64})});
+  const j=await r.json();
+  if(j.error){toast('파싱 실패: '+j.error);return}
+  doc=j; showPackets(j);
+}
 async function load(f){
   const buf=await f.arrayBuffer();
+  partnerB64=null;
   const r=await fetch('/api/parse',{method:'POST',body:buf});
   const j=await r.json();
   if(j.error){toast('파싱 실패: '+j.error);return}
@@ -330,6 +345,10 @@ async function load(f){
   newJpegB64=null; $('thumbNote').textContent=''; $('fname').textContent=f.name;
   $('preview').src='data:image/jpeg;base64,'+j.jpeg_b64; $('preview').hidden=false;
   $('drop').style.display='none'; $('main').style.display='grid'; $('saveBtn').hidden=false;
+  showPackets(j);
+}
+
+function showPackets(j){
   const editable=j.packets;
   if(editable.length===0){toast('편집 가능한 패킷이 없습니다');return}
   $('pkCard').hidden=editable.length<2;
@@ -697,7 +716,15 @@ function renderVdp(){
   const rows=pk.vdp||[];
   $('vdpCard').hidden=!rows.length;
   if(!rows.length)return;
-  $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`;
+  $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`
+    +(pk.vdp_merged?' · 짝 파일 합쳐서 읽음':'');
+  // one download caps at 32,768 bytes, so a big bundle ships as a VDP+ in
+  // parts; without the other part the stream runs out mid-content
+  $('vdpPartRow').hidden=!pk.vdp_truncated;
+  $('vdpPartNote').innerHTML=pk.vdp_truncated
+    ? '이 VDP는 <b>뒷부분이 잘려 있습니다</b> — VDP+ 멀티파트라 나머지가 다른 파일에 있습니다.'
+      +'<br>짝 파일을 불러오면 전체 내용물을 볼 수 있습니다(보기 전용).'
+    : '';
   $('vdpRows').innerHTML=rows.map(r=>`<tr class="pick" data-i="${r.index}">`
     +`<td class="nm">${r.name||'<span class="vdp-guess">(이름 없음)</span>'}</td>`
     +`<td>${r.label}<span class="ad" style="margin-left:6px">`
@@ -1362,6 +1389,13 @@ function renderCharStats(){
 }
 
 // ---- packet swap: drop another .jpg's packet into this slot ----
+$('vdpPartBtn').onclick=()=>$('vdpPartInput').click();
+$('vdpPartInput').onchange=async e=>{
+  const f=e.target.files[0]; e.target.value=''; if(!f)return;
+  partnerB64=arrayToB64(new Uint8Array(await f.arrayBuffer()));
+  await reparse();
+  toast(pk&&pk.vdp_merged?'짝 파일을 합쳐 읽었습니다':'짝 파일이 아닌 것 같습니다');
+};
 $('swapBtn').onclick=()=>$('swapInput').click();
 ['dragover','dragleave','drop'].forEach(ev=>$('swapRow').addEventListener(ev,e=>{
   e.preventDefault(); e.stopPropagation();

@@ -373,6 +373,23 @@ const VDP_ROUTINES = [
 const VDP_UNPACK_LIMIT = 1 << 20;
 const VDP_CHAR_DEST = '81033300', VDP_ICON_DEST = '81042902';
 const VDP_LOADING_DEST = '81010101', VDP_STUB_MAX = 0x200;
+const VDP_CHAR_SIZE = 14664;      // every raisable character is this big
+const VDP_PART_DEST = '81092900', VDP_PART_NAME = 'DecoPierce';
+const VDP_PART_STREAM = 0x100;
+
+// A VDP+ continuation: the rest of a bundle's compressed stream.  One
+// download caps at 32,768 bytes, so a large bundle ships in parts -- the
+// first carries the loader, the others ride the connect-play recipe shelf
+// and hold nothing but more stream.  See tama4u/vdp.py.
+export const isVdpPart = p =>
+  hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_PART_DEST
+  && p.unicodeName.startsWith(VDP_PART_NAME);
+
+export function vdpPartStream(p) {
+  let at = VDP_PART_STREAM;
+  while (at < p.raw.length && !p.raw[at]) at++;
+  return p.raw.slice(at);
+}
 const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
 export const isVdp = p =>
   hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_DEST;
@@ -452,11 +469,16 @@ export function vdpStreamStart(raw) {
   return best === null ? null : [kind, best];
 }
 
-export function vdpPayload(p) {
+export function vdpPayload(p, extra = null) {
   const found = vdpStreamStart(p.raw);
   if (found === null) return null;
   const [kind, start] = found;
-  return (kind === 'lz' ? vdpUnpack : vdpUnpackRle)(p.raw, start);
+  const fn = kind === 'lz' ? vdpUnpack : vdpUnpackRle;
+  if (!extra || !extra.length) return fn(p.raw, start);
+  const head = p.raw.slice(start);
+  const merged = new Uint8Array(head.length + extra.length);
+  merged.set(head, 0); merged.set(extra, head.length);
+  return fn(merged, 0);
 }
 
 
@@ -577,7 +599,10 @@ export function vdpRepack(p, data) {
 // see tama4u/vdp.py.
 export function vdpContentLabel(sub, plain) {
   const dest = hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4));
-  if (dest === VDP_CHAR_DEST) return '캐릭터 (육성)';
+  // size is the test, not the code: the Easter bundle puts a change dress
+  // on the same shelf, while every raisable character is 14,664 bytes
+  if (dest === VDP_CHAR_DEST)
+    return sub.size === VDP_CHAR_SIZE ? '캐릭터 (육성)' : '타마모리 · 옷 (변신)';
   if (dest === VDP_ICON_DEST) return '메뉴 아이콘 세트';
   if (dest === VDP_LOADING_DEST) return '로딩 아이콘';
   if (sub.size <= VDP_STUB_MAX) return `빈 슬롯 (${plain})`;
@@ -586,9 +611,9 @@ export function vdpContentLabel(sub, plain) {
 
 // The payload is a run of complete packets, TAMAGO header and all, so the
 // container parses it and every content gets the ordinary item treatment.
-export function vdpSubPackets(p) {
+export function vdpSubPackets(p, extra = null) {
   if (!isVdp(p)) return null;
-  const data = vdpPayload(p);
+  const data = vdpPayload(p, extra);
   if (!data) return null;
   let base = -1;
   for (let i = 0; i + MAGIC.length <= data.length && base < 0; i++)

@@ -16,11 +16,12 @@ const findPacket = (packets, path) => path.slice(1).reduce((p, i) => p.children[
 // A VDP's contents are whole packets inside its packed stream, so they are
 // walked too, under a 'vdp' step -- [0, 'vdp', 2].  Each then gets the
 // ordinary item treatment: price, stats, likes, all of it.
+let extraStream = null;
 function* iterPackets(packets) {
   function* walk(pkt, path) {
     yield [path, pkt];
     for (let i = 0; i < pkt.children.length; i++) yield* walk(pkt.children[i], [...path, i]);
-    const subs = F.vdpSubPackets(pkt);
+    const subs = F.vdpSubPackets(pkt, extraStream);
     if (subs) for (let i = 0; i < subs[2].length; i++)
       yield* walk(subs[2][i], [...path, 'vdp', i]);
   }
@@ -37,8 +38,16 @@ const b64 = u8 => {
 const frameOut = f => ({ slot: f.slot_size, w: f.w, h: f.h, palette: f.palette, pixels: f.pixels });
 
 export function describe(data, opts = {}) {
+  // opts.partner is the other half of a VDP+; its stream is appended so the
+  // bundle unpacks whole
+  let extra = null;
+  if (opts.partner) {
+    const { packets: ppk } = parseFile(opts.partner);
+    if (F.isVdpPart(ppk[0])) extra = F.vdpPartStream(ppk[0]);
+  }
   const { jpeg, packets } = parseFile(data);
   const out = { jpeg_b64: opts.jpeg === false ? null : b64(jpeg), packets: [] };
+  extraStream = extra;
   for (const [path, pkt] of iterPackets(packets)) {
     const model = pkt.model;
     const table = F.tableFor(model);
@@ -66,7 +75,8 @@ export function describe(data, opts = {}) {
       dest_sig: Array.from(pkt.raw.slice(OFF_TYPE_SIG, OFF_TYPE_SIG + 2))
         .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: path.includes('vdp')
-        ? F.vdpContentLabel(pkt, F.getDestination(pkt)) : F.getDestination(pkt),
+        ? F.vdpContentLabel(pkt, F.getDestination(pkt))
+        : (F.isVdpPart(pkt) ? 'VDP+ 뒷부분 (압축 스트림)' : F.getDestination(pkt)),
       // the mask travels with the code so the UI can show iD's free
       // per-item index byte as ** instead of a misleading 00
       dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1], mask: e[2] })),
@@ -206,7 +216,9 @@ export function describe(data, opts = {}) {
       info.banks = banks.map(b => ({ offset: b.offset, loose: b.loose ?? null,
                                      frames: b.frames.map(frameOut) }));
     if (F.isVdp(pkt) && path.length === 1) {
-      const got = F.vdpSubPackets(pkt);
+      const got = F.vdpSubPackets(pkt, extra);
+      info.vdp_truncated = !!(got && got[2].length && !got[2][got[2].length - 1].checksumOk());
+      info.vdp_merged = !!(extra && extra.length);
       info.vdp = !got ? [] : got[2].map((sub, k) => ({
         index: k,
         name: F.decode(Array.from(sub.itemNameCodes), F.tableFor(sub.model))
