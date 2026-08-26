@@ -48,6 +48,7 @@
   .sw{width:26px;height:26px;border-radius:6px;border:2px solid var(--line);cursor:pointer;position:relative}
   .sw.on{border-color:var(--ink);box-shadow:0 0 0 2px #fff inset}
   .sw.t::after{content:'T';position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:#666}
+  .sw.drop{border-color:var(--accent);border-style:dashed}
   .hint{font-size:12px;color:#8a8172;margin-top:6px}
   #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;
     padding:10px 18px;border-radius:10px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:80%}
@@ -192,7 +193,7 @@
     <input type="file" id="bmpInput" accept=".bmp" hidden>
     <div id="canvasWrap"><canvas id="cv"></canvas></div>
     <div class="pal" id="pal"></div>
-    <div class="hint">좌클릭 그리기 · 우클릭 스포이드 · 팔레트 더블클릭 색 변경 · Ctrl/Cmd+Z 되돌리기<br>
+    <div class="hint">좌클릭 그리기 · 우클릭 스포이드 · 팔레트 더블클릭 색 변경 · 팔레트 드래그 순서 변경 · Ctrl/Cmd+Z 되돌리기<br>
       <span id="transHint">팔레트 0번(T)은 투명색.</span> 슬롯 용량 초과 시 저장할 때 알려줍니다.</div>
     <div id="stripRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
       <div style="font-size:12px;color:#8a8172;margin-bottom:6px">
@@ -1587,6 +1588,9 @@ const isOpaque=()=>pk&&pk.opaque;
 // Anything else — room wallpapers, photo-studio backdrops, the odd opaque
 // item — is real artwork and renders solid.  Verified across ~24k frames
 // of the iD / iD L / P's / 4U packs.
+// palette[0] is the transparent slot everywhere except room backgrounds
+// (128x72), which are opaque and keep a real colour there.
+const TRANSPARENT=[0,255,0];
 const transGreen=f=>{const c=f&&f.palette&&f.palette[0];return c&&c[1]===255&&c[0]<128&&c[2]<128};
 const frOpaque=f=>!!f&&!transGreen(f);
 
@@ -1805,6 +1809,23 @@ function snap565(rgb){                  // quantise to what BGR565 can store
   const [r,gg,b]=rgb, R=r>>3, G=gg>>2, B=b>>3;
   return [R<<3|R>>2, G<<2|G>>4, B<<3|B>>2];
 }
+// Reordering a palette entry has to renumber every pixel that referenced
+// it, otherwise the image changes colour.  The move is purely cosmetic:
+// the same picture, stored with a different index order.
+function movePalette(f,from,to){
+  const c=f.palette.splice(from,1)[0];
+  f.palette.splice(to,0,c);
+  const map=[];
+  for(let k=0;k<f.palette.length+1;k++){
+    let v=k;
+    if(k===from)v=to;
+    else if(from<to&&k>from&&k<=to)v=k-1;
+    else if(to<from&&k>=to&&k<from)v=k+1;
+    map[k]=v;
+  }
+  f.pixels=f.pixels.map(v=>map[v]??v);
+}
+let palDrag=null;
 function renderPal(){
   const f=curFrame(), el=$('pal'); el.innerHTML='';
   const use=paletteUse(f);
@@ -1813,9 +1834,21 @@ function renderPal(){
     d.className='sw'+(i===palIdx?' on':'')+(i===0&&!frOpaque(f)?' t':'');
     d.style.background=`rgb(${c[0]},${c[1]},${c[2]})`;
     const used=use[i];
-    d.title=`인덱스 ${i} · 사용 ${used}px\n클릭: 선택 · 더블클릭: 색 변경`+(used?'':'\n우클릭: 삭제(미사용)');
+    d.title=`인덱스 ${i} · 사용 ${used}px\n클릭: 선택 · 더블클릭: 색 변경 · 드래그: 순서 변경`+(used?'':'\n우클릭: 삭제(미사용)');
     if(!used)d.style.borderStyle='dashed';
     d.onclick=()=>{palIdx=i;renderPal()};
+    d.draggable=true;
+    d.ondragstart=ev=>{palDrag=i;ev.dataTransfer.effectAllowed='move'};
+    d.ondragover=ev=>{if(palDrag!=null&&palDrag!==i){ev.preventDefault();d.classList.add('drop')}};
+    d.ondragleave=()=>d.classList.remove('drop');
+    d.ondrop=ev=>{
+      ev.preventDefault(); d.classList.remove('drop');
+      if(palDrag==null||palDrag===i)return;
+      movePalette(f,palDrag,i);
+      palIdx=i; palDrag=null;
+      renderFrame();
+    };
+    d.ondragend=()=>{palDrag=null;document.querySelectorAll('.sw.drop').forEach(x=>x.classList.remove('drop'))};
     d.ondblclick=()=>{
       const inp=document.createElement('input');inp.type='color';
       inp.value='#'+c.map(v=>v.toString(16).padStart(2,'0')).join('');
@@ -2186,8 +2219,15 @@ $('bmpInput').onchange=async e=>{
     undoStack.push(f.pixels.slice());
     f.pixels=src.pixels;
     f.palette=src.palette.slice(0,Math.max(...src.pixels)+1).map(snap565);
+    // 방 배경(128×72)만 0번이 실제 색이고, 나머지는 0번이 투명이다.
+    // 가져온 BMP의 0번이 무슨 색이든 투명 마커(녹색)로 맞춰준다.
+    let note='';
+    if(!(f.w===128&&f.h===72)&&!transGreen(f)){
+      f.palette[0]=TRANSPARENT;
+      note=' · 0번을 투명색으로 맞췄습니다';
+    }
     renderFrame(); drawSim();
-    toast('BMP 가져오기 완료');
+    toast('BMP 가져오기 완료'+note);
   }catch(err){toast('가져오기 실패: '+err.message)}
 };
 
