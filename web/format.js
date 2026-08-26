@@ -167,7 +167,13 @@ export function textGaps(spans, size, start = 0x60) {
   return out;
 }
 
-export const effectiveKind = p => (p.kind !== '?' ? p.kind : (SECTION_KIND[p.section] || '?'));
+// Not for a program packet: 0x4F is part of its destination there, not a
+// shop section, so reading it turns a game into an accessory -- which put a
+// body-composite strip and a wear-coordinate grid on screen for VDP
+// minigames (94 02 5b 01 has 0x02 at 0x4F, and 0x02 is the accessory
+// section).
+export const effectiveKind = p =>
+  isProgram(p) ? 'gm' : (p.kind !== '?' ? p.kind : (SECTION_KIND[p.section] ?? '?'));
 
 export function accBlockLen(p) {
   const o = p.layout.bank;
@@ -594,12 +600,34 @@ export function vdpSubPackets(p) {
 
 // Recompressing changes the packet's length, so the size it declares at
 // 0x4A has to move with it.
+// A downloaded item, made fit to sit inside a bundle: the destination,
+// price, stats, likes, name and sprites come across; the identity fields
+// (download name, ANSI id, declared file size) keep the slot's, because a
+// content is already installed and nothing routes it by name.
+export function vdpFitContent(old, src) {
+  const out = new Packet(src.raw, 0);
+  out.raw.set(old.raw.slice(OFF_UNICODE_NAME, OFF_FILE_SIZE + 2), OFF_UNICODE_NAME);
+  out.raw.set(old.raw.slice(OFF_ANSI_ID, OFF_PACKET_SIZE), OFF_ANSI_ID);
+  out.offset = old.offset;
+  out._orig = old._orig.slice();
+  return out;
+}
+
+// The payload is reassembled rather than patched in place, because swapping
+// a content for a different download changes its length.  The 4 KB prefix
+// and the alignment padding between packets carry across untouched.
 export function vdpWriteSubs(p, data, base, packets) {
-  const buf = new Uint8Array(data);
-  for (const sub of packets) {
+  const parts = [data.slice(0, base + packets[0].offset)];
+  packets.forEach((sub, k) => {
     sub.fixChecksums();
-    buf.set(sub.raw, base + sub.offset);
-  }
+    parts.push(sub.raw);
+    const was = base + sub.offset + sub._orig.length;
+    const nxt = k + 1 < packets.length ? base + packets[k + 1].offset : data.length;
+    parts.push(data.slice(was, nxt));
+  });
+  let n = 0; for (const q of parts) n += q.length;
+  const buf = new Uint8Array(n);
+  let at = 0; for (const q of parts) { buf.set(q, at); at += q.length; }
   const out = vdpRepack(p, buf);
   putU16(out, OFF_PACKET_SIZE, out.length);
   return out;

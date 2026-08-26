@@ -456,18 +456,47 @@ def content_label(sub, plain):
     return plain
 
 
+def fit_content(old, new):
+    """A downloaded item, made fit to sit inside a bundle.
+
+    The contents of a VDP carry no UTF-16 download name and no ASCII id --
+    they are already installed, so nothing routes them by name -- and their
+    declared file size is the bundle's, not their own.  Everything that
+    matters (destination, price, stats, likes, name, sprites) comes across
+    from the replacement; the identity fields keep the slot's."""
+    out = container.Packet(bytes(new.raw), 0)
+    out.raw[container.OFF_UNICODE_NAME:container.OFF_FILE_SIZE] = \
+        old.raw[container.OFF_UNICODE_NAME:container.OFF_FILE_SIZE]
+    out.raw[container.OFF_FILE_SIZE:container.OFF_FILE_SIZE + 2] = \
+        old.raw[container.OFF_FILE_SIZE:container.OFF_FILE_SIZE + 2]
+    out.raw[container.OFF_ANSI_ID:container.OFF_PACKET_SIZE] = \
+        old.raw[container.OFF_ANSI_ID:container.OFF_PACKET_SIZE]
+    out.offset = old.offset
+    out._orig = bytes(old._orig)     # so the payload rebuild keeps its gap
+    return out
+
+
 def write_subs(pkt, data, base, packets):
     """Fold edited content packets back and rebuild the stream.
 
-    Recompressing changes the packet's length, so the size it declares at
-    0x4A has to move with it -- otherwise the container reads the wrong
+    The payload is reassembled rather than patched in place, because
+    swapping a content for a different download changes its length.  What
+    sits between the packets -- a 4 KB prefix and a few bytes of alignment
+    padding after most of them -- is carried across untouched.
+
+    Recompressing changes the packet's length too, so the size it declares
+    at 0x4A has to move with it; otherwise the container reads the wrong
     extent back and the checksum lands in the wrong place."""
-    for sub in packets:
+    out = bytearray(data[:base + packets[0].offset])
+    for k, sub in enumerate(packets):
         sub.fix_checksums()
-        data[base + sub.offset:base + sub.offset + sub.size] = sub.raw
-    out = bytearray(repack(pkt, bytes(data)))
-    struct.pack_into('>H', out, container.OFF_PACKET_SIZE, len(out))
-    return bytes(out)
+        out += sub.raw
+        was = base + sub.offset + len(sub._orig)
+        nxt = (base + packets[k + 1].offset) if k + 1 < len(packets) else len(data)
+        out += data[was:nxt]          # alignment padding, or the tail
+    blob = bytearray(repack(pkt, bytes(out)))
+    struct.pack_into('>H', blob, container.OFF_PACKET_SIZE, len(blob))
+    return bytes(blob)
 
 
 def write_item(data, item, model):

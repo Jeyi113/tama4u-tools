@@ -120,7 +120,15 @@ SECTION_KIND = {1: 'gh', 2: 'ac', 3: 'fk', 4: 'as', 6: 'mail', 7: 'bg'}
 
 
 def effective_kind(pkt):
-    """kind from the ASCII id, falling back to the section byte (iD)."""
+    """kind from the ASCII id, falling back to the section byte (iD).
+
+    Not for a program packet: 0x4F is part of its destination there, not a
+    shop section, so reading it turns a game into an accessory -- which is
+    what put a body-composite strip and a wear-coordinate grid on screen
+    for VDP minigames (their destination 94 02 5b 01 has 0x02 at 0x4F, and
+    0x02 is the accessory section).""" 
+    if is_program(pkt):
+        return 'gm'
     return pkt.kind if pkt.kind != '?' else SECTION_KIND.get(pkt.section, '?')
 
 

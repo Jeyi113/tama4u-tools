@@ -64,6 +64,7 @@
   #toast.show{opacity:1}
   .pksel{margin-bottom:0}
   #pkList{display:flex;flex-direction:column;gap:3px}
+  #swapRow.over{border-color:var(--accent);background:#fff4ee}
   .pkrow{display:flex;gap:6px;align-items:baseline;text-align:left;width:100%;
     border:1px solid var(--line);background:#fdfcfa;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit}
   .pkrow:hover{border-color:#c8c0b2}
@@ -105,7 +106,7 @@
         <div id="friendBox"><label>친밀도</label><input id="fFriend" type="number" min="0" max="255"></div>
       </div>
       <div id="destBox">
-        <label>행선지 (destination)</label>
+        <label id="destLabel">행선지 (destination)</label>
         <select id="fDest">
           <option value="81010201">레스토랑 · 식사</option>
           <option value="81010d02">레스토랑 · 간식</option>
@@ -120,9 +121,9 @@
         0x04xx(1024~)=장난감 상점 · 0x06xx(1536~)=쿠폰→보관함 스페셜 · 0x07xx(1792~)=장식.<br>
         가격 0 이면 비매품으로 취급.</div>
       </div>
-      <div style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+      <div id="swapRow" style="margin-top:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px;border:1px dashed var(--line);border-radius:6px">
         <button class="btn" id="swapBtn">이 패킷을 .jpg로 교체</button>
-        <span class="hint" id="swapNote" style="margin:0">다른 아이템 파일의 내용으로 통째로 바꿉니다</span>
+        <span class="hint" id="swapNote" style="margin:0">다른 아이템 파일의 내용으로 통째로 바꿉니다 — 여기로 끌어놓아도 됩니다</span>
       </div>
       <input type="file" id="swapInput" accept=".jpg,.jpeg" hidden>
       <div class="hint" id="wardrobeNote" hidden style="color:#6b8f5e">
@@ -988,7 +989,13 @@ function textGaps(spans, size, start = 0x60) {
   return out;
 }
 
-const effectiveKind = p => (p.kind !== '?' ? p.kind : (SECTION_KIND[p.section] || '?'));
+// Not for a program packet: 0x4F is part of its destination there, not a
+// shop section, so reading it turns a game into an accessory -- which put a
+// body-composite strip and a wear-coordinate grid on screen for VDP
+// minigames (94 02 5b 01 has 0x02 at 0x4F, and 0x02 is the accessory
+// section).
+const effectiveKind = p =>
+  isProgram(p) ? 'gm' : (p.kind !== '?' ? p.kind : (SECTION_KIND[p.section] ?? '?'));
 
 function accBlockLen(p) {
   const o = p.layout.bank;
@@ -1415,12 +1422,34 @@ function vdpSubPackets(p) {
 
 // Recompressing changes the packet's length, so the size it declares at
 // 0x4A has to move with it.
+// A downloaded item, made fit to sit inside a bundle: the destination,
+// price, stats, likes, name and sprites come across; the identity fields
+// (download name, ANSI id, declared file size) keep the slot's, because a
+// content is already installed and nothing routes it by name.
+function vdpFitContent(old, src) {
+  const out = new Packet(src.raw, 0);
+  out.raw.set(old.raw.slice(OFF_UNICODE_NAME, OFF_FILE_SIZE + 2), OFF_UNICODE_NAME);
+  out.raw.set(old.raw.slice(OFF_ANSI_ID, OFF_PACKET_SIZE), OFF_ANSI_ID);
+  out.offset = old.offset;
+  out._orig = old._orig.slice();
+  return out;
+}
+
+// The payload is reassembled rather than patched in place, because swapping
+// a content for a different download changes its length.  The 4 KB prefix
+// and the alignment padding between packets carry across untouched.
 function vdpWriteSubs(p, data, base, packets) {
-  const buf = new Uint8Array(data);
-  for (const sub of packets) {
+  const parts = [data.slice(0, base + packets[0].offset)];
+  packets.forEach((sub, k) => {
     sub.fixChecksums();
-    buf.set(sub.raw, base + sub.offset);
-  }
+    parts.push(sub.raw);
+    const was = base + sub.offset + sub._orig.length;
+    const nxt = k + 1 < packets.length ? base + packets[k + 1].offset : data.length;
+    parts.push(data.slice(was, nxt));
+  });
+  let n = 0; for (const q of parts) n += q.length;
+  const buf = new Uint8Array(n);
+  let at = 0; for (const q of parts) { buf.set(q, at); at += q.length; }
   const out = vdpRepack(p, buf);
   putU16(out, OFF_PACKET_SIZE, out.length);
   return out;
@@ -1677,6 +1706,8 @@ function convert(p, target, serial = null) {
 // unchanged; web/selftest.js diffs the two implementations file by file.
 
 
+const hexDest = p => Array.from(p.raw.slice(78, 82))
+  .map(x => x.toString(16).padStart(2, '0')).join('');
 const findPacket = (packets, path) => path.slice(1).reduce((p, i) => p.children[i], packets[path[0]]);
 
 // A VDP's contents are whole packets inside its packed stream, so they are
@@ -1728,7 +1759,9 @@ function describe(data, opts = {}) {
         .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: path.includes('vdp')
         ? vdpContentLabel(pkt, getDestination(pkt)) : getDestination(pkt),
-      dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1] })),
+      // the mask travels with the code so the UI can show iD's free
+      // per-item index byte as ** instead of a misleading 00
+      dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1], mask: e[2] })),
       is_item: !isChar && !isProgram(pkt)
         && (BANK_OFFSETS[effectiveKind(pkt)] !== undefined || model !== '4U'),
     };
@@ -1872,6 +1905,7 @@ function describe(data, opts = {}) {
                .replace(/[　 ]+$/, ''),
         label: vdpContentLabel(sub, getDestination(sub)),
         model: sub.model, size: sub.size, serial: sub.serial,
+        dest: hexDest(sub),
         price: getPrice(sub),
         sprites: scanLoose(sub.raw, 0x40).length,
       }));
@@ -1897,7 +1931,8 @@ function replacePacket(packets, path, newRaw) {
 
 function applyEdits(data, edits, newJpeg = null) {
   let { jpeg, packets, trailing } = parseFile(data);
-  const swaps = edits.filter(e => e.replace_bytes || e.convert);
+  const swaps = edits.filter(e => (e.replace_bytes || e.convert)
+                                 && !e.path.includes('vdp'));
   if (swaps.length) {
     const before = packets.reduce((a, p) => a + p.size, 0);
     for (const e of swaps) {
@@ -1911,7 +1946,7 @@ function applyEdits(data, edits, newJpeg = null) {
     }
     const delta = packets.reduce((a, p) => a + p.size, 0) - before;
     for (const p of packets) p.shiftDeclaredSize(delta);
-    edits = edits.filter(e => !(e.replace_bytes || e.convert));
+    edits = edits.filter(e => !swaps.includes(e));
   }
   if (newJpeg) {
     const delta = newJpeg.length - jpeg.length;
@@ -1973,7 +2008,16 @@ function applyEdits(data, edits, newJpeg = null) {
     const got = vdpSubPackets(pkt);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
     const [data, base, subs] = got;
-    for (const [idx, edit] of jobs) applyOne(subs[idx], edit);
+    for (const [idx, edit] of jobs) {
+      if (edit.replace_bytes) {
+        // swap one content for a whole downloaded item; the payload is
+        // reassembled around it, so the sizes need not match
+        const { packets: srcpkts } = parseFile(edit.replace_bytes);
+        subs[idx] = vdpFitContent(subs[idx], srcpkts[0]);
+        continue;
+      }
+      applyOne(subs[idx], edit);
+    }
     const before = pkt.size;
     pkt.raw = vdpWriteSubs(pkt, data, base, subs);
     for (const q of packets) q.shiftDeclaredSize(pkt.size - before);
@@ -2056,6 +2100,7 @@ async function load(f){
           ? p.dest_label : p.kind+' · 프로그램/정의'));
     const n=(p.banks||[]).reduce((a,b)=>a+b.frames.length,0);
     const bits=[tag];
+    if(p.dest)bits.push('0x'+p.dest.toUpperCase());
     if(n)bits.push(`스프라이트 ${n}`);
     if(p.texts&&p.texts.length)bits.push(`대사 ${p.texts.length}`);
     const b=document.createElement('button');
@@ -2112,6 +2157,8 @@ function selectPacket(path){
   gate('hungerBox', on('hunger'), '음식 전용');
   gate('friendBox', on('friendship'), pk.model==='iD'&&pk.kind==='as'?'iD 장난감 미사용':'해당 없음');
   gate('destBox', on('dest'));
+  $('destLabel').firstChild.textContent=
+    `행선지 (destination) · 0x${(pk.dest||'').toUpperCase()}`;
   gate('animBox', on('anim'), '장난감 전용');
   gate('statCard', on('stats'), pk.model==='iD'||pk.model==='iDL'?'이 기종에 없음':'해당 없음');
   gate('likesCard', on('likes'), '해당 없음');
@@ -2124,9 +2171,19 @@ function selectPacket(path){
   $('nameLabel').textContent=`이름 (기기 표시, 최대 ${pk.name_slots||9}자)`;
   $('fName').maxLength=pk.name_slots||9;
   $('wardrobeNote').hidden=!pk.is_wardrobe;
+  $('swapNote').textContent=(pk.path||[]).includes('vdp')
+    ? 'VDP 내용물을 다른 아이템 파일로 통째로 바꿉니다 — 여기로 끌어놓아도 됩니다'
+    : '다른 아이템 파일의 내용으로 통째로 바꿉니다 — 여기로 끌어놓아도 됩니다';
   // destination list is per model (iD keeps a per-item index byte)
   const opts=pk.dest_options||[];
-  $('fDest').innerHTML=opts.map(o=>`<option value="${o.code}">${o.label}</option>`).join('');
+  // the same label sits on a different code per model (iD's 레스토랑 · 식사 is
+  // 01010001 where every later model uses 81010201), so the code is part of
+  // the choice, not decoration.  ** marks the byte iD keeps for its per-item
+  // index, which a destination change must leave alone.
+  const codeText=(code,mask)=>(code.match(/../g)||[])
+    .map((b,i)=>((mask||'ffffffff').slice(i*2,i*2+2)==='00'?'**':b.toUpperCase())).join(' ');
+  $('fDest').innerHTML=opts.map(o=>
+    `<option value="${o.code}">${o.label} — ${codeText(o.code,o.mask)}</option>`).join('');
   // iD files games and outings under one code and splits them at 0x64,
   // so the label picks the entry, not the code
   const destOpt=opts.find(o=>o.label===pk.dest_label);
@@ -2394,7 +2451,7 @@ function renderVdp(){
   $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`;
   $('vdpRows').innerHTML=rows.map(r=>`<tr class="pick" data-i="${r.index}">`
     +`<td class="nm">${r.name||'<span class="vdp-guess">(이름 없음)</span>'}</td>`
-    +`<td>${r.label}</td>`
+    +`<td>${r.label}<span class="ad" style="margin-left:6px">0x${(r.dest||'').toUpperCase()}</span></td>`
     +`<td class="ad">${r.price?r.price.toLocaleString()+'G':''}</td>`
     +`<td class="ad">${r.sprites?`스프라이트 ${r.sprites}`:''}</td>`
     +`<td class="ad">${r.model} · ${r.size.toLocaleString()}B</td></tr>`).join('');
@@ -3055,14 +3112,26 @@ function renderCharStats(){
 
 // ---- packet swap: drop another .jpg's packet into this slot ----
 $('swapBtn').onclick=()=>$('swapInput').click();
-$('swapInput').onchange=async e=>{
-  const file=e.target.files[0]; e.target.value=''; if(!file||!pk)return;
+['dragover','dragleave','drop'].forEach(ev=>$('swapRow').addEventListener(ev,e=>{
+  e.preventDefault(); e.stopPropagation();
+  $('swapRow').classList.toggle('over',ev==='dragover');
+  if(ev==='drop'&&e.dataTransfer.files[0])swapWith(e.dataTransfer.files[0]);
+}));
+$('swapInput').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)swapWith(f)};
+async function swapWith(file){
+  if(!pk)return;
   const buf=new Uint8Array(await file.arrayBuffer());
   const info=await apiParse(buf);
   if(info.error){toast('교체 실패: '+info.error);return}
   const src=info.packets[0];
   if(src.model!==pk.model&&!confirm(
       `기종이 다릅니다 (${src.model} → ${pk.model}). 그래도 교체할까요?`))return;
+  // the destination is what files an item on the device, so swapping across
+  // categories moves it to a different shelf -- worth saying out loud
+  if(src.dest!==pk.dest&&!confirm(
+      `카테고리가 다릅니다.\n\n  지금: ${pk.dest_label} (0x${(pk.dest||'').toUpperCase()})`
+      +`\n  교체: ${src.dest_label} (0x${(src.dest||'').toUpperCase()})\n\n`
+      +`교체하면 이 자리는 "${src.dest_label}" 가 됩니다. 진행할까요?`))return;
   let blob;
   try { blob=new Blob([await apiBuild({file_b64:fileB64,
     edits:[{path:pk.path, replace_b64:arrayToB64(buf)}]})]); }
@@ -3070,7 +3139,7 @@ $('swapInput').onchange=async e=>{
   const nb=new Uint8Array(await blob.arrayBuffer());
   await load(new File([nb],$('fname').textContent||'custom.jpg'));
   toast(`"${src.name||src.ansi_id}" 로 교체됨 — 저장하면 반영됩니다`);
-};
+}
 
 // the top-level packet's download name is the file's identity: the display
 // part of "DL_T4UA_<name>.jpg", falling back to its internal item name

@@ -100,7 +100,9 @@ def describe(data):
             'dest': bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex(),
             'dest_label': (vdp.content_label(pkt, items.get_destination(pkt))
                            if 'vdp' in path else items.get_destination(pkt)),
-            'dest_options': [{'label': e[0], 'code': e[1]}
+            # the mask travels with the code so the UI can show iD's free
+            # per-item index byte as ** instead of a misleading 00
+            'dest_options': [{'label': e[0], 'code': e[1], 'mask': e[2]}
                              for e in destinations.options(pkt.model)],
             'is_item': (not character.is_character(pkt)
                         and not items.is_program(pkt)
@@ -293,6 +295,7 @@ def describe(data):
                                         ).rstrip('\u3000'),
                  'label': vdp.content_label(sub, items.get_destination(sub)),
                  'model': sub.model, 'size': sub.size, 'serial': sub.serial,
+                 'dest': bytes(sub.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex(),
                  'price': items.get_price(sub),
                  'sprites': len(sprites.scan_loose(sub.raw, lo=0x40))}
                 for k, sub in enumerate(got[2])]
@@ -387,7 +390,9 @@ def _apply_fields(pkt, edit):
 def apply_edits(data, edits, new_jpeg=None):
     jpeg, packets, trailing = container.parse_file(data)
     # packet swaps first: they rebuild Packet objects the later edits use
-    swaps = [e for e in edits if e.get('replace_b64') or e.get('convert')]
+    swaps = [e for e in edits
+             if (e.get('replace_b64') or e.get('convert'))
+             and 'vdp' not in e['path']]
     if swaps:
         before = sum(p.size for p in packets)
         for e in swaps:
@@ -402,8 +407,7 @@ def apply_edits(data, edits, new_jpeg=None):
         delta = sum(p.size for p in packets) - before
         for p in packets:
             p.shift_declared_size(delta)
-        edits = [e for e in edits
-                 if not (e.get('replace_b64') or e.get('convert'))]
+        edits = [e for e in edits if e not in swaps]
     if new_jpeg is not None and new_jpeg != jpeg:
         delta = len(new_jpeg) - len(jpeg)
         for pkt in packets:
@@ -430,6 +434,13 @@ def apply_edits(data, edits, new_jpeg=None):
             raise ValueError('이 VDP는 아직 압축을 풀 수 없습니다')
         payload, base, subs = got
         for idx, edit in jobs:
+            if edit.get('replace_b64'):
+                # swap one content for a whole downloaded item; the payload
+                # is reassembled around it, so the sizes need not match
+                src = base64.b64decode(edit['replace_b64'])
+                _, srcpkts, _ = container.parse_file(src)
+                subs[idx] = vdp.fit_content(subs[idx], srcpkts[0])
+                continue
             _apply_fields(subs[idx], edit)
         before = pkt.size
         pkt.raw[:] = bytearray(vdp.write_subs(pkt, payload, base, subs))

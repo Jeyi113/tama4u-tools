@@ -8,6 +8,8 @@ import {
 } from './core.js';
 import * as F from './format.js';
 
+const hexDest = p => Array.from(p.raw.slice(78, 82))
+  .map(x => x.toString(16).padStart(2, '0')).join('');
 const findPacket = (packets, path) => path.slice(1).reduce((p, i) => p.children[i], packets[path[0]]);
 
 // A VDP's contents are whole packets inside its packed stream, so they are
@@ -59,7 +61,9 @@ export function describe(data, opts = {}) {
         .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: path.includes('vdp')
         ? F.vdpContentLabel(pkt, F.getDestination(pkt)) : F.getDestination(pkt),
-      dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1] })),
+      // the mask travels with the code so the UI can show iD's free
+      // per-item index byte as ** instead of a misleading 00
+      dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1], mask: e[2] })),
       is_item: !isChar && !F.isProgram(pkt)
         && (F.BANK_OFFSETS[F.effectiveKind(pkt)] !== undefined || model !== '4U'),
     };
@@ -203,6 +207,7 @@ export function describe(data, opts = {}) {
                .replace(/[　 ]+$/, ''),
         label: F.vdpContentLabel(sub, F.getDestination(sub)),
         model: sub.model, size: sub.size, serial: sub.serial,
+        dest: hexDest(sub),
         price: F.getPrice(sub),
         sprites: scanLoose(sub.raw, 0x40).length,
       }));
@@ -228,7 +233,8 @@ function replacePacket(packets, path, newRaw) {
 
 export function applyEdits(data, edits, newJpeg = null) {
   let { jpeg, packets, trailing } = parseFile(data);
-  const swaps = edits.filter(e => e.replace_bytes || e.convert);
+  const swaps = edits.filter(e => (e.replace_bytes || e.convert)
+                                 && !e.path.includes('vdp'));
   if (swaps.length) {
     const before = packets.reduce((a, p) => a + p.size, 0);
     for (const e of swaps) {
@@ -242,7 +248,7 @@ export function applyEdits(data, edits, newJpeg = null) {
     }
     const delta = packets.reduce((a, p) => a + p.size, 0) - before;
     for (const p of packets) p.shiftDeclaredSize(delta);
-    edits = edits.filter(e => !(e.replace_bytes || e.convert));
+    edits = edits.filter(e => !swaps.includes(e));
   }
   if (newJpeg) {
     const delta = newJpeg.length - jpeg.length;
@@ -304,7 +310,16 @@ export function applyEdits(data, edits, newJpeg = null) {
     const got = F.vdpSubPackets(pkt);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
     const [data, base, subs] = got;
-    for (const [idx, edit] of jobs) applyOne(subs[idx], edit);
+    for (const [idx, edit] of jobs) {
+      if (edit.replace_bytes) {
+        // swap one content for a whole downloaded item; the payload is
+        // reassembled around it, so the sizes need not match
+        const { packets: srcpkts } = parseFile(edit.replace_bytes);
+        subs[idx] = F.vdpFitContent(subs[idx], srcpkts[0]);
+        continue;
+      }
+      applyOne(subs[idx], edit);
+    }
     const before = pkt.size;
     pkt.raw = F.vdpWriteSubs(pkt, data, base, subs);
     for (const q of packets) q.shiftDeclaredSize(pkt.size - before);
