@@ -10,10 +10,40 @@ Record:
     u16 BE 0x01FF
     n_colors x u16 BE palette, BGR565 (palette[0] = transparent)
     width*height/2 bytes of 4bpp pixels, LOW nibble = left pixel
+
+Records with more than 16 colours store one byte per pixel instead.  The
+games use them for their backgrounds and item strips -- Choco Catch keeps
+its 16 falling hearts and chocolates as one 16x16 x16 record of 42
+colours -- and reading those as 4bpp both halves the pixel data and
+rejects the record outright on the palette-size check.
 """
 import struct
 
 BANK_OFFSET = 0x200
+PAL4_MAX = 16           # <=16 colours -> 4bpp, more -> 8bpp
+
+
+def bpp_for(ncol):
+    return 4 if ncol <= PAL4_MAX else 8
+
+
+def pixel_bytes(w, h, nf, ncol):
+    return nf * (w * h if ncol > PAL4_MAX else (w * h + 1) // 2)
+
+
+def unpack_pixels(buf, ncol):
+    if ncol > PAL4_MAX:
+        return list(buf)
+    px = []
+    for byte in buf:
+        px += [byte & 0xF, byte >> 4]
+    return px
+
+
+def pack_pixels(px, ncol):
+    if ncol > PAL4_MAX:
+        return bytes(px)
+    return bytes((px[i + 1] << 4 | px[i]) for i in range(0, len(px) - 1, 2))
 
 
 def bgr565_to_rgb(v):
@@ -37,8 +67,10 @@ class Frame:
         body = struct.pack('>BBBBH', self.width, self.height,
                            len(self.palette), 0, 0x01FF)
         body += b''.join(struct.pack('>H', rgb_to_bgr565(c)) for c in self.palette)
-        px = self.pixels
-        body += bytes((px[i + 1] << 4 | px[i]) for i in range(0, len(px), 2))
+        px = list(self.pixels)
+        if len(px) % 2:
+            px.append(0)
+        body += pack_pixels(px, len(self.palette))
         if len(body) > self.slot_size:
             raise ValueError(f'frame data {len(body)} exceeds slot {self.slot_size}'
                              ' (reduce palette size)')
@@ -58,9 +90,8 @@ def parse_bank(raw, offset=BANK_OFFSET):
         palette = [bgr565_to_rgb(struct.unpack_from('>H', raw, pal_off + 2 * i)[0])
                    for i in range(ncol)]
         px_off = pal_off + 2 * ncol
-        pixels = []
-        for byte in raw[px_off:px_off + (w * h + 1) // 2]:
-            pixels += [byte & 0xF, byte >> 4]
+        pixels = unpack_pixels(
+            raw[px_off:px_off + pixel_bytes(w, h, 1, ncol)], ncol)
         frames.append(Frame(slot, w, h, palette, pixels[:w * h]))
         o += 2 + slot
     return frames, o  # o = end of bank
@@ -106,15 +137,23 @@ def scan_loose(raw, lo=0x200, hi=None):
             continue
         start = o - 4
         w, h, ncol, z = raw[start], raw[start + 1], raw[start + 2], raw[start + 3]
-        if z == 0 and 2 <= w <= 128 and 2 <= h <= 128 and 1 <= ncol <= 16 \
-                and start + 6 + 2 * ncol < hi:
-            sigs.append((start, w, h, ncol, raw[o]))
+        if z != 0 or not (2 <= w <= 128 and 2 <= h <= 128) \
+                or not 1 <= ncol <= 255 or start + 6 + 2 * ncol >= hi:
+            continue
+        if ncol > PAL4_MAX:
+            # 8bpp widens the signature a lot, so only take the record when
+            # every pixel actually indexes into the palette
+            px = start + 6 + 2 * ncol
+            end = px + pixel_bytes(w, h, raw[o], ncol)
+            if end > hi or max(raw[px:end], default=255) >= ncol:
+                continue
+        sigs.append((start, w, h, ncol, raw[o]))
     out = []
     for i, (start, w, h, ncol, nf) in enumerate(sigs):
         if out and start < out[-1][0] + 6 + 2 * out[-1][3]:
             continue  # inside previous record's header/palette: false hit
         px_start = start + 6 + 2 * ncol
-        px_need = nf * ((w * h + 1) // 2)
+        px_need = pixel_bytes(w, h, nf, ncol)
         px_end = min(px_start + px_need,
                      sigs[i + 1][0] if i + 1 < len(sigs) else hi)
         out.append((start, w, h, ncol, nf, max(0, px_end - px_start)))
@@ -127,9 +166,7 @@ def read_loose(raw, rec):
     pal_off = start + 6
     palette = [bgr565_to_rgb(struct.unpack_from('>H', raw, pal_off + 2 * i)[0])
                for i in range(ncol)]
-    px = []
-    for byte in raw[pal_off + 2 * ncol: pal_off + 2 * ncol + avail]:
-        px += [byte & 0xF, byte >> 4]
+    px = unpack_pixels(raw[pal_off + 2 * ncol: pal_off + 2 * ncol + avail], ncol)
     px += [0] * (nf * w * h - len(px))
     per = w * h
     return [Frame(0, w, h, palette, px[k * per:(k + 1) * per])
@@ -145,8 +182,7 @@ def write_loose(packet_raw, rec, palette, pixel_lists):
     for i, c in enumerate(palette):
         struct.pack_into('>H', packet_raw, pal_off + 2 * i, rgb_to_bgr565(c))
     px = [v for pixels in pixel_lists for v in pixels]
-    packed = bytes((px[i + 1] << 4 | px[i])
-                   for i in range(0, len(px) - 1, 2))[:avail]
+    packed = pack_pixels(px, ncol)[:avail]
     packet_raw[pal_off + 2 * ncol: pal_off + 2 * ncol + len(packed)] = packed
 
 
@@ -156,20 +192,28 @@ def write_bank(packet_raw, frames, offset=BANK_OFFSET):
     packet_raw[offset:offset + len(blob)] = blob
 
 
-# --- BMP import/export (4bpp indexed, matches Tama Image Editor) -----
+# --- BMP import/export (indexed; 4bpp like Tama Image Editor, 8bpp for
+# the >16-colour records the games use) ------------------------------
 def frame_to_bmp(frame):
     w, h = frame.width, frame.height
-    rowsz = ((w * 4 + 31) // 32) * 4
-    pal = frame.palette + [(0, 0, 0)] * (16 - len(frame.palette))
-    header = struct.pack('<2sIHHI', b'BM', 54 + 64 + rowsz * h, 0, 0, 54 + 64)
-    info = struct.pack('<IiiHHIIiiII', 40, w, h, 1, 4, 0, rowsz * h, 2835, 2835, 16, 0)
+    ncol = max(len(frame.palette), 1)
+    bpp = bpp_for(ncol)
+    slots = 16 if bpp == 4 else 256
+    rowsz = ((w * bpp + 31) // 32) * 4
+    pal = frame.palette + [(0, 0, 0)] * (slots - len(frame.palette))
+    paloff = 54 + 4 * slots
+    header = struct.pack('<2sIHHI', b'BM', paloff + rowsz * h, 0, 0, paloff)
+    info = struct.pack('<IiiHHIIiiII', 40, w, h, 1, bpp, 0, rowsz * h,
+                       2835, 2835, slots, 0)
     paldata = b''.join(bytes((b, g, r, 0)) for r, g, b in pal)
     rows = []
     for y in range(h - 1, -1, -1):
         row = bytearray(rowsz)
         line = frame.pixels[y * w:(y + 1) * w]
         for x, v in enumerate(line):
-            if x % 2 == 0:
+            if bpp == 8:
+                row[x] = v
+            elif x % 2 == 0:
                 row[x // 2] |= v << 4
             else:
                 row[x // 2] |= v
@@ -182,16 +226,19 @@ def bmp_to_frame(data, slot_size):
     w = struct.unpack_from('<i', data, 18)[0]
     h = struct.unpack_from('<i', data, 22)[0]
     bpp = struct.unpack_from('<H', data, 28)[0]
-    if bpp != 4:
-        raise ValueError('expected 4bpp indexed BMP')
-    ncol = struct.unpack_from('<I', data, 46)[0] or 16
+    if bpp not in (4, 8):
+        raise ValueError('expected a 4bpp or 8bpp indexed BMP')
+    ncol = struct.unpack_from('<I', data, 46)[0] or (1 << bpp)
     palette = [tuple(data[54 + 4 * i:54 + 4 * i + 3][::-1]) for i in range(ncol)]
     rowsz = ((w * bpp + 31) // 32) * 4
     pixels = []
     for y in range(h - 1, -1, -1):
         row = data[off + y * rowsz: off + (y + 1) * rowsz]
-        pixels += [(row[x // 2] >> 4) if x % 2 == 0 else (row[x // 2] & 0xF)
-                   for x in range(w)]
+        if bpp == 8:
+            pixels += list(row[:w])
+        else:
+            pixels += [(row[x // 2] >> 4) if x % 2 == 0 else (row[x // 2] & 0xF)
+                       for x in range(w)]
     # drop trailing duplicate colors that are all black padding
     used = max(pixels) + 1
     return Frame(slot_size, w, h, palette[:max(used, 1)], pixels)

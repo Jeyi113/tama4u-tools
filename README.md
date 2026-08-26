@@ -13,7 +13,7 @@ Mr.Blinky의 Tama Image Editor / Tama 4U character data editor와 교차 검증�
 python3 -m tama4u charset <download-pack>      # 내부 문자코드 테이블 생성 (최초 1회)
 python3 -m tama4u info <file.jpg>              # 패킷 구조/스탯/스프라이트 요약
 python3 -m tama4u verify <dir|file>            # 체크섬 전수 검증
-python3 -m tama4u export <file.jpg> -o out/    # 스프라이트 → 4bpp BMP
+python3 -m tama4u export <file.jpg> -o out/    # 스프라이트 → 인덱스 BMP
 ```
 
 ## 실행
@@ -388,8 +388,16 @@ Hoshigalutchi/Hoshigirltchi, Chouchoutchi/Chochotchi, Harputchi/Harptchi).
 ## 스프라이트 뱅크 (전 타입 공통 코덱)
 
 `u16 BE 프레임수` + 레코드 반복:
-`u16 BE 슬롯크기 | w | h | 색수 | 00 | 01 FF | BGR565(BE) 팔레트 | 4bpp 픽셀`
-- low nibble = 왼쪽 픽셀
+`u16 BE 슬롯크기 | w | h | 색수 | 00 | 01 FF | BGR565(BE) 팔레트 | 픽셀`
+- **색수 ≤ 16이면 4bpp**(low nibble = 왼쪽 픽셀), **17색 이상이면 8bpp**
+  (1픽셀 = 1바이트). 게임이 배경과 아이템 스트립을 이 형식으로 쓴다 —
+  초코캐치는 떨어지는 하트·초콜릿 16장을 16×16 · **42색** 한 레코드에
+  담는다. 4bpp로 읽으면 픽셀 길이가 절반이 되고 팔레트 크기 검사에서
+  레코드 자체가 걸러진다.
+- 8bpp는 시그니처가 넓어 오탐이 늘기 때문에, **모든 픽셀 값이 색수보다
+  작을 때만** 레코드로 인정한다.
+- 4팩 전체에서 8bpp 레코드는 16개(파일 15개, 프레임 76장) — iD 5, iD L 2,
+  P's 9, 4U 0.
 - **투명 판정은 팔레트[0]만 본다**: 순수 초록(G=255, R·B<128)이면 투명키,
   그 외의 색이면 실제 그림이므로 불투명. 크기·kind·기종과 무관하다.
   (iD/iD L/P's/4U 4팩 약 24,000 프레임 검증: 소형 22,847개 중 22,843개가

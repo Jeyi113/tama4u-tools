@@ -289,6 +289,25 @@ export const bgr565ToRgb = v => {
 export const rgbToBgr565 = ([r, g, b]) =>
   ((b >> 3) << 11) | ((g >> 2) << 5) | (r >> 3);
 
+// Records with more than 16 colours store one byte per pixel, not a nibble.
+// The games keep their backgrounds and item strips that way.
+export const PAL4_MAX = 16;
+export const bppFor = ncol => (ncol <= PAL4_MAX ? 4 : 8);
+export const pixelBytes = (w, h, nf, ncol) =>
+  nf * (ncol > PAL4_MAX ? w * h : (w * h + 1) >> 1);
+export function unpackPixels(buf, ncol) {
+  if (ncol > PAL4_MAX) return Array.from(buf);
+  const px = [];
+  for (const b of buf) px.push(b & 0xf, b >> 4);
+  return px;
+}
+export function packPixels(px, ncol) {
+  if (ncol > PAL4_MAX) return px.slice();
+  const out = [];
+  for (let i = 0; i + 1 < px.length; i += 2) out.push((px[i + 1] << 4) | px[i]);
+  return out;
+}
+
 export function parseBank(raw, offset) {
   // Python's struct.unpack_from raises past the end; JS would quietly read
   // NaN, so every read is bounds-checked to keep the two in step.
@@ -307,15 +326,12 @@ export function parseBank(raw, offset) {
     const palette = [];
     for (let i = 0; i < ncol; i++) palette.push(bgr565ToRgb(u16(raw, palOff + 2 * i)));
     const pxOff = palOff + 2 * ncol;
-    const need = (w * h + 1) >> 1;
+    const need = pixelBytes(w, h, 1, ncol);
     if (pxOff + need > raw.length) throw new Error('frame runs past packet');
-    const pixels = new Uint8Array(w * h);
-    for (let i = 0; i < need; i++) {
-      const byte = raw[pxOff + i];
-      if (2 * i < pixels.length) pixels[2 * i] = byte & 0xf;
-      if (2 * i + 1 < pixels.length) pixels[2 * i + 1] = byte >> 4;
-    }
-    frames.push({ slot_size: slot, w, h, palette, pixels: Array.from(pixels) });
+    const pixels = unpackPixels(raw.subarray(pxOff, pxOff + need), ncol)
+      .slice(0, w * h);
+    while (pixels.length < w * h) pixels.push(0);
+    frames.push({ slot_size: slot, w, h, palette, pixels });
     o += 2 + slot;
   }
   return { frames, end: o };
@@ -327,8 +343,9 @@ export function writeBank(raw, frames, offset) {
   for (const f of frames) {
     const body = [f.w, f.h, f.palette.length, 0, 0x01, 0xff];
     for (const c of f.palette) { const v = rgbToBgr565(c); body.push(v >> 8, v & 0xff); }
-    for (let i = 0; i < f.pixels.length; i += 2)
-      body.push(((f.pixels[i + 1] || 0) << 4) | f.pixels[i]);
+    const px = f.pixels.slice();
+    if (px.length % 2) px.push(0);
+    body.push(...packPixels(px, f.palette.length));
     if (body.length > f.slot_size)
       throw new Error(`frame data ${body.length} exceeds slot ${f.slot_size} (reduce palette size)`);
     while (body.length < f.slot_size) body.push(0);
@@ -363,8 +380,19 @@ export function scanLoose(raw, lo = 0x200, hi = null) {
     if (raw[o + 1] !== 0xff || !(raw[o] >= 1 && raw[o] <= 32)) continue;
     const start = o - 4;
     const w = raw[start], h = raw[start + 1], ncol = raw[start + 2], z = raw[start + 3];
-    if (z === 0 && w >= 2 && w <= 128 && h >= 2 && h <= 128 && ncol >= 1 && ncol <= 16
-        && start + 6 + 2 * ncol < hi) sigs.push([start, w, h, ncol, raw[o]]);
+    if (z !== 0 || !(w >= 2 && w <= 128 && h >= 2 && h <= 128)
+        || !(ncol >= 1 && ncol <= 255) || start + 6 + 2 * ncol >= hi) continue;
+    if (ncol > PAL4_MAX) {
+      // 8bpp widens the signature a lot, so only take the record when every
+      // pixel actually indexes into the palette
+      const px = start + 6 + 2 * ncol;
+      const end = px + pixelBytes(w, h, raw[o], ncol);
+      if (end > hi) continue;
+      let bad = false;
+      for (let k = px; k < end; k++) if (raw[k] >= ncol) { bad = true; break; }
+      if (bad) continue;
+    }
+    sigs.push([start, w, h, ncol, raw[o]]);
   }
   const out = [];
   for (let i = 0; i < sigs.length; i++) {
@@ -372,7 +400,7 @@ export function scanLoose(raw, lo = 0x200, hi = null) {
     const last = out[out.length - 1];
     if (last && start < last[0] + 6 + 2 * last[3]) continue;   // inside previous header
     const pxStart = start + 6 + 2 * ncol;
-    const need = nf * ((w * h + 1) >> 1);
+    const need = pixelBytes(w, h, nf, ncol);
     const pxEnd = Math.min(pxStart + need, i + 1 < sigs.length ? sigs[i + 1][0] : hi);
     out.push([start, w, h, ncol, nf, Math.max(0, pxEnd - pxStart)]);
   }
@@ -384,8 +412,8 @@ export function readLoose(raw, rec) {
   const palOff = start + 6;
   const palette = [];
   for (let i = 0; i < ncol; i++) palette.push(bgr565ToRgb(u16(raw, palOff + 2 * i)));
-  const px = [];
-  for (let i = 0; i < avail; i++) { const b = raw[palOff + 2 * ncol + i]; px.push(b & 0xf, b >> 4); }
+  const px = unpackPixels(
+    raw.subarray(palOff + 2 * ncol, palOff + 2 * ncol + avail), ncol);
   while (px.length < nf * w * h) px.push(0);
   const per = w * h;
   const frames = [];
@@ -400,35 +428,38 @@ export function writeLoose(raw, rec, palette, pixelLists) {
   const palOff = start + 6;
   for (let i = 0; i < palette.length; i++) putU16(raw, palOff + 2 * i, rgbToBgr565(palette[i]));
   const px = [].concat(...pixelLists);
-  const packed = [];
-  for (let i = 0; i + 1 < px.length; i += 2) packed.push((px[i + 1] << 4) | px[i]);
-  raw.set(packed.slice(0, avail), palOff + 2 * ncol);
+  raw.set(packPixels(px, ncol).slice(0, avail), palOff + 2 * ncol);
 }
 
-// ---- 4bpp indexed BMP (matches Tama Image Editor) --------------------
+// ---- indexed BMP: 4bpp like Tama Image Editor, 8bpp for >16 colours ---
 export function frameToBmp(f) {
-  const rowsz = (((f.w * 4 + 31) / 32) | 0) * 4;
+  const ncol = Math.max(f.palette.length, 1);
+  const bpp = bppFor(ncol), slots = bpp === 4 ? 16 : 256;
+  const rowsz = (((f.w * bpp + 31) / 32) | 0) * 4;
   const pal = [...f.palette];
-  while (pal.length < 16) pal.push([0, 0, 0]);
-  const size = 54 + 64 + rowsz * f.h;
+  while (pal.length < slots) pal.push([0, 0, 0]);
+  const paloff = 54 + 4 * slots;
+  const size = paloff + rowsz * f.h;
   const out = new Uint8Array(size);
   const dv = new DataView(out.buffer);
   out[0] = 0x42; out[1] = 0x4d;
-  dv.setUint32(2, size, true); dv.setUint32(10, 54 + 64, true);
+  dv.setUint32(2, size, true); dv.setUint32(10, paloff, true);
   dv.setUint32(14, 40, true); dv.setInt32(18, f.w, true); dv.setInt32(22, f.h, true);
-  dv.setUint16(26, 1, true); dv.setUint16(28, 4, true);
+  dv.setUint16(26, 1, true); dv.setUint16(28, bpp, true);
   dv.setUint32(34, rowsz * f.h, true);
-  dv.setUint32(38, 2835, true); dv.setUint32(42, 2835, true); dv.setUint32(46, 16, true);
-  for (let i = 0; i < 16; i++) {
+  dv.setUint32(38, 2835, true); dv.setUint32(42, 2835, true); dv.setUint32(46, slots, true);
+  for (let i = 0; i < slots; i++) {
     const [r, g, b] = pal[i];
     out[54 + 4 * i] = b; out[54 + 4 * i + 1] = g; out[54 + 4 * i + 2] = r;
   }
-  let p = 54 + 64;
+  let p = paloff;
   for (let y = f.h - 1; y >= 0; y--) {
     const row = new Uint8Array(rowsz);
     for (let x = 0; x < f.w; x++) {
       const v = f.pixels[y * f.w + x];
-      if (x % 2 === 0) row[x >> 1] |= v << 4; else row[x >> 1] |= v;
+      if (bpp === 8) row[x] = v;
+      else if (x % 2 === 0) row[x >> 1] |= v << 4;
+      else row[x >> 1] |= v;
     }
     out.set(row, p); p += rowsz;
   }
@@ -440,8 +471,8 @@ export function bmpToFrame(data, slotSize) {
   const off = dv.getUint32(10, true);
   const w = dv.getInt32(18, true), h = dv.getInt32(22, true);
   const bpp = dv.getUint16(28, true);
-  if (bpp !== 4) throw new Error('expected 4bpp indexed BMP');
-  const ncol = dv.getUint32(46, true) || 16;
+  if (bpp !== 4 && bpp !== 8) throw new Error('expected a 4bpp or 8bpp indexed BMP');
+  const ncol = dv.getUint32(46, true) || (1 << bpp);
   const palette = [];
   for (let i = 0; i < ncol; i++)
     palette.push([data[54 + 4 * i + 2], data[54 + 4 * i + 1], data[54 + 4 * i]]);
@@ -449,8 +480,11 @@ export function bmpToFrame(data, slotSize) {
   const pixels = [];
   for (let y = h - 1; y >= 0; y--)
     for (let x = 0; x < w; x++) {
-      const b = data[off + y * rowsz + (x >> 1)];
-      pixels.push(x % 2 === 0 ? b >> 4 : b & 0xf);
+      if (bpp === 8) pixels.push(data[off + y * rowsz + x]);
+      else {
+        const b = data[off + y * rowsz + (x >> 1)];
+        pixels.push(x % 2 === 0 ? b >> 4 : b & 0xf);
+      }
     }
   const used = Math.max(...pixels) + 1;
   return { slot_size: slotSize, w, h, palette: palette.slice(0, Math.max(used, 1)), pixels };
