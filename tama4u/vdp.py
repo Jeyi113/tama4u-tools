@@ -22,19 +22,23 @@ The meals, the snack and the menu-icon set carry no destination anywhere
 in the file, so they are reported by name and serial only rather than
 guessed at.
 
-WHAT IS NOT DECODED: the pixel data.  Sprite record headers and palettes
-are stored literally and read fine (w/h/colour count/01 FF, then a BGR565
-palette whose slot 0 is the usual transparent green), but the pixels that
-follow are packed: a 128x72 background leaves 2265 bytes where a literal
-4bpp image needs 4608.  Reading them as 4bpp -- or through PackBits and
-several run-length variants -- produces noise (vertical coherence 0.17-0.29
-where a real background scores well above 0.7).  So the frames are flagged
-`packed` and not drawn; drawing them is what made a loaded VDP look like
-its sprites were all corrupt.
+The artwork is behind an LZ77 stream that covers everything after the
+loader stub -- the sprite headers that turn up in the raw file are
+coincidences inside it.  `unpack` implements it; the algorithm was read out
+of the loader itself with `tama4u.s1c33` (the routine sits at 0x1E2 in
+vdp-009, and `xld.w %r1,0x20002bc` names where its input starts).
+
+Everything the stream emits is a 16-bit halfword:
+
+    ctrl > 0    one byte follows; emit it as byte:byte, ctrl+1 times
+    ctrl < 0    -ctrl halfwords follow literally
+    ctrl == 0   two bytes A,B follow; A == 0 ends the stream, else copy
+                (A >> 4) + 1 halfwords from (A & 0xF, B) bytes back --
+                a 12-bit negative distance into what has been emitted
 """
 import re
 
-from . import charset, destinations, items, sprites
+from . import charset, destinations, items, s1c33, sprites
 
 VDP_DEST = '94025b02'
 LOADER_PREFIX = 'DecoPierce'
@@ -51,6 +55,89 @@ MIN_NAME = 3
 # item set; their bytecode throws off dozens of nameless hits, so those are
 # only worth showing when there are few enough to be real.
 MAX_UNCONFIRMED = 12
+
+
+# The loader stub sets its input pointer with `xld.w %rN,0x0200xxxx`.  The
+# VDP is loaded at 0x02000000 -- the disassembly of vdp-009 says so
+# outright, comparing the firmware version and then picking one of
+# 0x2000068 / 0x20000a8 / 0x20000c8, which are its three adaptation tables
+# at exactly those file offsets.  So the low half of any such immediate is
+# a file offset, and one of them is where the stream starts.
+LOAD_BASE = 0x02000000
+STUB_END = 0x600            # the loader stub never runs past here
+IMMEDIATE = re.compile(r'^x?ld\.w %r\d+,0x([0-9a-f]+)$')
+# `sll %r10,0x8` then `or %r10,%r4` -- the run branch building byte:byte
+ROUTINE_SIG = bytes((0x8a, 0x8c, 0x4a, 0x36))
+UNPACK_LIMIT = 1 << 20
+
+
+def unpack(raw, start, limit=UNPACK_LIMIT):
+    """Expand the loader's LZ77 stream (see the module docstring)."""
+    out, ip = bytearray(), start
+    while len(out) < limit and ip < len(raw):
+        ctrl = raw[ip]
+        ip += 1
+        ctrl = ctrl - 256 if ctrl > 127 else ctrl
+        if ctrl > 0:
+            if ip >= len(raw):
+                break
+            v = raw[ip]
+            ip += 1
+            out += bytes((v, v)) * (ctrl + 1)
+        elif ctrl < 0:
+            n = 2 * -ctrl
+            if ip + n > len(raw):
+                break
+            out += raw[ip:ip + n]
+            ip += n
+        else:
+            if ip + 1 >= len(raw):
+                break
+            a, b = raw[ip], raw[ip + 1]
+            ip += 2
+            if a == 0:
+                break
+            dist = ((((0xFFFFFFF0 | a) << 8) | b) & 0xFFFFFFFF) - 0x100000000
+            src = len(out) + dist
+            if src < 0:
+                break
+            for _ in range((a >> 4) + 1):
+                out += out[src:src + 2]
+                src += 2
+    return bytes(out)
+
+
+def stream_start(raw):
+    """Where the loader's LZ77 input begins, or None if this is not the
+    loader we decoded.
+
+    Only vdp-009 uses this routine.  The earlier VDPs pack their data with
+    an older variant -- halfword control words instead of bytes -- whose
+    run branch leans on two opcodes the core manual's table does not list
+    (0x23xx, 0x27xx), so it is not decoded and its files are left alone
+    rather than shown as noise.
+    """
+    at = raw.find(ROUTINE_SIG)
+    if at < 0:
+        return None
+    # the pointer is set just before the loop, not at the top of the stub
+    # (the first immediates there are the firmware adaptation tables)
+    best = None
+    for ins in s1c33.disasm(raw, max(0x40, at - 0x80), at):
+        m = IMMEDIATE.match(ins.text)
+        if not m:
+            continue
+        v = int(m.group(1), 16)
+        if LOAD_BASE + 0x40 <= v < LOAD_BASE + len(raw):
+            best = v - LOAD_BASE
+    return best
+
+
+def payload(pkt):
+    """The unpacked body, or None when the packer is not one we read."""
+    raw = bytes(pkt.raw)
+    start = stream_start(raw)
+    return None if start is None else unpack(raw, start)
 
 
 def is_vdp(pkt):
@@ -127,19 +214,20 @@ def contents(pkt):
 def sprite_records(pkt):
     """Sprite headers found in the bundle, with their palettes.
 
-    Every one of them is packed.  `have`/`need` is reported because the
-    shortfall is the clearest evidence (a 128x72 background leaves 2265
-    bytes where 4bpp needs 4608), but the length is not the test: the last
-    record in a file has nothing after it to be truncated by, so its span
-    reaches `need` and it still decodes to noise.  Inside a VDP the pixels
-    are packed, full stop."""
-    raw, out = bytes(pkt.raw), []
-    for rec in sprites.scan_loose(raw, lo=0x40):
+    Read from the unpacked payload, not the file: the records that show up
+    in the raw bytes are coincidences inside the LZ77 stream."""
+    data = payload(pkt)
+    if data is None:
+        return []
+    out = []
+    for rec in sprites.scan_loose(data, lo=0):
         start, w, h, ncol, nf, avail = rec
+        need = sprites.pixel_bytes(w, h, nf, ncol)
+        if avail < need:
+            continue
         out.append({'offset': start, 'w': w, 'h': h, 'colors': ncol,
-                    'frames': nf, 'have': avail,
-                    'need': sprites.pixel_bytes(w, h, nf, ncol),
-                    'packed': True})
+                    'frames': nf, 'need': need,
+                    'frames_data': sprites.read_loose(data, rec)})
     return out
 
 

@@ -190,10 +190,18 @@ export function describe(data, opts = {}) {
                                      frames: b.frames.map(frameOut) }));
     if (F.isVdp(pkt)) {
       info.vdp = F.vdpContents(pkt);
-      info.vdp_sprites = F.vdpSpriteRecords(pkt);
+      const recs = F.vdpSpriteRecords(pkt);
+      info.vdp_sprites = recs.map(({ frames_data, ...r }) => r);
+      if (recs.length) {
+        // the packed stream is what holds the artwork; records sitting in
+        // the raw file are coincidences inside it
+        info.banks = recs.map(r => ({
+          offset: r.offset, loose: null, unpacked: true,
+          frames: r.frames_data.map(f => ({ slot: f.slot_size, w: f.w, h: f.h,
+                                            palette: f.palette, pixels: f.pixels })),
+        }));
+      }
       F.vdpAttributeSprites(info.vdp, info.banks || []);
-      const packed = new Set(info.vdp_sprites.filter(s => s.packed).map(s => s.offset));
-      for (const b of info.banks || []) b.packed = packed.has(b.offset);
     }
     out.packets.push(info);
   }

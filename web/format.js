@@ -2,7 +2,7 @@
 // a port of tama4u/{items,character,charset,convert}.py.
 import {
   u16, putU16, u16le, putU16le, layoutFor, destOptions, destMatch, destApply, destExtra,
-  pixelBytes, scanLoose,
+  pixelBytes, scanLoose, readLoose,
   parseBank, LAYOUTS, COMPAT_BIT, OFF_COMPAT_MASK, SIGNATURES,
   OFF_ANSI_ID, OFF_PACKET_SIZE, OFF_FILE_SIZE, OFF_UNICODE_NAME,
   OFF_TYPE_SIG, OFF_TOKEN, OFF_SERIAL, MAGIC, sum16, Packet,
@@ -410,13 +410,83 @@ export function vdpContents(p) {
   return keep.sort((a, b) => a.offset - b.offset);
 }
 
+// The artwork is behind an LZ77 stream covering everything after the loader
+// stub; the sprite headers visible in the raw file are coincidences inside
+// it.  Algorithm read out of the loader with the S1C33 disassembler -- see
+// tama4u/vdp.py.  Only vdp-009 uses this packer; the earlier ones use an
+// older halfword-control variant that is not decoded, and are left alone.
+const VDP_LOAD_BASE = 0x02000000, VDP_STUB_END = 0x600;
+const VDP_ROUTINE_SIG = [0x8a, 0x8c, 0x4a, 0x36];
+const VDP_UNPACK_LIMIT = 1 << 20;
+
+export function vdpUnpack(raw, start, limit = VDP_UNPACK_LIMIT) {
+  const out = [];
+  let ip = start;
+  while (out.length < limit && ip < raw.length) {
+    let ctrl = raw[ip++];
+    if (ctrl > 127) ctrl -= 256;
+    if (ctrl > 0) {
+      if (ip >= raw.length) break;
+      const v = raw[ip++];
+      for (let k = 0; k <= ctrl; k++) out.push(v, v);
+    } else if (ctrl < 0) {
+      const n = 2 * -ctrl;
+      if (ip + n > raw.length) break;
+      for (let k = 0; k < n; k++) out.push(raw[ip + k]);
+      ip += n;
+    } else {
+      if (ip + 1 >= raw.length) break;
+      const a = raw[ip], b = raw[ip + 1];
+      ip += 2;
+      if (a === 0) break;
+      const dist = ((((0xfffffff0 | a) << 8) | b) >>> 0) - 0x100000000;
+      let src = out.length + dist;
+      if (src < 0) break;
+      for (let k = 0; k <= (a >> 4); k++) { out.push(out[src], out[src + 1]); src += 2; }
+    }
+  }
+  return Uint8Array.from(out);
+}
+
+// The stub sets the input pointer with `ext imm13, ext imm13, ld.w %rN,imm6`
+// -- three halfwords, the first two 0b110xxxxxxxxxxxxx and the last with
+// opcode 0b011011.  Decoding just that shape saves porting the whole
+// disassembler for one immediate.
+export function vdpStreamStart(raw) {
+  let at = -1;
+  for (let i = 0; i + 4 <= raw.length && at < 0; i++)
+    if (VDP_ROUTINE_SIG.every((v, k) => raw[i + k] === v)) at = i;
+  if (at < 0) return null;
+  let best = null;
+  const hw = o => raw[o] | (raw[o + 1] << 8);
+  for (let o = Math.max(0x40, at - 0x80); o + 6 <= at; o += 2) {
+    const a = hw(o), b = hw(o + 2), c = hw(o + 4);
+    if ((a >> 13) !== 0b110 || (b >> 13) !== 0b110) continue;
+    if ((c >> 10) !== 0x1b) continue;                   // ld.w %rd,imm6
+    const v = (((a & 0x1fff) << 19) | ((b & 0x1fff) << 6) | ((c >> 4) & 0x3f)) >>> 0;
+    if (v >= VDP_LOAD_BASE + 0x40 && v < VDP_LOAD_BASE + raw.length)
+      best = v - VDP_LOAD_BASE;
+  }
+  return best;
+}
+
+export function vdpPayload(p) {
+  const start = vdpStreamStart(p.raw);
+  return start === null ? null : vdpUnpack(p.raw, start);
+}
+
 export function vdpSpriteRecords(p) {
-  return scanLoose(p.raw, 0x40).map(([offset, w, h, colors, frames, have]) => {
-    // every VDP record is packed; the shortfall is evidence, not the test
-    // (the last record has nothing after it to truncate its span)
+  const data = vdpPayload(p);
+  if (!data) return [];
+  const out = [];
+  for (const rec of scanLoose(data, 0)) {
+    const [offset, w, h, colors, frames, have] = rec;
     const need = pixelBytes(w, h, frames, colors);
-    return { offset, w, h, colors, frames, have, need, packed: true };
-  });
+    if (have < need) continue;
+    out.push({ offset, w, h, colors, frames, need,
+               frames_data: readLoose(data, rec) });
+  }
+  return out;
 }
 
 export function vdpAttributeSprites(records, banks) {

@@ -187,8 +187,9 @@
         <b>확인</b>은 레코드가 시그니처와 행선지를 그대로 갖고 있는 항목,
         <b>추정</b>은 이름과 시리얼만 남아 행선지를 단정할 수 없는 항목입니다
         (식사·간식과 메뉴 아이콘이 여기 해당 — 기기 표에 직접 심습니다).<br>
-        스프라이트는 <b>헤더와 팔레트만 평문</b>이고 픽셀은 묶여 있습니다.
-        묶인 프레임은 그대로 그리면 노이즈가 나오므로 그리지 않습니다.
+        스프라이트는 파일 안에 LZ77로 묶여 있습니다. 로더의 압축 해제
+        루틴을 디스어셈블해 그대로 구현했으므로, 아래 탭의 그림은
+        <b>풀어낸 결과</b>입니다(주소는 압축 해제 후 기준).
       </div>
     </div>
     <div class="card" id="likesCard">
@@ -1229,13 +1230,83 @@ function vdpContents(p) {
   return keep.sort((a, b) => a.offset - b.offset);
 }
 
+// The artwork is behind an LZ77 stream covering everything after the loader
+// stub; the sprite headers visible in the raw file are coincidences inside
+// it.  Algorithm read out of the loader with the S1C33 disassembler -- see
+// tama4u/vdp.py.  Only vdp-009 uses this packer; the earlier ones use an
+// older halfword-control variant that is not decoded, and are left alone.
+const VDP_LOAD_BASE = 0x02000000, VDP_STUB_END = 0x600;
+const VDP_ROUTINE_SIG = [0x8a, 0x8c, 0x4a, 0x36];
+const VDP_UNPACK_LIMIT = 1 << 20;
+
+function vdpUnpack(raw, start, limit = VDP_UNPACK_LIMIT) {
+  const out = [];
+  let ip = start;
+  while (out.length < limit && ip < raw.length) {
+    let ctrl = raw[ip++];
+    if (ctrl > 127) ctrl -= 256;
+    if (ctrl > 0) {
+      if (ip >= raw.length) break;
+      const v = raw[ip++];
+      for (let k = 0; k <= ctrl; k++) out.push(v, v);
+    } else if (ctrl < 0) {
+      const n = 2 * -ctrl;
+      if (ip + n > raw.length) break;
+      for (let k = 0; k < n; k++) out.push(raw[ip + k]);
+      ip += n;
+    } else {
+      if (ip + 1 >= raw.length) break;
+      const a = raw[ip], b = raw[ip + 1];
+      ip += 2;
+      if (a === 0) break;
+      const dist = ((((0xfffffff0 | a) << 8) | b) >>> 0) - 0x100000000;
+      let src = out.length + dist;
+      if (src < 0) break;
+      for (let k = 0; k <= (a >> 4); k++) { out.push(out[src], out[src + 1]); src += 2; }
+    }
+  }
+  return Uint8Array.from(out);
+}
+
+// The stub sets the input pointer with `ext imm13, ext imm13, ld.w %rN,imm6`
+// -- three halfwords, the first two 0b110xxxxxxxxxxxxx and the last with
+// opcode 0b011011.  Decoding just that shape saves porting the whole
+// disassembler for one immediate.
+function vdpStreamStart(raw) {
+  let at = -1;
+  for (let i = 0; i + 4 <= raw.length && at < 0; i++)
+    if (VDP_ROUTINE_SIG.every((v, k) => raw[i + k] === v)) at = i;
+  if (at < 0) return null;
+  let best = null;
+  const hw = o => raw[o] | (raw[o + 1] << 8);
+  for (let o = Math.max(0x40, at - 0x80); o + 6 <= at; o += 2) {
+    const a = hw(o), b = hw(o + 2), c = hw(o + 4);
+    if ((a >> 13) !== 0b110 || (b >> 13) !== 0b110) continue;
+    if ((c >> 10) !== 0x1b) continue;                   // ld.w %rd,imm6
+    const v = (((a & 0x1fff) << 19) | ((b & 0x1fff) << 6) | ((c >> 4) & 0x3f)) >>> 0;
+    if (v >= VDP_LOAD_BASE + 0x40 && v < VDP_LOAD_BASE + raw.length)
+      best = v - VDP_LOAD_BASE;
+  }
+  return best;
+}
+
+function vdpPayload(p) {
+  const start = vdpStreamStart(p.raw);
+  return start === null ? null : vdpUnpack(p.raw, start);
+}
+
 function vdpSpriteRecords(p) {
-  return scanLoose(p.raw, 0x40).map(([offset, w, h, colors, frames, have]) => {
-    // every VDP record is packed; the shortfall is evidence, not the test
-    // (the last record has nothing after it to truncate its span)
+  const data = vdpPayload(p);
+  if (!data) return [];
+  const out = [];
+  for (const rec of scanLoose(data, 0)) {
+    const [offset, w, h, colors, frames, have] = rec;
     const need = pixelBytes(w, h, frames, colors);
-    return { offset, w, h, colors, frames, have, need, packed: true };
-  });
+    if (have < need) continue;
+    out.push({ offset, w, h, colors, frames, need,
+               frames_data: readLoose(data, rec) });
+  }
+  return out;
 }
 
 function vdpAttributeSprites(records, banks) {
@@ -1683,10 +1754,18 @@ function describe(data, opts = {}) {
                                      frames: b.frames.map(frameOut) }));
     if (isVdp(pkt)) {
       info.vdp = vdpContents(pkt);
-      info.vdp_sprites = vdpSpriteRecords(pkt);
+      const recs = vdpSpriteRecords(pkt);
+      info.vdp_sprites = recs.map(({ frames_data, ...r }) => r);
+      if (recs.length) {
+        // the packed stream is what holds the artwork; records sitting in
+        // the raw file are coincidences inside it
+        info.banks = recs.map(r => ({
+          offset: r.offset, loose: null, unpacked: true,
+          frames: r.frames_data.map(f => ({ slot: f.slot_size, w: f.w, h: f.h,
+                                            palette: f.palette, pixels: f.pixels })),
+        }));
+      }
       vdpAttributeSprites(info.vdp, info.banks || []);
-      const packed = new Set(info.vdp_sprites.filter(s => s.packed).map(s => s.offset));
-      for (const b of info.banks || []) b.packed = packed.has(b.offset);
     }
     out.packets.push(info);
   }
@@ -2194,7 +2273,7 @@ function renderVdp(){
     +sp.map(s=>`<div style="font-size:12px;padding:2px 0">`
       +`<span class="ad" style="color:#8a8172">0x${s.offset.toString(16).toUpperCase().padStart(5,'0')}</span> `
       +`${s.w}×${s.h} · ${s.colors}색 · ${s.frames}프레임 — `
-      +`<span class="vdp-guess">픽셀 묶임 (평문 ${s.have}/${s.need}B) · 그리지 않음</span>`
+      +`<span class="vdp-ok">${s.need}B 복원</span>`
       +`</div>`).join('');
   $('vdpRows').innerHTML=rows.map(r=>{
     const n=spr[r.name]||0;

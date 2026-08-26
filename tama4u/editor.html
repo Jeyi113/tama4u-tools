@@ -187,8 +187,9 @@
         <b>확인</b>은 레코드가 시그니처와 행선지를 그대로 갖고 있는 항목,
         <b>추정</b>은 이름과 시리얼만 남아 행선지를 단정할 수 없는 항목입니다
         (식사·간식과 메뉴 아이콘이 여기 해당 — 기기 표에 직접 심습니다).<br>
-        스프라이트는 <b>헤더와 팔레트만 평문</b>이고 픽셀은 묶여 있습니다.
-        묶인 프레임은 그대로 그리면 노이즈가 나오므로 그리지 않습니다.
+        스프라이트는 파일 안에 LZ77로 묶여 있습니다. 로더의 압축 해제
+        루틴을 디스어셈블해 그대로 구현했으므로, 아래 탭의 그림은
+        <b>풀어낸 결과</b>입니다(주소는 압축 해제 후 기준).
       </div>
     </div>
     <div class="card" id="likesCard">
@@ -687,7 +688,7 @@ function renderVdp(){
     +sp.map(s=>`<div style="font-size:12px;padding:2px 0">`
       +`<span class="ad" style="color:#8a8172">0x${s.offset.toString(16).toUpperCase().padStart(5,'0')}</span> `
       +`${s.w}×${s.h} · ${s.colors}색 · ${s.frames}프레임 — `
-      +`<span class="vdp-guess">픽셀 묶임 (평문 ${s.have}/${s.need}B) · 그리지 않음</span>`
+      +`<span class="vdp-ok">${s.need}B 복원</span>`
       +`</div>`).join('');
   $('vdpRows').innerHTML=rows.map(r=>{
     const n=spr[r.name]||0;
