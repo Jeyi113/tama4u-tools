@@ -273,12 +273,14 @@ def describe(data):
             info['vdp'] = vdp.contents(pkt)
             recs = vdp.sprite_records(pkt)
             info['vdp_sprites'] = [{k: v for k, v in r.items()
-                                    if k != 'frames_data'} for r in recs]
+                                    if k not in ('frames_data', 'loose')}
+                                   for r in recs]
             if recs:
                 # the packed stream is what actually holds the artwork; the
                 # records sitting in the raw file are coincidences inside it
                 info['banks'] = [
-                    {'offset': r['offset'], 'loose': None, 'unpacked': True,
+                    {'offset': r['offset'], 'loose': r['loose'],
+                     'unpacked': True,
                      'frames': [{'slot': f.slot_size, 'w': f.width,
                                  'h': f.height, 'palette': f.palette,
                                  'pixels': f.pixels} for f in r['frames_data']]}
@@ -378,6 +380,22 @@ def apply_edits(data, edits, new_jpeg=None):
             else:
                 charset.write_text(pkt.raw, t['offset'], t['chars'],
                                    t['text'], table, t.get('width', 2))
+        if 'vdp_edit' in edit:
+            # A VDP's sprites and item records live in a packed stream, so
+            # edits go into the unpacked payload and the stream is rebuilt.
+            # Everything ahead of it (header, adaptation tables, loader) is
+            # copied through untouched.
+            data = bytearray(vdp.payload(pkt) or b'')
+            if not data:
+                raise ValueError('이 VDP는 아직 압축을 풀 수 없습니다')
+            for item in edit['vdp_edit'].get('items', []):
+                vdp.write_item(data, item, pkt.model)
+            for bank in edit['vdp_edit'].get('banks', []):
+                rec = tuple(bank['loose'])
+                sprites.write_loose(data, rec,
+                                    [tuple(c) for c in bank['frames'][0]['palette']],
+                                    [f['pixels'] for f in bank['frames']])
+            pkt.raw[:] = bytearray(vdp.repack(pkt, bytes(data)))
         for bank in edit.get('banks', []):
             off = bank['offset']
             if bank.get('loose'):

@@ -383,9 +383,16 @@ function vdpName(raw, o, table) {
   return s.replace(/^[　 ]+|[　 ]+$/g, '');
 }
 
+// Read from the unpacked payload where there is one -- only there do the
+// records line up with the sprites, and only there are they all present.
 export function vdpContents(p) {
-  const raw = p.raw, table = tableFor(p.model);
-  const known = vdpKnownDests(p.model), out = [], claimed = new Set();
+  const data = vdpPayload(p);
+  return vdpContentsIn(data || p.raw, p.model);
+}
+
+export function vdpContentsIn(raw, model) {
+  const table = tableFor(model);
+  const known = vdpKnownDests(model), out = [], claimed = new Set();
   for (let i = 2; i < raw.length - 17; i++) {
     if (raw[i] !== 0x81 && raw[i] !== 0x94) continue;
     const hex = hex4(raw.slice(i, i + 4));
@@ -514,19 +521,145 @@ export function vdpSpriteRecords(p) {
     const [offset, w, h, colors, frames, have] = rec;
     const need = pixelBytes(w, h, frames, colors);
     if (have < need) continue;
-    out.push({ offset, w, h, colors, frames, need,
+    out.push({ offset, w, h, colors, frames, need, loose: rec,
                frames_data: readLoose(data, rec) });
   }
   return out;
 }
 
+const VDP_MAX_LIT = 128, VDP_MAX_RUN = 128, VDP_MAX_MATCH = 16, VDP_WINDOW = 4096;
+const hwAt = (d, k) => (d[2 * k] << 8) | d[2 * k + 1];   // compare key only
+
+// vdp-001..008 packer -- byte-identical to Mr.Blinky's output
+export function vdpPackRle(data) {
+  const out = [], n = data.length >> 1;
+  let i = 0;
+  while (i < n) {
+    const lo = data[2 * i], hi = data[2 * i + 1];
+    if (lo === hi) {
+      let j = i;
+      while (j < n && data[2 * j] === lo && data[2 * j + 1] === hi
+             && j - i < VDP_MAX_RUN) j++;
+      if (j - i >= 2) {
+        const c = 0x8000 | ((j - i - 1) << 8) | lo;
+        out.push(c & 0xff, (c >> 8) & 0xff);
+        i = j;
+        continue;
+      }
+    }
+    let j = i;
+    while (j < n && j - i < 0x7fff) {
+      const a = data[2 * j], b = data[2 * j + 1];
+      if (a === b) {
+        let k = j;
+        while (k < n && data[2 * k] === a && data[2 * k + 1] === b
+               && k - j < VDP_MAX_RUN) k++;
+        if (k - j >= 2) break;
+      }
+      j++;
+    }
+    out.push((j - i) & 0xff, ((j - i) >> 8) & 0xff);
+    for (let k = 2 * i; k < 2 * j; k++) out.push(data[k]);
+    i = j;
+  }
+  out.push(0, 0);
+  return Uint8Array.from(out);
+}
+
+// vdp-009 packer -- greedy, so not byte-identical, but smaller and exact
+export function vdpPackLz(data) {
+  const n = data.length >> 1, out = [], lit = [], index = new Map();
+  const same = (a, b) => data[2 * a] === data[2 * b] && data[2 * a + 1] === data[2 * b + 1];
+  const flush = () => {
+    while (lit.length) {
+      const take = lit.splice(0, VDP_MAX_LIT);
+      out.push((256 - take.length) & 0xff);
+      for (const k of take) out.push(data[2 * k], data[2 * k + 1]);
+    }
+  };
+  let i = 0;
+  while (i < n) {
+    const lo = data[2 * i], hi = data[2 * i + 1];
+    let run = 0;
+    if (lo === hi) {
+      let j = i;
+      while (j < n && data[2 * j] === lo && data[2 * j + 1] === hi
+             && j - i < VDP_MAX_RUN) j++;
+      run = j - i;
+    }
+    let bestLen = 0, bestD = 0;
+    if (i + 1 < n) {
+      const key = hwAt(data, i) * 65536 + hwAt(data, i + 1);
+      const cand = index.get(key);
+      if (cand) for (let c = cand.length - 1, seen = 0; c >= 0 && seen < 64; c--, seen++) {
+        const s = cand[c], d = i - s;
+        if (d < 1 || d > VDP_WINDOW / 2) continue;
+        let L = 0;
+        while (L < VDP_MAX_MATCH && i + L < n && same(s + L, i + L)) L++;
+        if (L > bestLen) { bestLen = L; bestD = d; }
+        if (bestLen >= VDP_MAX_MATCH) break;
+      }
+    }
+    let step;
+    if (run >= 3 && run >= bestLen) { flush(); out.push(run - 1, lo); step = run; }
+    else if (bestLen >= 3) {
+      flush();
+      const field = 0x1000 - 2 * bestD;
+      out.push(0x00, ((bestLen - 1) << 4) | (field >> 8), field & 0xff);
+      step = bestLen;
+    } else {
+      lit.push(i); step = 1;
+      if (lit.length >= VDP_MAX_LIT) flush();
+    }
+    for (let k = i; k < i + step; k++) {
+      if (k + 1 >= n) break;
+      const key = hwAt(data, k) * 65536 + hwAt(data, k + 1);
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(k);
+    }
+    i += step;
+  }
+  flush();
+  out.push(0, 0);
+  return Uint8Array.from(out);
+}
+
+export function vdpRepack(p, data) {
+  const found = vdpStreamStart(p.raw);
+  if (found === null) throw new Error('이 VDP의 압축 방식은 아직 해독되지 않았습니다');
+  const [kind, start] = found;
+  const stream = (kind === 'lz' ? vdpPackLz : vdpPackRle)(data);
+  const out = new Uint8Array(start + stream.length + 2);
+  out.set(p.raw.slice(0, start), 0);
+  out.set(stream, start);
+  return out;
+}
+
+// Fixed-width in place: the name pads to its 14 slots with the ideographic
+// space, so the payload never changes length.
+export function vdpWriteItem(data, item, model) {
+  const off = item.offset, table = tableFor(model);
+  if (item.dest) {
+    const code = item.dest.match(/../g).map(x => parseInt(x, 16));
+    if (code.length !== 4) throw new Error('행선지는 4바이트여야 합니다');
+    data.set(code, off + 2);
+  }
+  if ('name' in item) {
+    const codes = encode(item.name.slice(0, VDP_NAME_MAX), model);
+    const pad = spaceCode(model);
+    for (let k = 0; k < VDP_NAME_MAX; k++)
+      data[off + 2 + 16 + k] = (k < codes.length ? codes[k] : pad) & 0xff;
+  }
+}
+
 export function vdpAttributeSprites(records, banks) {
   for (const b of banks) {
     let owner = null;
-    for (const r of records)
-      if (r.offset <= b.offset)
-        owner = r.name || `0x${r.offset.toString(16).toUpperCase().padStart(5, '0')}`;
-    b.vdp_item = owner;
+    for (const r of records) if (r.offset <= b.offset) owner = r;
+    b.vdp_item = owner
+      ? (owner.name || `0x${owner.offset.toString(16).toUpperCase().padStart(5, '0')}`)
+      : null;
+    b.vdp_item_offset = owner ? owner.offset : null;
   }
   return banks;
 }

@@ -43,6 +43,7 @@ which is where the real gain is (2.3:1 against 1.8:1):
                 (A >> 4) + 1 halfwords from (A & 0xF, B) bytes back --
                 a 12-bit negative distance into what has been emitted
 """
+import collections
 import re
 import struct
 
@@ -145,6 +146,120 @@ def unpack(raw, start, limit=UNPACK_LIMIT):
     return bytes(out)
 
 
+MAX_LIT = 128
+MAX_RUN = 128
+MAX_MATCH = 16
+WINDOW = 4096
+
+
+def pack_rle(data):
+    """The vdp-001..008 packer.  Byte-identical to Mr.Blinky's output."""
+    out, lit, i = bytearray(), [], 0
+    hw = [bytes(data[2 * k:2 * k + 2]) for k in range(len(data) // 2)]
+    n = len(hw)
+    while i < n:
+        v = hw[i]
+        if v[0] == v[1]:
+            j = i
+            while j < n and hw[j] == v and j - i < MAX_RUN:
+                j += 1
+            if j - i >= 2:
+                out += struct.pack('<H', 0x8000 | ((j - i - 1) << 8) | v[0])
+                i = j
+                continue
+        j = i
+        while j < n and j - i < 0x7FFF:
+            w = hw[j]
+            if w[0] == w[1]:
+                k = j
+                while k < n and hw[k] == w and k - j < MAX_RUN:
+                    k += 1
+                if k - j >= 2:
+                    break
+            j += 1
+        out += struct.pack('<H', j - i)
+        for k in range(i, j):
+            out += hw[k]
+        i = j
+    return bytes(out + b'\x00\x00')
+
+
+def pack_lz(data):
+    """The vdp-009 packer.  Not byte-identical -- a greedy matcher picks
+    different matches than the original did -- but it round-trips and
+    comes out smaller (24,426 bytes against 26,714 on vdp-009)."""
+    hw = [bytes(data[2 * k:2 * k + 2]) for k in range(len(data) // 2)]
+    n = len(hw)
+    out, lit, index = bytearray(), [], collections.defaultdict(list)
+
+    def flush():
+        while lit:
+            take = lit[:MAX_LIT]
+            del lit[:len(take)]
+            out.append((256 - len(take)) & 0xFF)
+            for x in take:
+                out.extend(x)
+
+    i = 0
+    while i < n:
+        v = hw[i]
+        run = 0
+        if v[0] == v[1]:
+            j = i
+            while j < n and hw[j] == v and j - i < MAX_RUN:
+                j += 1
+            run = j - i
+        best_len, best_d = 0, 0
+        if i + 1 < n:
+            for s in reversed(index[(hw[i], hw[i + 1])][-64:]):
+                d = i - s
+                if not 1 <= d <= WINDOW // 2:
+                    continue
+                L = 0
+                while L < MAX_MATCH and i + L < n and hw[s + L] == hw[i + L]:
+                    L += 1
+                if L > best_len:
+                    best_len, best_d = L, d
+                if best_len >= MAX_MATCH:
+                    break
+        if run >= 3 and run >= best_len:
+            flush()
+            out.append(run - 1)
+            out.append(v[0])
+            step = run
+        elif best_len >= 3:
+            flush()
+            field = 0x1000 - 2 * best_d
+            out.extend((0x00, ((best_len - 1) << 4) | (field >> 8), field & 0xFF))
+            step = best_len
+        else:
+            lit.append(v)
+            step = 1
+            if len(lit) >= MAX_LIT:
+                flush()
+        for k in range(i, i + step):
+            if k + 1 < n:
+                index[(hw[k], hw[k + 1])].append(k)
+        i += step
+    flush()
+    return bytes(out + b'\x00\x00')
+
+
+def repack(pkt, data):
+    """Put an edited payload back, returning the new packet bytes.
+
+    The stream keeps its start offset, so everything in front of it -- the
+    header, the firmware adaptation tables, the loader stub -- is untouched
+    and only the packet's declared size moves."""
+    raw = bytes(pkt.raw)
+    found = stream_start(raw)
+    if found is None:
+        raise ValueError('이 VDP의 압축 방식은 아직 해독되지 않았습니다')
+    kind, start = found
+    stream = (pack_lz if kind == 'lz' else pack_rle)(data)
+    return raw[:start] + stream + b'\x00\x00'
+
+
 def stream_start(raw):
     """(kind, offset) for the packer this file uses, or None."""
     for kind, sig in ROUTINES:
@@ -217,10 +332,20 @@ def _name(raw, o, table):
 def contents(pkt):
     """Every item record the bundle carries, in file order.
 
-    `confirmed` marks the ones anchored on a real destination; the rest are
-    reported by name and serial only."""
-    raw, table = bytes(pkt.raw), charset.load_table(model=pkt.model)
-    known, out, claimed = _known_dests(pkt.model), [], set()
+    Read from the unpacked payload where there is one.  The raw file shows
+    some of the same records -- an LZ stream emits them as literals, so
+    they appear verbatim -- but only the payload has them all, and only
+    there do their offsets line up with the sprites.  vdp-009 goes from 7
+    confirmed records to 9 that way, picking up the two meals and the
+    snack whose destinations the raw scan could not see.
+    """
+    data = payload(pkt)
+    return _contents(data if data is not None else bytes(pkt.raw), pkt.model)
+
+
+def _contents(raw, model):
+    table = charset.load_table(model=model)
+    known, out, claimed = _known_dests(model), [], set()
 
     for i in range(2, len(raw) - NAME_REL - 1):
         if raw[i] not in (0x81, 0x94) or raw[i:i + DEST_LEN].hex() not in known:
@@ -268,17 +393,42 @@ def sprite_records(pkt):
         if avail < need:
             continue
         out.append({'offset': start, 'w': w, 'h': h, 'colors': ncol,
-                    'frames': nf, 'need': need,
+                    'frames': nf, 'need': need, 'loose': list(rec),
                     'frames_data': sprites.read_loose(data, rec)})
     return out
 
 
+def write_item(data, item, model):
+    """Rewrite one content record's name and destination in the payload.
+
+    Both fields are fixed-width in place -- the name pads to its 14 slots
+    with the ideographic space, the way a standalone packet does -- so the
+    payload never changes length and the stream stays the same shape."""
+    off = item['offset']                       # signature offset
+    table = charset.load_table(model=model)
+    if item.get('dest'):
+        code = bytes.fromhex(item['dest'])
+        if len(code) != DEST_LEN:
+            raise ValueError('행선지는 4바이트여야 합니다')
+        data[off + 2:off + 2 + DEST_LEN] = code
+    if 'name' in item:
+        codes = charset.encode(item['name'][:NAME_MAX], table)
+        codes += [charset.space_code(table)] * (NAME_MAX - len(codes))
+        base = off + 2 + NAME_REL
+        for k, c in enumerate(codes[:NAME_MAX]):
+            data[base + k] = c & 0xFF
+
+
 def attribute_sprites(records, banks):
-    """Tag each sprite bank with the record it follows."""
+    """Tag each sprite bank with the content record it belongs to.
+
+    Both now come out of the same payload, so a bank belongs to the last
+    record that starts before it."""
     for b in banks:
         owner = None
         for r in records:
             if r['offset'] <= b['offset']:
-                owner = r['name'] or f"0x{r['offset']:05X}"
-        b['vdp_item'] = owner
+                owner = r
+        b['vdp_item'] = (owner['name'] or f"0x{owner['offset']:05X}") if owner else None
+        b['vdp_item_offset'] = owner['offset'] if owner else None
     return banks

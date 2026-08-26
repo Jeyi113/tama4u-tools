@@ -191,12 +191,12 @@ export function describe(data, opts = {}) {
     if (F.isVdp(pkt)) {
       info.vdp = F.vdpContents(pkt);
       const recs = F.vdpSpriteRecords(pkt);
-      info.vdp_sprites = recs.map(({ frames_data, ...r }) => r);
+      info.vdp_sprites = recs.map(({ frames_data, loose, ...r }) => r);
       if (recs.length) {
         // the packed stream is what holds the artwork; records sitting in
         // the raw file are coincidences inside it
         info.banks = recs.map(r => ({
-          offset: r.offset, loose: null, unpacked: true,
+          offset: r.offset, loose: r.loose, unpacked: true,
           frames: r.frames_data.map(f => ({ slot: f.slot_size, w: f.w, h: f.h,
                                             palette: f.palette, pixels: f.pixels })),
         }));
@@ -254,6 +254,17 @@ export function applyEdits(data, edits, newJpeg = null) {
     if ('price' in edit) F.setPrice(pkt, +edit.price);
     if ('hunger' in edit) F.setHunger(pkt, edit.hunger);
     if ('friendship' in edit) F.setFriendship(pkt, edit.friendship);
+    if (edit.vdp_edit) {
+      // a VDP's records and sprites are inside the packed stream, so edits
+      // go into the payload and the stream is rebuilt
+      const data = F.vdpPayload(pkt);
+      if (!data) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
+      const buf = new Uint8Array(data);
+      for (const it of edit.vdp_edit.items || []) F.vdpWriteItem(buf, it, model);
+      for (const b of edit.vdp_edit.banks || [])
+        writeLoose(buf, b.loose, b.frames[0].palette, b.frames.map(f => f.pixels));
+      pkt.raw = F.vdpRepack(pkt, buf);
+    }
     if ('dest' in edit) F.setDestination(pkt, edit.dest, edit.dest_label);
     if ('likes' in edit) F.setLikesRaw(pkt, edit.likes);
     if ('stats' in edit) F.setStats(pkt, edit.stats);

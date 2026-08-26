@@ -31,6 +31,9 @@
   table.vdp td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
   table.vdp td.nm{font-weight:600}
   table.vdp td.ad{color:#8a8172;font-variant-numeric:tabular-nums;white-space:nowrap}
+  table.vdp tr.pick{cursor:pointer}
+  table.vdp tr.pick:hover{background:#f3efe6}
+  table.vdp tr.on{background:#ffe9c9}
   .vdp-ok{color:var(--ok);font-weight:600}
   .vdp-guess{color:#8a8172}
   .likes{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr));gap:3px;
@@ -182,6 +185,14 @@
     <div class="card" id="vdpCard" hidden>
       <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
       <table class="vdp"><tbody id="vdpRows"></tbody></table>
+      <div id="vdpEdit" hidden style="margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:6px;background:#fdfcfa">
+        <div style="font-size:12px;font-weight:600;margin-bottom:6px" id="vdpEditTitle"></div>
+        <label>이름 (최대 14자)</label>
+        <input id="vdpName" maxlength="14">
+        <label style="margin-top:6px">행선지 (destination)</label>
+        <select id="vdpDest"></select>
+        <div class="hint" style="margin-top:6px">고치면 압축을 다시 해서 저장합니다. 이 내용물의 스프라이트는 아래 탭에만 표시됩니다.</div>
+      </div>
       <div id="vdpSpr" style="margin-top:10px"></div>
       <div class="hint">
         <b>확인</b>은 레코드가 시그니처와 행선지를 그대로 갖고 있는 항목,
@@ -475,15 +486,7 @@ function selectPacket(path){
     });
   }
   // flatten banks -> frames (loose records share one palette)
-  flat=[];
-  (pk.banks||[]).forEach((bank,bi)=>{
-    // a VDP stores headers and palettes plainly but packs the pixels, so
-    // drawing those frames only produces noise -- list them in the VDP
-    // card instead of putting a corrupt canvas on screen
-    if(bank.packed)return;
-    if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
-    bank.frames.forEach((fr,fi)=>flat.push({bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
-  });
+  rebuildFrames();
   $('spriteCard').style.display=flat.length?'':'none';
   $('metaCard').style.display=(item||pk.name)?'':'none';
   $('emptyNote').hidden=!(!flat.length&&!(pk.texts&&pk.texts.length)&&!item);
@@ -673,7 +676,47 @@ window.addEventListener('keydown',e=>{
   }
 });
 
-// A VDP bundles a whole item set into one download; list what is inside.
+// Frame tabs come from the packet's banks, narrowed to one VDP content
+// when the reader picks a row in the VDP card.
+function rebuildFrames(){
+  flat=[];
+  const list=pk.banks||[];
+  const show=(vdpPick==null)?list:list.filter(b=>b.vdp_item_offset===vdpPick);
+  show.forEach(bank=>{
+    const bi=list.indexOf(bank);
+    if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
+    bank.frames.forEach((fr,fi)=>flat.push(
+      {bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
+  });
+  cur=0; undoStack=[];
+  $('spriteCard').style.display=flat.length?'':'none';
+  if(flat.length){renderTabs();renderFrame();animStart()}
+}
+
+// A VDP bundles a whole item set into one download; list what is inside,
+// and let one be picked so the sprite tabs below show only its frames.
+let vdpPick=null;
+function vdpBanks(){
+  const all=pk.banks||[];
+  return vdpPick==null?all:all.filter(b=>b.vdp_item_offset===vdpPick);
+}
+function pickVdp(off){
+  vdpPick=(vdpPick===off?null:off);
+  const rows=pk.vdp||[];
+  [...document.querySelectorAll('#vdpRows tr')].forEach((tr,i)=>
+    tr.classList.toggle('on',rows[i]&&rows[i].offset===vdpPick));
+  const it=rows.find(r=>r.offset===vdpPick);
+  $('vdpEdit').hidden=!it;
+  if(it){
+    $('vdpEditTitle').textContent=`0x${it.offset.toString(16).toUpperCase().padStart(5,'0')} · 시리얼 0x${it.serial.toString(16).toUpperCase().padStart(4,'0')}`;
+    $('vdpName').value=it.name||'';
+    const opts=pk.dest_options||[];
+    $('vdpDest').innerHTML='<option value="">(그대로 두기)</option>'
+      +opts.map(o=>`<option value="${o.code}">${o.label}</option>`).join('');
+    $('vdpDest').value=it.dest||'';
+  }
+  rebuildFrames();
+}
 function renderVdp(){
   const rows=pk.vdp||[];
   $('vdpCard').hidden=!rows.length;
@@ -692,7 +735,7 @@ function renderVdp(){
       +`</div>`).join('');
   $('vdpRows').innerHTML=rows.map(r=>{
     const n=spr[r.name]||0;
-    return `<tr>`
+    return `<tr class="pick" data-off="${r.offset}">`
       +`<td class="ad">0x${r.offset.toString(16).toUpperCase().padStart(5,'0')}</td>`
       +`<td class="nm">${r.name}</td>`
       +`<td class="ad">시리얼 0x${r.serial.toString(16).toUpperCase().padStart(4,'0')}`
@@ -702,6 +745,9 @@ function renderVdp(){
           : `<span class="vdp-guess">추정 · 행선지 없음</span>`}</td>`
       +`<td class="ad">${n?`스프라이트 ${n}`:''}</td></tr>`;
   }).join('');
+  [...document.querySelectorAll('#vdpRows tr.pick')].forEach(tr=>
+    tr.onclick=()=>pickVdp(+tr.dataset.off));
+  vdpPick=null; $('vdpEdit').hidden=true;
 }
 
 // ---- animation simulation (loops frames of the current bank) ----
@@ -1422,6 +1468,23 @@ $('saveBtn').onclick=async()=>{
     if(F.includes('hunger'))edit.hunger=+$('fHunger').value;
     if(F.includes('friendship'))edit.friendship=+$('fFriend').value;
     if(F.includes('anim')){edit.anim_a=+$('fAnimA').value;edit.anim_b=+$('fAnimB').value}
+  }
+  if(pk.vdp&&pk.vdp.length){
+    // a VDP's records and sprites live in the packed stream, so they go
+    // through vdp_edit and the whole stream is rebuilt on save
+    const items=[];
+    if(vdpPick!=null){
+      const it=pk.vdp.find(r=>r.offset===vdpPick);
+      const nm=$('vdpName').value.trim(), ds=$('vdpDest').value;
+      if(it&&(nm!==(it.name||'')||(ds&&ds!==it.dest))){
+        const one={offset:vdpPick};
+        if(nm!==(it.name||''))one.name=nm;
+        if(ds&&ds!==it.dest)one.dest=ds;
+        items.push(one);
+      }
+    }
+    const banks=(pk.banks||[]).filter(b=>b.loose).map(b=>({loose:b.loose,frames:b.frames}));
+    if(items.length||banks.length)edit.vdp_edit={items,banks};
   }
   if(pk.acc_pos)edit.acc_pos=pk.acc_pos;
   if(pk.banks)edit.banks=pk.banks;
