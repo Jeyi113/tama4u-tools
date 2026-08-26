@@ -22,13 +22,20 @@ The meals, the snack and the menu-icon set carry no destination anywhere
 in the file, so they are reported by name and serial only rather than
 guessed at.
 
-The artwork is behind an LZ77 stream that covers everything after the
-loader stub -- the sprite headers that turn up in the raw file are
-coincidences inside it.  `unpack` implements it; the algorithm was read out
-of the loader itself with `tama4u.s1c33` (the routine sits at 0x1E2 in
-vdp-009, and `xld.w %r1,0x20002bc` names where its input starts).
+The artwork is behind a packed stream covering everything after the loader
+stub -- the sprite headers that turn up in the raw file are coincidences
+inside it.  Both packers were read out of the loader with `tama4u.s1c33`,
+and both emit 16-bit halfwords.
 
-Everything the stream emits is a 16-bit halfword:
+**vdp-001 to 008** use plain RLE with a halfword control word:
+
+    ctrl > 0    ctrl halfwords follow literally
+    ctrl < 0    low byte is the value, bits 8-14 the count: emit
+                value:value ((ctrl >> 8) & 0x7F) + 1 times
+    ctrl == 0   end
+
+**vdp-009** switched to a byte control word and added back-references,
+which is where the real gain is (2.3:1 against 1.8:1):
 
     ctrl > 0    one byte follows; emit it as byte:byte, ctrl+1 times
     ctrl < 0    -ctrl halfwords follow literally
@@ -37,6 +44,7 @@ Everything the stream emits is a 16-bit halfword:
                 a 12-bit negative distance into what has been emitted
 """
 import re
+import struct
 
 from . import charset, destinations, items, s1c33, sprites
 
@@ -66,13 +74,43 @@ MAX_UNCONFIRMED = 12
 LOAD_BASE = 0x02000000
 STUB_END = 0x600            # the loader stub never runs past here
 IMMEDIATE = re.compile(r'^x?ld\.w %r\d+,0x([0-9a-f]+)$')
-# `sll %r10,0x8` then `or %r10,%r4` -- the run branch building byte:byte
-ROUTINE_SIG = bytes((0x8a, 0x8c, 0x4a, 0x36))
+# Each packer is identified by a few bytes of its run branch.
+#   LZ  `sll %r10,0x8` then `or %r10,%r4`, building byte:byte
+#   RLE `ld.b [%sp+0],%r2` twice, then the two opcodes that pull the count
+#       out of the control word.  Those two (class 1 with op2 = 3) are not
+#       in the core manual's table and piece-emu calls them undefined, so
+#       the count is taken from the data instead: bits 8-14, +1, which is
+#       what makes all nine VDPs decode into their advertised contents.
+ROUTINES = (
+    ('lz', bytes((0x8a, 0x8c, 0x4a, 0x36))),
+    ('rle', bytes((0x02, 0x54, 0x12, 0x54, 0x12, 0x27, 0x92, 0x23))),
+)
 UNPACK_LIMIT = 1 << 20
 
 
+def unpack_rle(raw, start, limit=UNPACK_LIMIT):
+    """vdp-001..008: halfword control word, literal runs and byte runs."""
+    out, ip = bytearray(), start
+    while len(out) < limit and ip + 1 < len(raw):
+        ctrl = struct.unpack_from('<h', raw, ip)[0]
+        ip += 2
+        if ctrl > 0:
+            n = 2 * ctrl
+            if ip + n > len(raw):
+                break
+            out += raw[ip:ip + n]
+            ip += n
+        elif ctrl < 0:
+            u = ctrl & 0xFFFF
+            v = u & 0xFF
+            out += bytes((v, v)) * (((u >> 8) & 0x7F) + 1)
+        else:
+            break
+    return bytes(out)
+
+
 def unpack(raw, start, limit=UNPACK_LIMIT):
-    """Expand the loader's LZ77 stream (see the module docstring)."""
+    """vdp-009: byte control word with back-references."""
     out, ip = bytearray(), start
     while len(out) < limit and ip < len(raw):
         ctrl = raw[ip]
@@ -108,20 +146,21 @@ def unpack(raw, start, limit=UNPACK_LIMIT):
 
 
 def stream_start(raw):
-    """Where the loader's LZ77 input begins, or None if this is not the
-    loader we decoded.
+    """(kind, offset) for the packer this file uses, or None."""
+    for kind, sig in ROUTINES:
+        at = raw.find(sig)
+        if at >= 0:
+            off = _pointer_before(raw, at)
+            if off is not None:
+                return kind, off
+    return None
 
-    Only vdp-009 uses this routine.  The earlier VDPs pack their data with
-    an older variant -- halfword control words instead of bytes -- whose
-    run branch leans on two opcodes the core manual's table does not list
-    (0x23xx, 0x27xx), so it is not decoded and its files are left alone
-    rather than shown as noise.
-    """
-    at = raw.find(ROUTINE_SIG)
-    if at < 0:
-        return None
-    # the pointer is set just before the loop, not at the top of the stub
-    # (the first immediates there are the firmware adaptation tables)
+
+def _pointer_before(raw, at):
+    """The last `xld.w %rN,0x0200xxxx` before `at` -- the input pointer.
+
+    Not the first one in the stub: those are the firmware adaptation
+    tables."""
     best = None
     for ins in s1c33.disasm(raw, max(0x40, at - 0x80), at):
         m = IMMEDIATE.match(ins.text)
@@ -136,8 +175,11 @@ def stream_start(raw):
 def payload(pkt):
     """The unpacked body, or None when the packer is not one we read."""
     raw = bytes(pkt.raw)
-    start = stream_start(raw)
-    return None if start is None else unpack(raw, start)
+    found = stream_start(raw)
+    if found is None:
+        return None
+    kind, start = found
+    return (unpack if kind == 'lz' else unpack_rle)(raw, start)
 
 
 def is_vdp(pkt):

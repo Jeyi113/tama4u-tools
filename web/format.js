@@ -416,9 +416,35 @@ export function vdpContents(p) {
 // tama4u/vdp.py.  Only vdp-009 uses this packer; the earlier ones use an
 // older halfword-control variant that is not decoded, and are left alone.
 const VDP_LOAD_BASE = 0x02000000, VDP_STUB_END = 0x600;
-const VDP_ROUTINE_SIG = [0x8a, 0x8c, 0x4a, 0x36];
+// each packer identified by a few bytes of its run branch -- see vdp.py
+const VDP_ROUTINES = [
+  ['lz', [0x8a, 0x8c, 0x4a, 0x36]],
+  ['rle', [0x02, 0x54, 0x12, 0x54, 0x12, 0x27, 0x92, 0x23]],
+];
 const VDP_UNPACK_LIMIT = 1 << 20;
 
+// vdp-001..008: halfword control word, literal runs and byte runs
+export function vdpUnpackRle(raw, start, limit = VDP_UNPACK_LIMIT) {
+  const out = [];
+  let ip = start;
+  while (out.length < limit && ip + 1 < raw.length) {
+    let ctrl = raw[ip] | (raw[ip + 1] << 8);
+    ip += 2;
+    if (ctrl === 0) break;
+    if (ctrl < 0x8000) {
+      const n = 2 * ctrl;
+      if (ip + n > raw.length) break;
+      for (let k = 0; k < n; k++) out.push(raw[ip + k]);
+      ip += n;
+    } else {
+      const v = ctrl & 0xff;
+      for (let k = 0, n = ((ctrl >> 8) & 0x7f) + 1; k < n; k++) out.push(v, v);
+    }
+  }
+  return Uint8Array.from(out);
+}
+
+// vdp-009: byte control word with back-references
 export function vdpUnpack(raw, start, limit = VDP_UNPACK_LIMIT) {
   const out = [];
   let ip = start;
@@ -453,9 +479,12 @@ export function vdpUnpack(raw, start, limit = VDP_UNPACK_LIMIT) {
 // opcode 0b011011.  Decoding just that shape saves porting the whole
 // disassembler for one immediate.
 export function vdpStreamStart(raw) {
-  let at = -1;
-  for (let i = 0; i + 4 <= raw.length && at < 0; i++)
-    if (VDP_ROUTINE_SIG.every((v, k) => raw[i + k] === v)) at = i;
+  let at = -1, kind = null;
+  for (const [name, sig] of VDP_ROUTINES) {
+    for (let i = 0; i + sig.length <= raw.length && at < 0; i++)
+      if (sig.every((v, k) => raw[i + k] === v)) { at = i; kind = name; }
+    if (at >= 0) break;
+  }
   if (at < 0) return null;
   let best = null;
   const hw = o => raw[o] | (raw[o + 1] << 8);
@@ -467,12 +496,14 @@ export function vdpStreamStart(raw) {
     if (v >= VDP_LOAD_BASE + 0x40 && v < VDP_LOAD_BASE + raw.length)
       best = v - VDP_LOAD_BASE;
   }
-  return best;
+  return best === null ? null : [kind, best];
 }
 
 export function vdpPayload(p) {
-  const start = vdpStreamStart(p.raw);
-  return start === null ? null : vdpUnpack(p.raw, start);
+  const found = vdpStreamStart(p.raw);
+  if (found === null) return null;
+  const [kind, start] = found;
+  return (kind === 'lz' ? vdpUnpack : vdpUnpackRle)(p.raw, start);
 }
 
 export function vdpSpriteRecords(p) {
