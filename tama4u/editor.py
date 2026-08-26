@@ -87,8 +87,8 @@ def describe(data):
             'size': pkt.size,
             'dest': bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex(),
             'dest_label': items.get_destination(pkt),
-            'dest_options': [{'label': l, 'code': c}
-                             for l, c, _ in destinations.options(pkt.model)],
+            'dest_options': [{'label': e[0], 'code': e[1]}
+                             for e in destinations.options(pkt.model)],
             'is_item': (not character.is_character(pkt)
                         and not items.is_program(pkt)
                         and (items.effective_kind(pkt) in items.BANK_OFFSETS
@@ -102,6 +102,10 @@ def describe(data):
                            for m in ('iD', 'iDL', "P's", '4U') if m != pkt.model}
         if info['is_item'] and not info['is_wardrobe']:
             info['price'] = items.get_price(pkt)      # verified on every model
+        if not info['is_item']:
+            # programs have no shop fields, but their destination is what
+            # files a game under the Game Center
+            info['fields'] = sorted(items.editable_fields(pkt))
         if info['is_item'] and info['stats_verified']:
             anim = items.get_anim(pkt)
             info['fields'] = sorted(items.editable_fields(pkt))
@@ -327,7 +331,7 @@ def apply_edits(data, edits, new_jpeg=None):
         if 'friendship' in edit:
             items.set_friendship(pkt, edit['friendship'])
         if 'dest' in edit:
-            items.set_destination(pkt, edit['dest'])
+            items.set_destination(pkt, edit['dest'], edit.get('dest_label'))
         if 'likes' in edit:
             items.set_likes_raw(pkt, edit['likes'])
         if 'stats' in edit:

@@ -84,6 +84,10 @@ export const DEST_CATALOG = {
     ['고치 인테리어 · 방', '01070000', 'ffff00ff'],
     ['사진관 · 의상', '02030001', 'ffff00ff'],
     ['우편함 · 편지', '01060000', 'ffffffff'],
+    // iD parks games and outings on one destination and keeps the
+    // category in a byte at 0x64 -- that is the 4th element
+    ['게임센터 · 게임', '14020000', 'ffffffff', [0x64, 0x37]],
+    ['외출지', '14020000', 'ffffffff', [0x64, 0x0f]],
   ],
   'iDL': [...COMMON,
     ['우편함 · 편지', '81065101', 'ffffffff'],
@@ -92,31 +96,45 @@ export const DEST_CATALOG = {
     ['타마데파 · 씨앗', '81082900', 'ffffffff'],
     ['타마데파 · 생활용품', '81042902', 'ffffffff'],
     ['타마베이커리 · 간식', '81010c02', 'ffffffff'],
+    ['게임센터 · 게임', '94025b01', 'ffffffff'],
+    ['외출지', '94024702', 'ffffffff'],
   ],
   "P's": [...COMMON,
     ['보물상자 · 편지', '81065101', 'ffffffff'],
     ['보물상자 · 스탬프카드', '81065203', 'ffffffff'],
     ['통신놀이 · 레시피', '81092900', 'ffffffff'],
     ['타마모리 · 액세서리 2', '81023500', 'ffffffff'],
+    ['게임센터 · 게임', '94025b01', 'ffffffff'],
+    ['외출지', '94024702', 'ffffffff'],
+    ['VDP · 미해독 프로그램', '94025b02', 'ffffffff'],
   ],
   '4U': [...COMMON,
     ['냉장고 직행 · 식사 (비매품)', '81010101', 'ffffffff'],
     ['냉장고 직행 · 간식 (비매품)', '81010102', 'ffffffff'],
     ['빙고 정의', '81082900', 'ffffffff'],
-    ['미니게임', '94025b01', 'ffffffff'],
+    ['게임센터 · 게임', '94025b01', 'ffffffff'],
+    ['외출지', '94024702', 'ffffffff'],
+    ['카드 · 캐릭터 프로그램', '94024803', 'ffffffff'],
   ],
 };
 export const destOptions = m => DEST_CATALOG[m] || DEST_CATALOG['4U'];
 const hex2bytes = h => h.match(/../g).map(x => parseInt(x, 16));
 
-export function destMatch(model, code) {
-  for (const [label, tmpl, mask] of destOptions(model)) {
+// `raw` is the whole packet; without it, entries that also depend on a byte
+// outside the destination are only reported when nothing else claims the code.
+export function destMatch(model, code, raw = null) {
+  let pending = null;
+  for (const [label, tmpl, mask, extra] of destOptions(model)) {
     const t = hex2bytes(tmpl), m = hex2bytes(mask);
     let ok = true;
     for (let i = 0; i < 4; i++) if (m[i] && t[i] !== code[i]) { ok = false; break; }
-    if (ok) return label;
+    if (!ok) continue;
+    if (!extra) return label;
+    const [off, val] = extra;
+    if (raw) { if (raw.length > off && raw[off] === val) return label; }
+    else if (pending === null) pending = label;
   }
-  return null;
+  return pending;
 }
 export function destApply(model, code, current) {
   for (const [, tmpl, mask] of destOptions(model)) {
@@ -126,6 +144,16 @@ export function destApply(model, code, current) {
     }
   }
   return hex2bytes(code);
+}
+// The (offset, value) a chosen category also needs written, if any.  Several
+// categories can share one code, so the label picks between them.
+export function destExtra(model, code, label = null) {
+  for (const e of destOptions(model)) {
+    if (e[1] !== code) continue;
+    if (label != null && e[0] !== label) continue;
+    return e[3] || null;
+  }
+  return null;
 }
 
 // ---- packet ---------------------------------------------------------

@@ -106,7 +106,7 @@ def set_anim(pkt, a, b):
 
 def get_destination(pkt):
     four = bytes(pkt.raw[OFF_DEST:OFF_DEST + 4])
-    return (destinations.match(pkt.model, four)
+    return (destinations.match(pkt.model, four, pkt.raw)
             or DESTINATIONS.get(four)
             or f'unknown({four.hex(" ")})')
 
@@ -183,11 +183,15 @@ def text_gaps(spans, size, start=0x60):
 
 def editable_fields(pkt):
     kind, model, lay = effective_kind(pkt), pkt.model, pkt.layout
+    if is_program(pkt):
+        # a program has no shop fields, but it does have a destination --
+        # that is what puts a game in the Game Center
+        return {'dest'}
     if pkt.section == SECTION_MAIL:
         # letters / happy mail carry a message where shop items keep their
         # stat block, so none of the shop fields apply
         return {'text'}
-    f = {'price'}
+    f = {'price', 'dest'}
     if kind in ('gh', 'oy'):
         f |= {'hunger', 'friendship'}
     elif kind == 'as' and model != 'iD':
@@ -381,9 +385,11 @@ def set_hunger(pkt, value):
     pkt.raw[pkt.layout['hunger']] = int(value) & 0xFF
 
 
-def set_destination(pkt, code):
+def set_destination(pkt, code, label=None):
     """code: a catalogue entry (8-char hex) or raw 4 bytes.  iD keeps its
-    per-item index byte, so the write goes through destinations.apply."""
+    per-item index byte, so the write goes through destinations.apply.
+    `label` picks between categories that share one code (iD games vs
+    outings)."""
     cur = bytes(pkt.raw[OFF_DEST:OFF_DEST + 4])
     if isinstance(code, (bytes, bytearray)):
         code = bytes(code).hex()
@@ -391,6 +397,11 @@ def set_destination(pkt, code):
     if len(merged) != 4:
         raise ValueError('destination must be 4 bytes')
     pkt.raw[OFF_DEST:OFF_DEST + 4] = merged
+    # iD keeps games and outings on one destination and splits them at
+    # 0x64, so picking the category has to write that byte too
+    extra = destinations.extra_for(pkt.model, code, label)
+    if extra and len(pkt.raw) > extra[0]:
+        pkt.raw[extra[0]] = extra[1]
     pkt.raw[0x73] = 0x02 if code[1] == 0x01 else 0x00   # food section flag
 
 

@@ -1,7 +1,7 @@
 // Item stats, character stats, text codec and cross-model conversion --
 // a port of tama4u/{items,character,charset,convert}.py.
 import {
-  u16, putU16, u16le, putU16le, layoutFor, destOptions, destMatch, destApply,
+  u16, putU16, u16le, putU16le, layoutFor, destOptions, destMatch, destApply, destExtra,
   parseBank, LAYOUTS, COMPAT_BIT, OFF_COMPAT_MASK, SIGNATURES,
   OFF_ANSI_ID, OFF_PACKET_SIZE, OFF_FILE_SIZE, OFF_UNICODE_NAME,
   OFF_TYPE_SIG, OFF_TOKEN, OFF_SERIAL, MAGIC, sum16, Packet,
@@ -199,14 +199,18 @@ export const DESTINATIONS = {
 export function getDestination(p) {
   const four = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
   const hex = four.map(x => x.toString(16).padStart(2, '0')).join('');
-  return destMatch(p.model, four) || DESTINATIONS[hex]
+  return destMatch(p.model, four, p.raw) || DESTINATIONS[hex]
     || `unknown(${four.map(x => x.toString(16).padStart(2, '0')).join(' ')})`;
 }
-export function setDestination(p, code) {
+export function setDestination(p, code, label = null) {
   const cur = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
   const merged = destApply(p.model, code, cur);
   p.raw.set(merged, OFF_DEST);
   p.raw[0x73] = parseInt(code.slice(2, 4), 16) === 0x01 ? 0x02 : 0x00;   // food flag
+  // iD splits games from outings at 0x64, so picking the category has to
+  // write that byte too
+  const extra = destExtra(p.model, code, label);
+  if (extra && p.raw.length > extra[0]) p.raw[extra[0]] = extra[1];
 }
 
 export const likesSlots = p => p.layout.likes_slots;
@@ -263,8 +267,11 @@ export function setVersion(p, version, compat, index) {
 
 export function editableFields(p) {
   const kind = effectiveKind(p), model = p.model, lay = p.layout;
+  // a program has no shop fields, but it does have a destination -- that is
+  // what puts a game in the Game Center
+  if (isProgram(p)) return ['dest'];
   if (p.section === SECTION_MAIL) return ['text'];
-  const f = new Set(['price']);
+  const f = new Set(['price', 'dest']);
   if (kind === 'gh' || kind === 'oy') { f.add('hunger'); f.add('friendship'); }
   else if (kind === 'as' && model !== 'iD') f.add('friendship');
   if (!['bg', 'lv'].includes(kind) && !(model === 'iD' && kind === 'as')) f.add('likes');
@@ -506,7 +513,7 @@ export function convertPlan(p, target) {
   if (L.width !== M.width)
     out.changes.push(`이름 인코딩 ${L.width}바이트 → ${M.width}바이트`
       + (M.width === 2 ? ' (0x04 페이지 부착)' : ' (0x04 페이지 제거)'));
-  const label = destMatch(src, Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4)));
+  const label = destMatch(src, Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4)), p.raw);
   const code = destFor(target, label);
   if (code) out.changes.push(`행선지 → ${label} (${code})`);
   else out.warnings.push(`행선지 "${label || '미확인'}"에 해당하는 ${target} 코드가 없어 섹션 기본값으로 둡니다. 저장 후 확인하세요.`);
@@ -549,10 +556,15 @@ export function convert(p, target, serial = null) {
   putU16(nw, OFF_TYPE_SIG, SIG_PREFERRED[target]);
 
   const cur = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
-  const code = destFor(target, destMatch(src, cur));
+  const label = destMatch(src, cur, p.raw);
+  const code = destFor(target, label);
   let dest = code ? code.match(/../g).map(x => parseInt(x, 16)) : cur;
   if (target === 'iD') dest = destApply('iD', dest.map(b => b.toString(16).padStart(2, '0')).join(''), [0, 0, 0, 0]);
   nw.set(dest, OFF_DEST);
+  // iD splits games from outings at 0x64
+  const dhex = dest.map(b => b.toString(16).padStart(2, '0')).join('');
+  const dx = destExtra(target, dhex, label);
+  if (dx && nw.length > dx[0]) nw[dx[0]] = dx[1];
   nw.set(p.token, OFF_TOKEN);
   if (target !== 'iD') putU16(nw, OFF_SERIAL, ser & 0xffff);
 

@@ -362,6 +362,10 @@ const DEST_CATALOG = {
     ['고치 인테리어 · 방', '01070000', 'ffff00ff'],
     ['사진관 · 의상', '02030001', 'ffff00ff'],
     ['우편함 · 편지', '01060000', 'ffffffff'],
+    // iD parks games and outings on one destination and keeps the
+    // category in a byte at 0x64 -- that is the 4th element
+    ['게임센터 · 게임', '14020000', 'ffffffff', [0x64, 0x37]],
+    ['외출지', '14020000', 'ffffffff', [0x64, 0x0f]],
   ],
   'iDL': [...COMMON,
     ['우편함 · 편지', '81065101', 'ffffffff'],
@@ -370,31 +374,45 @@ const DEST_CATALOG = {
     ['타마데파 · 씨앗', '81082900', 'ffffffff'],
     ['타마데파 · 생활용품', '81042902', 'ffffffff'],
     ['타마베이커리 · 간식', '81010c02', 'ffffffff'],
+    ['게임센터 · 게임', '94025b01', 'ffffffff'],
+    ['외출지', '94024702', 'ffffffff'],
   ],
   "P's": [...COMMON,
     ['보물상자 · 편지', '81065101', 'ffffffff'],
     ['보물상자 · 스탬프카드', '81065203', 'ffffffff'],
     ['통신놀이 · 레시피', '81092900', 'ffffffff'],
     ['타마모리 · 액세서리 2', '81023500', 'ffffffff'],
+    ['게임센터 · 게임', '94025b01', 'ffffffff'],
+    ['외출지', '94024702', 'ffffffff'],
+    ['VDP · 미해독 프로그램', '94025b02', 'ffffffff'],
   ],
   '4U': [...COMMON,
     ['냉장고 직행 · 식사 (비매품)', '81010101', 'ffffffff'],
     ['냉장고 직행 · 간식 (비매품)', '81010102', 'ffffffff'],
     ['빙고 정의', '81082900', 'ffffffff'],
-    ['미니게임', '94025b01', 'ffffffff'],
+    ['게임센터 · 게임', '94025b01', 'ffffffff'],
+    ['외출지', '94024702', 'ffffffff'],
+    ['카드 · 캐릭터 프로그램', '94024803', 'ffffffff'],
   ],
 };
 const destOptions = m => DEST_CATALOG[m] || DEST_CATALOG['4U'];
 const hex2bytes = h => h.match(/../g).map(x => parseInt(x, 16));
 
-function destMatch(model, code) {
-  for (const [label, tmpl, mask] of destOptions(model)) {
+// `raw` is the whole packet; without it, entries that also depend on a byte
+// outside the destination are only reported when nothing else claims the code.
+function destMatch(model, code, raw = null) {
+  let pending = null;
+  for (const [label, tmpl, mask, extra] of destOptions(model)) {
     const t = hex2bytes(tmpl), m = hex2bytes(mask);
     let ok = true;
     for (let i = 0; i < 4; i++) if (m[i] && t[i] !== code[i]) { ok = false; break; }
-    if (ok) return label;
+    if (!ok) continue;
+    if (!extra) return label;
+    const [off, val] = extra;
+    if (raw) { if (raw.length > off && raw[off] === val) return label; }
+    else if (pending === null) pending = label;
   }
-  return null;
+  return pending;
 }
 function destApply(model, code, current) {
   for (const [, tmpl, mask] of destOptions(model)) {
@@ -404,6 +422,16 @@ function destApply(model, code, current) {
     }
   }
   return hex2bytes(code);
+}
+// The (offset, value) a chosen category also needs written, if any.  Several
+// categories can share one code, so the label picks between them.
+function destExtra(model, code, label = null) {
+  for (const e of destOptions(model)) {
+    if (e[1] !== code) continue;
+    if (label != null && e[0] !== label) continue;
+    return e[3] || null;
+  }
+  return null;
 }
 
 // ---- packet ---------------------------------------------------------
@@ -963,14 +991,18 @@ const DESTINATIONS = {
 function getDestination(p) {
   const four = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
   const hex = four.map(x => x.toString(16).padStart(2, '0')).join('');
-  return destMatch(p.model, four) || DESTINATIONS[hex]
+  return destMatch(p.model, four, p.raw) || DESTINATIONS[hex]
     || `unknown(${four.map(x => x.toString(16).padStart(2, '0')).join(' ')})`;
 }
-function setDestination(p, code) {
+function setDestination(p, code, label = null) {
   const cur = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
   const merged = destApply(p.model, code, cur);
   p.raw.set(merged, OFF_DEST);
   p.raw[0x73] = parseInt(code.slice(2, 4), 16) === 0x01 ? 0x02 : 0x00;   // food flag
+  // iD splits games from outings at 0x64, so picking the category has to
+  // write that byte too
+  const extra = destExtra(p.model, code, label);
+  if (extra && p.raw.length > extra[0]) p.raw[extra[0]] = extra[1];
 }
 
 const likesSlots = p => p.layout.likes_slots;
@@ -1027,8 +1059,11 @@ function setVersion(p, version, compat, index) {
 
 function editableFields(p) {
   const kind = effectiveKind(p), model = p.model, lay = p.layout;
+  // a program has no shop fields, but it does have a destination -- that is
+  // what puts a game in the Game Center
+  if (isProgram(p)) return ['dest'];
   if (p.section === SECTION_MAIL) return ['text'];
-  const f = new Set(['price']);
+  const f = new Set(['price', 'dest']);
   if (kind === 'gh' || kind === 'oy') { f.add('hunger'); f.add('friendship'); }
   else if (kind === 'as' && model !== 'iD') f.add('friendship');
   if (!['bg', 'lv'].includes(kind) && !(model === 'iD' && kind === 'as')) f.add('likes');
@@ -1270,7 +1305,7 @@ function convertPlan(p, target) {
   if (L.width !== M.width)
     out.changes.push(`이름 인코딩 ${L.width}바이트 → ${M.width}바이트`
       + (M.width === 2 ? ' (0x04 페이지 부착)' : ' (0x04 페이지 제거)'));
-  const label = destMatch(src, Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4)));
+  const label = destMatch(src, Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4)), p.raw);
   const code = destFor(target, label);
   if (code) out.changes.push(`행선지 → ${label} (${code})`);
   else out.warnings.push(`행선지 "${label || '미확인'}"에 해당하는 ${target} 코드가 없어 섹션 기본값으로 둡니다. 저장 후 확인하세요.`);
@@ -1313,10 +1348,15 @@ function convert(p, target, serial = null) {
   putU16(nw, OFF_TYPE_SIG, SIG_PREFERRED[target]);
 
   const cur = Array.from(p.raw.slice(OFF_DEST, OFF_DEST + 4));
-  const code = destFor(target, destMatch(src, cur));
+  const label = destMatch(src, cur, p.raw);
+  const code = destFor(target, label);
   let dest = code ? code.match(/../g).map(x => parseInt(x, 16)) : cur;
   if (target === 'iD') dest = destApply('iD', dest.map(b => b.toString(16).padStart(2, '0')).join(''), [0, 0, 0, 0]);
   nw.set(dest, OFF_DEST);
+  // iD splits games from outings at 0x64
+  const dhex = dest.map(b => b.toString(16).padStart(2, '0')).join('');
+  const dx = destExtra(target, dhex, label);
+  if (dx && nw.length > dx[0]) nw[dx[0]] = dx[1];
   nw.set(p.token, OFF_TOKEN);
   if (target !== 'iD') putU16(nw, OFF_SERIAL, ser & 0xffff);
 
@@ -1395,7 +1435,7 @@ function describe(data, opts = {}) {
       dest: Array.from(pkt.raw.slice(OFF_DEST, OFF_DEST + 4))
         .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: getDestination(pkt),
-      dest_options: destOptions(model).map(([label, code]) => ({ label, code })),
+      dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1] })),
       is_item: !isChar && !isProgram(pkt)
         && (BANK_OFFSETS[effectiveKind(pkt)] !== undefined || model !== '4U'),
     };
@@ -1404,6 +1444,9 @@ function describe(data, opts = {}) {
     info.convert = {};
     for (const m of ['iD', 'iDL', "P's", '4U']) if (m !== model) info.convert[m] = convertPlan(pkt, m);
     if (info.is_item && !info.is_wardrobe) info.price = getPrice(pkt);
+    // programs have no shop fields, but their destination is what files a
+    // game under the Game Center
+    if (!info.is_item) info.fields = editableFields(pkt);
     if (info.is_item && info.stats_verified) {
       const anim = getAnim(pkt);
       info.fields = editableFields(pkt);
@@ -1579,7 +1622,7 @@ function applyEdits(data, edits, newJpeg = null) {
     if ('price' in edit) setPrice(pkt, +edit.price);
     if ('hunger' in edit) setHunger(pkt, edit.hunger);
     if ('friendship' in edit) setFriendship(pkt, edit.friendship);
-    if ('dest' in edit) setDestination(pkt, edit.dest);
+    if ('dest' in edit) setDestination(pkt, edit.dest, edit.dest_label);
     if ('likes' in edit) setLikesRaw(pkt, edit.likes);
     if ('stats' in edit) setStats(pkt, edit.stats);
     if ('acc_pos' in edit) setAccPositions(pkt, edit.acc_pos);
@@ -1682,7 +1725,8 @@ async function load(f){
   $('pkList').innerHTML='';
   editable.forEach(p=>{
     const tag=p.is_wardrobe?'캐릭터 옷장'
-      :(p.is_item?p.dest_label:(p.kind+' · 프로그램/정의'));
+      :(p.is_item?p.dest_label:(p.dest_label&&!p.dest_label.startsWith('unknown')
+          ? p.dest_label : p.kind+' · 프로그램/정의'));
     const n=(p.banks||[]).reduce((a,b)=>a+b.frames.length,0);
     const bits=[tag];
     if(n)bits.push(`스프라이트 ${n}`);
@@ -1723,7 +1767,10 @@ function selectPacket(path){
   showSerialHex();
   const verified=item&&pk.stats_verified;
   const F=pk.fields||[];
-  const on=f=>verified&&F.includes(f);
+  // shop fields need a verified stat block; the destination does not --
+  // a program packet has no stats but its destination is what files a
+  // game under the Game Center
+  const on=f=>(f==='dest'?F.includes(f):verified&&F.includes(f));
   // every setting stays on screen; the ones this model/category never uses
   // are greyed out so the layout doesn't jump and you can still see them
   const gate=(id,ok,why)=>{
@@ -1737,7 +1784,7 @@ function selectPacket(path){
   gate('priceBox', on('price'));
   gate('hungerBox', on('hunger'), '음식 전용');
   gate('friendBox', on('friendship'), pk.model==='iD'&&pk.kind==='as'?'iD 장난감 미사용':'해당 없음');
-  gate('destBox', on('price'));
+  gate('destBox', on('dest'));
   gate('animBox', on('anim'), '장난감 전용');
   gate('statCard', on('stats'), pk.model==='iD'||pk.model==='iDL'?'이 기종에 없음':'해당 없음');
   gate('likesCard', on('likes'), '해당 없음');
@@ -1752,8 +1799,10 @@ function selectPacket(path){
   // destination list is per model (iD keeps a per-item index byte)
   const opts=pk.dest_options||[];
   $('fDest').innerHTML=opts.map(o=>`<option value="${o.code}">${o.label}</option>`).join('');
+  // iD files games and outings under one code and splits them at 0x64,
+  // so the label picks the entry, not the code
   const destOpt=opts.find(o=>o.label===pk.dest_label);
-  if(destOpt)$('fDest').value=destOpt.code;
+  if(destOpt)$('fDest').selectedIndex=opts.indexOf(destOpt);
   $('unverifiedNote').hidden=!!destOpt||!item;
   if(item)$('fPrice').value=pk.price;
   if(verified){
@@ -2712,9 +2761,13 @@ $('saveBtn').onclick=async()=>{
     if(pk.char_extra.transform_name!=null)edit.transform_name=pk.char_extra.transform_name}
   if(pk.compat&&pk.model!=='iD')edit.compat=pk.compat.models;
   if(pk.is_item&&(!pk.fields||pk.fields.includes('price')))edit.price=+$('fPrice').value;
+  if((pk.fields||[]).includes('dest')){
+    const sel=$('fDest');
+    edit.dest=sel.value;
+    edit.dest_label=sel.options[sel.selectedIndex]?.textContent;
+  }
   if(pk.is_item&&pk.stats_verified){
     const F=pk.fields||[];
-    edit.dest=$('fDest').value;
     if(F.includes('likes'))edit.likes=pk.likes;
     if(F.includes('stats'))edit.stats={intelligence:+$('s0').value,style:+$('s1').value,
       charisma:+$('s2').value,gourmet:+$('s3').value,strength:+$('s4').value};

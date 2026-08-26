@@ -52,7 +52,7 @@ export function describe(data, opts = {}) {
       dest: Array.from(pkt.raw.slice(F.OFF_DEST, F.OFF_DEST + 4))
         .map(x => x.toString(16).padStart(2, '0')).join(''),
       dest_label: F.getDestination(pkt),
-      dest_options: destOptions(model).map(([label, code]) => ({ label, code })),
+      dest_options: destOptions(model).map(e => ({ label: e[0], code: e[1] })),
       is_item: !isChar && !F.isProgram(pkt)
         && (F.BANK_OFFSETS[F.effectiveKind(pkt)] !== undefined || model !== '4U'),
     };
@@ -61,6 +61,9 @@ export function describe(data, opts = {}) {
     info.convert = {};
     for (const m of ['iD', 'iDL', "P's", '4U']) if (m !== model) info.convert[m] = F.convertPlan(pkt, m);
     if (info.is_item && !info.is_wardrobe) info.price = F.getPrice(pkt);
+    // programs have no shop fields, but their destination is what files a
+    // game under the Game Center
+    if (!info.is_item) info.fields = F.editableFields(pkt);
     if (info.is_item && info.stats_verified) {
       const anim = F.getAnim(pkt);
       info.fields = F.editableFields(pkt);
@@ -236,7 +239,7 @@ export function applyEdits(data, edits, newJpeg = null) {
     if ('price' in edit) F.setPrice(pkt, +edit.price);
     if ('hunger' in edit) F.setHunger(pkt, edit.hunger);
     if ('friendship' in edit) F.setFriendship(pkt, edit.friendship);
-    if ('dest' in edit) F.setDestination(pkt, edit.dest);
+    if ('dest' in edit) F.setDestination(pkt, edit.dest, edit.dest_label);
     if ('likes' in edit) F.setLikesRaw(pkt, edit.likes);
     if ('stats' in edit) F.setStats(pkt, edit.stats);
     if ('acc_pos' in edit) F.setAccPositions(pkt, edit.acc_pos);

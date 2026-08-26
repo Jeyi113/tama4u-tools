@@ -99,7 +99,8 @@ def plan(pkt, target):
             f'이름 인코딩 {L["width"]}바이트 → {M["width"]}바이트'
             + (' (0x04 페이지 부착)' if M['width'] == 2 else ' (0x04 페이지 제거)'))
 
-    label = destinations.match(src, bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]))
+    label = destinations.match(src, bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]),
+                               pkt.raw)
     tgt_code = _dest_for(target, label)
     if tgt_code:
         out['changes'].append(f'행선지 → {label} ({tgt_code})')
@@ -138,7 +139,7 @@ _SIG_PREFERRED = {'iD': 0xCD80, 'iDL': 0x2DC0, "P's": 0x8DC0, '4U': 0x0101}
 def _dest_for(target, label):
     if not label:
         return None
-    for lbl, code, _mask in destinations.options(target):
+    for lbl, code in ((e[0], e[1]) for e in destinations.options(target)):
         if lbl == label:
             return code
     return None
@@ -194,12 +195,17 @@ def convert(pkt, target, serial=None):
     struct.pack_into('>H', new, container.OFF_TYPE_SIG, _SIG_PREFERRED[target])
 
     cur = bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4])
-    label = destinations.match(src, cur)
+    label = destinations.match(src, cur, pkt.raw)
     code = _dest_for(target, label)
     dest = bytes.fromhex(code) if code else cur
     if target == 'iD':                    # keep byte 2 free for the index
         dest = destinations.apply('iD', dest.hex(), b'\x00' * 4)
     new[items.OFF_DEST:items.OFF_DEST + 4] = dest
+    # iD splits games from outings at 0x64, so a converted program needs
+    # that byte set for the category it just landed in
+    extra = destinations.extra_for(target, dest.hex(), label)
+    if extra and len(new) > extra[0]:
+        new[extra[0]] = extra[1]
 
     new[container.OFF_TOKEN:container.OFF_TOKEN + 8] = pkt.token
     if target != 'iD':

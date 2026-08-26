@@ -317,7 +317,8 @@ async function load(f){
   $('pkList').innerHTML='';
   editable.forEach(p=>{
     const tag=p.is_wardrobe?'캐릭터 옷장'
-      :(p.is_item?p.dest_label:(p.kind+' · 프로그램/정의'));
+      :(p.is_item?p.dest_label:(p.dest_label&&!p.dest_label.startsWith('unknown')
+          ? p.dest_label : p.kind+' · 프로그램/정의'));
     const n=(p.banks||[]).reduce((a,b)=>a+b.frames.length,0);
     const bits=[tag];
     if(n)bits.push(`스프라이트 ${n}`);
@@ -358,7 +359,10 @@ function selectPacket(path){
   showSerialHex();
   const verified=item&&pk.stats_verified;
   const F=pk.fields||[];
-  const on=f=>verified&&F.includes(f);
+  // shop fields need a verified stat block; the destination does not --
+  // a program packet has no stats but its destination is what files a
+  // game under the Game Center
+  const on=f=>(f==='dest'?F.includes(f):verified&&F.includes(f));
   // every setting stays on screen; the ones this model/category never uses
   // are greyed out so the layout doesn't jump and you can still see them
   const gate=(id,ok,why)=>{
@@ -372,7 +376,7 @@ function selectPacket(path){
   gate('priceBox', on('price'));
   gate('hungerBox', on('hunger'), '음식 전용');
   gate('friendBox', on('friendship'), pk.model==='iD'&&pk.kind==='as'?'iD 장난감 미사용':'해당 없음');
-  gate('destBox', on('price'));
+  gate('destBox', on('dest'));
   gate('animBox', on('anim'), '장난감 전용');
   gate('statCard', on('stats'), pk.model==='iD'||pk.model==='iDL'?'이 기종에 없음':'해당 없음');
   gate('likesCard', on('likes'), '해당 없음');
@@ -387,8 +391,10 @@ function selectPacket(path){
   // destination list is per model (iD keeps a per-item index byte)
   const opts=pk.dest_options||[];
   $('fDest').innerHTML=opts.map(o=>`<option value="${o.code}">${o.label}</option>`).join('');
+  // iD files games and outings under one code and splits them at 0x64,
+  // so the label picks the entry, not the code
   const destOpt=opts.find(o=>o.label===pk.dest_label);
-  if(destOpt)$('fDest').value=destOpt.code;
+  if(destOpt)$('fDest').selectedIndex=opts.indexOf(destOpt);
   $('unverifiedNote').hidden=!!destOpt||!item;
   if(item)$('fPrice').value=pk.price;
   if(verified){
@@ -1348,9 +1354,13 @@ $('saveBtn').onclick=async()=>{
     if(pk.char_extra.transform_name!=null)edit.transform_name=pk.char_extra.transform_name}
   if(pk.compat&&pk.model!=='iD')edit.compat=pk.compat.models;
   if(pk.is_item&&(!pk.fields||pk.fields.includes('price')))edit.price=+$('fPrice').value;
+  if((pk.fields||[]).includes('dest')){
+    const sel=$('fDest');
+    edit.dest=sel.value;
+    edit.dest_label=sel.options[sel.selectedIndex]?.textContent;
+  }
   if(pk.is_item&&pk.stats_verified){
     const F=pk.fields||[];
-    edit.dest=$('fDest').value;
     if(F.includes('likes'))edit.likes=pk.likes;
     if(F.includes('stats'))edit.stats={intelligence:+$('s0').value,style:+$('s1').value,
       charisma:+$('s2').value,gourmet:+$('s3').value,strength:+$('s4').value};
