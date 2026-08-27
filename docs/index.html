@@ -1151,7 +1151,8 @@ function editableFields(p) {
   else if (kind === 'as' && model !== 'iD') f.add('friendship');
   if (!['bg', 'lv'].includes(kind) && !(model === 'iD' && kind === 'as')) f.add('likes');
   if (lay.stats !== null) f.add('stats');
-  if (kind === 'as' && lay.anim !== null) f.add('anim');
+  // daily necessities are animated exactly as toys are -- see items.py
+  if ((kind === 'as' || kind === 'ni') && lay.anim !== null) f.add('anim');
   return [...f].sort();
 }
 

@@ -213,7 +213,10 @@ def editable_fields(pkt):
         f.add('likes')
     if lay.get('stats') is not None:
         f.add('stats')
-    if kind == 'as' and lay.get('anim') is not None:
+    # daily necessities are animated exactly as toys are: the three iD L
+    # ones carry (15,15), (31,31) and (35,36) in the same pair of bytes
+    # toys use, and no other category has anything but zero there
+    if kind in ('as', 'ni') and lay.get('anim') is not None:
         f.add('anim')
     return f
 
