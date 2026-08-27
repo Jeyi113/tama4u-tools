@@ -526,6 +526,90 @@ PART1_SIZE = 32768          # a download caps here, and part 1 always fills it
 STUB_MAX = 0x200            # a slot this small holds nothing but a 2x2 dummy
 
 
+# The payload opens with a 4 KB pierce header before the first content
+# packet, and that is where the raising conditions live.  One block per
+# raisable character, 0x180 apart, starting at 0x20:
+#
+#   +0x00  u16  character id
+#   +0x02  u8   gender          0 boy, 1 girl -- 15/15 against the release
+#                               notes, including the bundles where one of
+#                               the three differs from the other two
+#   +0x18  u8   birth month     vdp-001 is 10/26 (Halloween), easter 4/21
+#   +0x19  u8   birth day
+#   +0x28  u16  transform item  serial of the content it is raised on --
+#                               13/13 against 'eat X three times'
+#   +0x2A  6 x 24 bytes  the character's lines, one byte per character
+#   +0xBA  14 bytes      its name
+#
+# The count itself ('three times') reads the same in every release, so
+# nothing in the block can be pinned to it yet.
+CHAR_BLOCK, CHAR_STRIDE = 0x20, 0x180
+CHAR_COUNT_AT = 0x1B
+CH_ID, CH_GENDER, CH_MONTH, CH_DAY = 0x00, 0x02, 0x18, 0x19
+CH_ITEM, CH_LINES, CH_NAME = 0x28, 0x2A, 0xBA
+CH_LINE_LEN, CH_LINES_N, CH_NAME_LEN = 0x18, 6, 14
+GENDER = {0: 'Boy', 1: 'Girl'}
+
+
+def char_blocks(data, model="P's"):
+    """The raising conditions, one entry per raisable character."""
+    table = charset.load_table(model=model)
+    out = []
+    n = data[CHAR_COUNT_AT] if len(data) > CHAR_COUNT_AT else 0
+    for k in range(n):
+        b = CHAR_BLOCK + k * CHAR_STRIDE
+        if b + CH_NAME + CH_NAME_LEN > len(data):
+            break
+        gender = data[b + CH_GENDER]
+        out.append({
+            'index': k,
+            'offset': b,
+            'id': struct.unpack_from('<H', data, b + CH_ID)[0],
+            'gender': gender,
+            'gender_label': GENDER.get(gender, '?'),
+            'birth_month': data[b + CH_MONTH],
+            'birth_day': data[b + CH_DAY],
+            'item_serial': struct.unpack_from('<H', data, b + CH_ITEM)[0],
+            'name': _get_text(data, b + CH_NAME, CH_NAME_LEN, table),
+            'lines': [_get_text(data, b + CH_LINES + i * CH_LINE_LEN,
+                                CH_LINE_LEN, table)
+                      for i in range(CH_LINES_N)],
+        })
+    return out
+
+
+def write_char_block(data, k, fields, model="P's"):
+    """Edit one raising condition in place; the block never changes length."""
+    b = CHAR_BLOCK + k * CHAR_STRIDE
+    table = charset.load_table(model=model)
+    if 'gender' in fields:
+        data[b + CH_GENDER] = int(fields['gender']) & 1
+    if 'birth_month' in fields:
+        data[b + CH_MONTH] = int(fields['birth_month']) & 0xFF
+    if 'birth_day' in fields:
+        data[b + CH_DAY] = int(fields['birth_day']) & 0xFF
+    if 'item_serial' in fields:
+        struct.pack_into('<H', data, b + CH_ITEM,
+                         int(fields['item_serial']) & 0xFFFF)
+    if fields.get('name') is not None:
+        _put_text(data, b + CH_NAME, CH_NAME_LEN, fields['name'], table)
+    for i, line in enumerate(fields.get('lines') or []):
+        if line is not None:
+            _put_text(data, b + CH_LINES + i * CH_LINE_LEN, CH_LINE_LEN,
+                      line, table)
+
+
+def _get_text(data, off, slots, table):
+    return charset.decode(data[off:off + slots], table).rstrip('　')
+
+
+def _put_text(data, off, slots, text, table):
+    codes = charset.encode(text[:slots], table)
+    pad = charset.space_code(table)
+    for k in range(slots):
+        data[off + k] = (codes[k] if k < len(codes) else pad) & 0xFF
+
+
 def content_label(sub, plain):
     """What a content packet really is, where the destination misleads.
 
