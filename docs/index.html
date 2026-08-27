@@ -1537,12 +1537,20 @@ function vdpWriteCharBlock(data, k, fields, model = "P's") {
 
 // What a content packet really is, where the destination misleads --
 // see tama4u/vdp.py.
+// A raisable character, as opposed to a dress on the same shelf.  Size is
+// the test, not the code: the Easter bundle puts an 8,824-byte change dress
+// on the clothes shelf, while every raisable character is exactly 14,664
+// bytes.  Character contents also come in the same order as the header's
+// blocks -- checked by name across all 14 bundles.
+function vdpIsCharContent(sub) {
+  return hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_CHAR_DEST
+    && sub.size === VDP_CHAR_SIZE;
+}
+
 function vdpContentLabel(sub, plain) {
   const dest = hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4));
-  // size is the test, not the code: the Easter bundle puts a change dress
-  // on the same shelf, while every raisable character is 14,664 bytes
   if (dest === VDP_CHAR_DEST)
-    return sub.size === VDP_CHAR_SIZE ? '캐릭터 (육성)' : '타마모리 · 옷 (변신)';
+    return vdpIsCharContent(sub) ? '캐릭터 (육성)' : '타마모리 · 옷 (변신)';
   if (dest === VDP_ICON_DEST) return '메뉴 아이콘 세트';
   if (dest === VDP_LOADING_DEST) return '로딩 아이콘';
   if (sub.size <= VDP_STUB_MAX) return `빈 슬롯 (${plain})`;
@@ -2094,6 +2102,14 @@ function describe(data, opts = {}) {
         info.vdp_chars = vdpCharBlocks(got[0], pkt.model).map(c => ({
           ...c, item_index: where.has(c.item_serial) ? where.get(c.item_serial) : null,
         }));
+        // tie each raisable character to its block so that selecting the
+        // character itself shows its conditions, not only the bundle
+        let n = 0;
+        got[2].forEach((sub, k) => {
+          const isChar = vdpIsCharContent(sub);
+          info.vdp[k].char_index = isChar ? n : null;
+          if (isChar) n++;
+        });
       }
     }
     out.packets.push(info);
@@ -2676,8 +2692,11 @@ window.addEventListener('keydown',e=>{
 // real packet in the list above, so the card is a map into it.
 function renderVdp(){
   const rows=pk.vdp||[];
+  // the conditions card has its own rule -- it also shows on a character
+  // content, where there is no contents list -- so it runs either way
+  renderVdpChars();
   $('vdpCard').hidden=!rows.length;
-  if(!rows.length){$('vdpCharCard').hidden=true;return}
+  if(!rows.length)return;
   $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`
     +(pk.vdp_merged?' · 짝 파일 합쳐서 읽음 (저장하면 두 파일)':'');
   // one download caps at 32,768 bytes, so a big bundle ships as a VDP+ in
@@ -2696,7 +2715,6 @@ function renderVdp(){
     +`<td class="ad">${r.model} · ${r.size.toLocaleString()}B</td></tr>`).join('');
   [...document.querySelectorAll('#vdpRows tr.pick')].forEach(tr=>
     tr.onclick=()=>selectPacket([...pk.path,'vdp',+tr.dataset.i]));
-  renderVdpChars();
 }
 
 // The raising conditions ride in the same payload as the contents, so they
@@ -2704,11 +2722,31 @@ function renderVdp(){
 const LINE_LABELS=['생일','프러포즈','배고픔','간식','놀이','옷갈아입기'];
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// The conditions belong to the bundle, but a reader looking for a
+// character's gender clicks the character, not the bundle.  So the card
+// follows: on the bundle it lists everyone, on one character it shows
+// just that one -- and edits go to the bundle either way.
+function vdpCharContext(){
+  if((pk.vdp_chars||[]).length) return {parent:pk, list:pk.vdp_chars, only:null};
+  const i=pk.path.lastIndexOf('vdp');
+  if(i<0) return null;
+  const key=pk.path.slice(0,i).join(',');
+  const parent=(doc.packets||[]).find(p=>p.path.join(',')===key);
+  if(!parent||!(parent.vdp_chars||[]).length) return null;
+  const row=(parent.vdp||[]).find(v=>v.index===pk.path[i+1]);
+  if(!row||row.char_index==null) return null;
+  return {parent, list:parent.vdp_chars, only:row.char_index};
+}
+
 function renderVdpChars(){
-  const cs=pk.vdp_chars||[], rows=pk.vdp||[];
-  $('vdpCharCard').hidden=!cs.length;
-  if(!cs.length)return;
-  $('vdpCharInfo').textContent=`— 육성 가능한 캐릭터 ${cs.length}명`;
+  const ctx=vdpCharContext();
+  $('vdpCharCard').hidden=!ctx;
+  if(!ctx)return;
+  const rows=ctx.parent.vdp||[];
+  const cs=ctx.only==null?ctx.list:[ctx.list[ctx.only]];
+  $('vdpCharInfo').textContent=ctx.only==null
+    ? `— 육성 가능한 캐릭터 ${ctx.list.length}명`
+    : `— 이 캐릭터 (묶음 전체 ${ctx.list.length}명 중 ${ctx.only+1}번째)`;
   const opts=c=>rows.map(r=>`<option value="${r.serial}"${r.serial===c.item_serial
       ?' selected':''}>[${r.index}] ${r.name||'(이름 없음)'} — ${r.label}</option>`).join('')
     +(rows.some(r=>r.serial===c.item_serial)?''
@@ -3495,9 +3533,12 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_stats)edit.char_stats=pk.char_stats;
   if(pk.version)edit.version=pk.version;
   const edits=[edit];
-  // the raising conditions belong to this VDP's payload, not to a content
-  (pk.vdp_chars||[]).forEach((c,k)=>edits.push({
-    path:[...pk.path,'vdpchar',k],
+  // the raising conditions belong to the bundle's payload, not to a
+  // content, so they are addressed from the bundle even when the card is
+  // being shown on one character
+  const cctx=vdpCharContext();
+  if(cctx)cctx.list.forEach((c,k)=>edits.push({
+    path:[...cctx.parent.path,'vdpchar',k],
     name:c.name, gender:c.gender, lines:c.lines,
     birth_month:c.birth_month, birth_day:c.birth_day,
     item_serial:c.item_serial}));

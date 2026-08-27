@@ -680,12 +680,20 @@ export function vdpWriteCharBlock(data, k, fields, model = "P's") {
 
 // What a content packet really is, where the destination misleads --
 // see tama4u/vdp.py.
+// A raisable character, as opposed to a dress on the same shelf.  Size is
+// the test, not the code: the Easter bundle puts an 8,824-byte change dress
+// on the clothes shelf, while every raisable character is exactly 14,664
+// bytes.  Character contents also come in the same order as the header's
+// blocks -- checked by name across all 14 bundles.
+export function vdpIsCharContent(sub) {
+  return hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_CHAR_DEST
+    && sub.size === VDP_CHAR_SIZE;
+}
+
 export function vdpContentLabel(sub, plain) {
   const dest = hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4));
-  // size is the test, not the code: the Easter bundle puts a change dress
-  // on the same shelf, while every raisable character is 14,664 bytes
   if (dest === VDP_CHAR_DEST)
-    return sub.size === VDP_CHAR_SIZE ? '캐릭터 (육성)' : '타마모리 · 옷 (변신)';
+    return vdpIsCharContent(sub) ? '캐릭터 (육성)' : '타마모리 · 옷 (변신)';
   if (dest === VDP_ICON_DEST) return '메뉴 아이콘 세트';
   if (dest === VDP_LOADING_DEST) return '로딩 아이콘';
   if (sub.size <= VDP_STUB_MAX) return `빈 슬롯 (${plain})`;

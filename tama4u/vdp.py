@@ -610,6 +610,19 @@ def _put_text(data, off, slots, text, table):
         data[off + k] = (codes[k] if k < len(codes) else pad) & 0xFF
 
 
+def is_char_content(sub):
+    """A raisable character, as opposed to a dress on the same shelf.
+
+    Size is the test, not the code: the Easter bundle puts an 8,824-byte
+    change dress on the clothes shelf, priced 1,200, while every raisable
+    character in every bundle is exactly 14,664 bytes.  The character
+    contents also come in the same order as the header's blocks -- checked
+    by name across all 14 bundles -- which is what ties one to the other.
+    """
+    dest = bytes(sub.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex()
+    return dest == CHAR_DEST and sub.size == CHAR_SIZE
+
+
 def content_label(sub, plain):
     """What a content packet really is, where the destination misleads.
 
@@ -627,10 +640,7 @@ def content_label(sub, plain):
     """
     dest = bytes(sub.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex()
     if dest == CHAR_DEST:
-        # size is the test, not the code: the Easter bundle puts a 8,824-byte
-        # change dress on the same shelf, priced 1,200, while every raisable
-        # character in every bundle is exactly 14,664 bytes
-        return '캐릭터 (육성)' if sub.size == CHAR_SIZE else '타마모리 · 옷 (변신)'
+        return '캐릭터 (육성)' if is_char_content(sub) else '타마모리 · 옷 (변신)'
     if dest == ICON_DEST:
         return '메뉴 아이콘 세트'
     if dest == LOADING_DEST:

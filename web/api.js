@@ -237,6 +237,14 @@ export function describe(data, opts = {}) {
         info.vdp_chars = F.vdpCharBlocks(got[0], pkt.model).map(c => ({
           ...c, item_index: where.has(c.item_serial) ? where.get(c.item_serial) : null,
         }));
+        // tie each raisable character to its block so that selecting the
+        // character itself shows its conditions, not only the bundle
+        let n = 0;
+        got[2].forEach((sub, k) => {
+          const isChar = F.vdpIsCharContent(sub);
+          info.vdp[k].char_index = isChar ? n : null;
+          if (isChar) n++;
+        });
       }
     }
     out.packets.push(info);

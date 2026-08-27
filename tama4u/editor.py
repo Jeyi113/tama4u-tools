@@ -327,6 +327,13 @@ def describe(data, partner=None):
                 info['vdp_chars'] = [
                     dict(c, item_index=where.get(c['item_serial']))
                     for c in vdp.char_blocks(got[0], model=pkt.model)]
+                # tie each raisable character to its block so that selecting
+                # the character itself shows its conditions, rather than only
+                # the bundle as a whole
+                n = 0
+                for row, sub in zip(info['vdp'], got[2]):
+                    row['char_index'] = n if vdp.is_char_content(sub) else None
+                    n += vdp.is_char_content(sub)
         out['packets'].append(info)
     return out
 
