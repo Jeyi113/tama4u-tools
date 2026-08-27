@@ -250,8 +250,15 @@ function replacePacket(packets, path, newRaw) {
   replacePacket(packets, path.slice(0, -1), raw);
 }
 
-export function applyEdits(data, edits, newJpeg = null) {
+// `partner` is a VDP+ continuation; with it, edits reach the whole bundle
+// and the result comes back as [part 1, part 2].
+export function applyEdits(data, edits, newJpeg = null, partner = null) {
   let { jpeg, packets, trailing } = parseFile(data);
+  let pj = null, ppk = null, ptr = null, extra = null;
+  if (partner) {
+    ({ jpeg: pj, packets: ppk, trailing: ptr } = parseFile(partner));
+    if (F.isVdpPart(ppk[0])) extra = F.vdpPartStream(ppk[0]);
+  }
   const swaps = edits.filter(e => (e.replace_bytes || e.convert)
                                  && !e.path.includes('vdp'));
   if (swaps.length) {
@@ -326,7 +333,7 @@ export function applyEdits(data, edits, newJpeg = null) {
   }
   for (const [key, jobs] of groups) {
     const pkt = findPacket(packets, key.split(',').map(Number));
-    const got = F.vdpSubPackets(pkt);
+    const got = F.vdpSubPackets(pkt, extra);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
     const [data, base, subs] = got;
     for (const [idx, edit] of jobs) {
@@ -340,8 +347,16 @@ export function applyEdits(data, edits, newJpeg = null) {
       applyOne(subs[idx], edit);
     }
     const before = pkt.size;
-    pkt.raw = F.vdpWriteSubs(pkt, data, base, subs);
+    if (extra) {
+      // split back across the pair: part 1 fills to 32,768 bytes
+      const blob = F.vdpAssemble(data, base, subs);
+      const [a, b] = F.vdpRepackSplit(pkt, ppk[0], blob);
+      pkt.raw = a; ppk[0].raw = b;
+    } else {
+      pkt.raw = F.vdpWriteSubs(pkt, data, base, subs);
+    }
     for (const q of packets) q.shiftDeclaredSize(pkt.size - before);
   }
-  return buildFile(jpeg, packets, trailing);
+  const out = buildFile(jpeg, packets, trailing);
+  return partner ? [out, buildFile(pj, ppk, ptr)] : out;
 }

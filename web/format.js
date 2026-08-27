@@ -375,7 +375,8 @@ const VDP_CHAR_DEST = '81033300', VDP_ICON_DEST = '81042902';
 const VDP_LOADING_DEST = '81010101', VDP_STUB_MAX = 0x200;
 const VDP_CHAR_SIZE = 14664;      // every raisable character is this big
 const VDP_PART_DEST = '81092900', VDP_PART_NAME = 'DecoPierce';
-const VDP_PART_STREAM = 0x100;
+const VDP_PART_STREAM = 0x108;
+const VDP_PART1_SIZE = 32768;   // a download caps here; part 1 always fills it
 
 // A VDP+ continuation: the rest of a bundle's compressed stream.  One
 // download caps at 32,768 bytes, so a large bundle ships in parts -- the
@@ -385,10 +386,35 @@ export const isVdpPart = p =>
   hex4(p.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_PART_DEST
   && p.unicodeName.startsWith(VDP_PART_NAME);
 
+// The offset is fixed -- 0x100-0x107 is zero in all three releases we have.
+// Do not hunt for the first non-zero byte: Easter's stream genuinely begins
+// 00 00, because part 1 was cut in the middle of a token.
 export function vdpPartStream(p) {
-  let at = VDP_PART_STREAM;
-  while (at < p.raw.length && !p.raw[at]) at++;
-  return p.raw.slice(at);
+  return p.raw.slice(VDP_PART_STREAM, p.raw.length - 2);
+}
+
+// Part 1 is always exactly 32,768 bytes, so it takes as much stream as fits
+// and the rest goes to part 2.
+export function vdpSplitParts(p, part2, stream) {
+  const head1 = vdpStreamStart(p.raw)[1];
+  const cap1 = VDP_PART1_SIZE - head1 - 2;
+  const cap2 = VDP_PART1_SIZE - VDP_PART_STREAM - 2;
+  if (stream.length > cap1 + cap2)
+    throw new Error(`스트림이 두 파일에 안 들어갑니다 (${stream.length}B > ${cap1 + cap2}B)`);
+  const mk = (head, body) => {
+    const out = new Uint8Array(head.length + body.length + 2);
+    out.set(head, 0); out.set(body, head.length);
+    putU16(out, OFF_PACKET_SIZE, out.length);
+    return out;
+  };
+  return [mk(p.raw.slice(0, head1), stream.slice(0, cap1)),
+          mk(part2.raw.slice(0, VDP_PART_STREAM), stream.slice(cap1))];
+}
+
+export function vdpRepackSplit(p, part2, data) {
+  const kind = vdpStreamStart(p.raw)[0];
+  const stream = (kind === 'lz' ? vdpPackLz : vdpPackRle)(data);
+  return vdpSplitParts(p, part2, stream);
 }
 const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
 export const isVdp = p =>
@@ -475,7 +501,8 @@ export function vdpPayload(p, extra = null) {
   const [kind, start] = found;
   const fn = kind === 'lz' ? vdpUnpack : vdpUnpackRle;
   if (!extra || !extra.length) return fn(p.raw, start);
-  const head = p.raw.slice(start);
+  // the last two bytes are the packet's checksum, not stream
+  const head = p.raw.slice(start, p.raw.length - 2);
   const merged = new Uint8Array(head.length + extra.length);
   merged.set(head, 0); merged.set(extra, head.length);
   return fn(merged, 0);
@@ -643,6 +670,21 @@ export function vdpFitContent(old, src) {
 // The payload is reassembled rather than patched in place, because swapping
 // a content for a different download changes its length.  The 4 KB prefix
 // and the alignment padding between packets carry across untouched.
+export function vdpAssemble(data, base, packets) {
+  const parts = [data.slice(0, base + packets[0].offset)];
+  packets.forEach((sub, k) => {
+    sub.fixChecksums();
+    parts.push(sub.raw);
+    const was = base + sub.offset + sub._orig.length;
+    const nxt = k + 1 < packets.length ? base + packets[k + 1].offset : data.length;
+    parts.push(data.slice(was, nxt));
+  });
+  let n = 0; for (const q of parts) n += q.length;
+  const buf = new Uint8Array(n);
+  let at = 0; for (const q of parts) { buf.set(q, at); at += q.length; }
+  return buf;
+}
+
 export function vdpWriteSubs(p, data, base, packets) {
   const parts = [data.slice(0, base + packets[0].offset)];
   packets.forEach((sub, k) => {

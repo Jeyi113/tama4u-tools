@@ -254,6 +254,13 @@ def pack_lz(data):
     return bytes(out + b'\x00\x00')
 
 
+def repack_split(pkt, part2, data):
+    """Recompress an edited payload and cut it back across the two files."""
+    kind = stream_start(bytes(pkt.raw))[0]
+    stream = (pack_lz if kind == 'lz' else pack_rle)(data)
+    return split_parts(pkt, part2, stream)
+
+
 def repack(pkt, data):
     """Put an edited payload back, returning the new packet bytes.
 
@@ -301,12 +308,23 @@ def payload(pkt, extra=b''):
 
     `extra` is a VDP+ continuation's stream, appended before unpacking."""
     raw = bytes(pkt.raw)
+    key = (hash(raw), hash(extra))
+    if key in _PAYLOAD_CACHE:
+        return _PAYLOAD_CACHE[key]
     found = stream_start(raw)
     if found is None:
         return None
     kind, start = found
     fn = unpack if kind == 'lz' else unpack_rle
-    return fn(raw[start:] + extra, 0) if extra else fn(raw, start)
+    if extra:
+        # the last two bytes are the packet's checksum, not stream; leaving
+        # them in puts junk at the seam and the rest decodes to noise
+        out = fn(raw[start:len(raw) - 2] + extra, 0)
+    else:
+        out = fn(raw, start)
+    _PAYLOAD_CACHE.clear()      # one bundle at a time is all the editor needs
+    _PAYLOAD_CACHE[key] = out
+    return out
 
 
 def is_vdp(pkt):
@@ -329,12 +347,47 @@ def is_part(pkt):
 
 
 def part_stream(pkt):
-    """The continuation's stream bytes."""
+    """The continuation's stream bytes: 0x108 to the checksum.
+
+    The offset is fixed -- 0x100-0x107 is zero in all three releases we
+    have, and the data starts right after.  Do not go hunting for the first
+    non-zero byte: Easter's stream genuinely begins 00 00, because part 1
+    was cut in the middle of a token and those are its operands."""
     raw = bytes(pkt.raw)
-    at = PART_STREAM
-    while at < len(raw) and not raw[at]:
-        at += 1                       # skip the padding after the header
-    return raw[at:]
+    return raw[PART_STREAM:len(raw) - 2]
+
+
+def stream_bytes(pkt):
+    """A bundle's own stream bytes, checksum excluded."""
+    raw = bytes(pkt.raw)
+    found = stream_start(raw)
+    if found is None:
+        return None
+    return raw[found[1]:len(raw) - 2]
+
+
+def split_parts(pkt, part2, stream):
+    """Cut a rebuilt stream back across the two files.
+
+    Part 1 is always exactly 32,768 bytes -- the cap on one download -- so
+    it takes as much stream as fits and the rest goes to part 2.  Verified
+    on Easter, Fairytale and Farmer: with the checksums excluded and part 2
+    read from 0x108, all three come apart and back together with every
+    content checksum intact."""
+    r1, r2 = bytes(pkt.raw), bytes(part2.raw)
+    head1 = stream_start(r1)[1]
+    cap1 = PART1_SIZE - head1 - 2
+    cap2 = PART1_SIZE - PART_STREAM - 2
+    if len(stream) > cap1 + cap2:
+        raise ValueError(
+            f'스트림이 두 파일에 안 들어갑니다 ({len(stream)}B > {cap1 + cap2}B). '
+            '내용물을 줄이거나 3파트가 필요합니다.')
+    a, b = stream[:cap1], stream[cap1:]
+    out1 = bytearray(r1[:head1] + a + b'\x00\x00')
+    out2 = bytearray(r2[:PART_STREAM] + b + b'\x00\x00')
+    for buf in (out1, out2):
+        struct.pack_into('>H', buf, container.OFF_PACKET_SIZE, len(buf))
+    return bytes(out1), bytes(out2)
 
 
 def _known_dests(model):
@@ -433,7 +486,11 @@ def sprite_records(pkt):
     return out
 
 
-_SUB_CACHE = {}
+# Unpacking is the expensive part, so it is cached -- but only the bytes.
+# Packets are parsed fresh every call: they get mutated in place while
+# editing, and handing the same objects back twice let one edit's result
+# leak into the next.
+_PAYLOAD_CACHE = {}
 
 
 def sub_packets(pkt, extra=b''):
@@ -445,9 +502,6 @@ def sub_packets(pkt, extra=b''):
     makes the contents editable rather than merely listable."""
     if not is_vdp(pkt):
         return None
-    key = (id(pkt), bytes(pkt.raw[:0x60]), pkt.size, len(extra))
-    if key in _SUB_CACHE:
-        return _SUB_CACHE[key]
     data = payload(pkt, extra)
     if data is None:
         return None
@@ -458,10 +512,7 @@ def sub_packets(pkt, extra=b''):
         _, packets, _ = container.parse_file(data[base:])
     except ValueError:
         return None
-    got = (bytearray(data), base, packets)
-    _SUB_CACHE.clear()          # one bundle at a time is all the editor needs
-    _SUB_CACHE[key] = got
-    return got
+    return bytearray(data), base, packets
 
 
 CHAR_DEST = '81033300'
@@ -470,7 +521,8 @@ ICON_DEST = '81042902'
 LOADING_DEST = '81010101'
 PART_DEST = '81092900'      # a VDP+ continuation rides the recipe shelf
 PART_NAME = 'DecoPierce'
-PART_STREAM = 0x100         # its header is loader boilerplate; data follows
+PART_STREAM = 0x108         # its header is loader boilerplate; data follows
+PART1_SIZE = 32768          # a download caps here, and part 1 always fills it
 STUB_MAX = 0x200            # a slot this small holds nothing but a 2x2 dummy
 
 
@@ -524,6 +576,23 @@ def fit_content(old, new):
     return out
 
 
+def assemble(data, base, packets):
+    """The payload rebuilt around edited contents.
+
+    Reassembled rather than patched in place, because swapping a content
+    for a different download changes its length.  What sits between the
+    packets -- a 4 KB prefix and a few bytes of alignment padding after
+    most of them -- is carried across untouched."""
+    out = bytearray(data[:base + packets[0].offset])
+    for k, sub in enumerate(packets):
+        sub.fix_checksums()
+        out += sub.raw
+        was = base + sub.offset + len(sub._orig)
+        nxt = (base + packets[k + 1].offset) if k + 1 < len(packets) else len(data)
+        out += data[was:nxt]
+    return bytes(out)
+
+
 def write_subs(pkt, data, base, packets):
     """Fold edited content packets back and rebuild the stream.
 
@@ -535,14 +604,8 @@ def write_subs(pkt, data, base, packets):
     Recompressing changes the packet's length too, so the size it declares
     at 0x4A has to move with it; otherwise the container reads the wrong
     extent back and the checksum lands in the wrong place."""
-    out = bytearray(data[:base + packets[0].offset])
-    for k, sub in enumerate(packets):
-        sub.fix_checksums()
-        out += sub.raw
-        was = base + sub.offset + len(sub._orig)
-        nxt = (base + packets[k + 1].offset) if k + 1 < len(packets) else len(data)
-        out += data[was:nxt]          # alignment padding, or the tail
-    blob = bytearray(repack(pkt, bytes(out)))
+    out = assemble(data, base, packets)
+    blob = bytearray(repack(pkt, out))
     struct.pack_into('>H', blob, container.OFF_PACKET_SIZE, len(blob))
     return bytes(blob)
 

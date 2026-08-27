@@ -717,13 +717,13 @@ function renderVdp(){
   $('vdpCard').hidden=!rows.length;
   if(!rows.length)return;
   $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`
-    +(pk.vdp_merged?' · 짝 파일 합쳐서 읽음':'');
+    +(pk.vdp_merged?' · 짝 파일 합쳐서 읽음 (저장하면 두 파일)':'');
   // one download caps at 32,768 bytes, so a big bundle ships as a VDP+ in
   // parts; without the other part the stream runs out mid-content
   $('vdpPartRow').hidden=!pk.vdp_truncated;
   $('vdpPartNote').innerHTML=pk.vdp_truncated
     ? '이 VDP는 <b>뒷부분이 잘려 있습니다</b> — VDP+ 멀티파트라 나머지가 다른 파일에 있습니다.'
-      +'<br>짝 파일을 불러오면 전체 내용물을 볼 수 있습니다(보기 전용).'
+      +'<br>짝 파일을 불러오면 전체 내용물을 읽고 편집할 수 있습니다. 저장하면 두 파일로 나옵니다.'
     : '';
   $('vdpRows').innerHTML=rows.map(r=>`<tr class="pick" data-i="${r.index}">`
     +`<td class="nm">${r.name||'<span class="vdp-guess">(이름 없음)</span>'}</td>`
@@ -1486,8 +1486,22 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_extra&&pk.char_extra.acc_pos)edit.char_acc_pos=pk.char_extra.acc_pos;
   const payload={file_b64:fileB64,edits};
   if(newJpegB64)payload.jpeg_b64=newJpegB64;
+  if(partnerB64)payload.partner_b64=partnerB64;
   const r=await fetch('/api/build',{method:'POST',body:JSON.stringify(payload)});
   if(!r.ok){const j=await r.json();toast('저장 실패: '+j.error);return}
+  // a VDP+ is one bundle across two files, so it saves as a pair
+  if(partnerB64){
+    const j=await r.json();
+    const stem=downloadStem()||'custom';
+    [[j.part1_b64,'-1-2'],[j.part2_b64,'-2-2']].forEach(([b,suf])=>{
+      const u8=Uint8Array.from(atob(b),c=>c.charCodeAt(0));
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(new Blob([u8]));
+      a.download=stem+suf+'_custom.jpg'; a.click();
+    });
+    toast('VDP+ 두 파일로 저장했습니다 — 기기에는 둘 다 넣어야 합니다');
+    return;
+  }
   const blob=await r.blob();
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);

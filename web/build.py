@@ -26,8 +26,8 @@ const b64ToArray = s => { const b = atob(s); const u = new Uint8Array(b.length);
 const arrToB64 = u8 => { let s = ''; const C = 0x8000;
   for (let i = 0; i < u8.length; i += C) s += String.fromCharCode.apply(null, u8.subarray(i, i + C));
   return btoa(s); };
-async function apiParse(buf) {
-  try { return TAMA.describe(new Uint8Array(buf)); }
+async function apiParse(buf, partner) {
+  try { return TAMA.describe(new Uint8Array(buf), partner ? { partner } : {}); }
   catch (e) { return { error: String(e.message || e) }; }
 }
 async function apiBuild(payload) {
@@ -35,7 +35,8 @@ async function apiBuild(payload) {
   const edits = (payload.edits || []).map(e =>
     e.replace_b64 ? { ...e, replace_bytes: b64ToArray(e.replace_b64) } : e);
   const jpeg = payload.jpeg_b64 ? b64ToArray(payload.jpeg_b64) : null;
-  return TAMA.applyEdits(data, edits, jpeg);   // throws on bad input
+  const partner = payload.partner_b64 ? b64ToArray(payload.partner_b64) : null;
+  return TAMA.applyEdits(data, edits, jpeg, partner);   // throws on bad input
 }
 """
 
@@ -63,6 +64,13 @@ def main():
     html = html.replace(
         "  const info=await (await fetch('/api/parse',{method:'POST',body:buf})).json();",
         "  const info=await apiParse(buf);")
+    html = html.replace(
+        """  const r=await fetch('/api/parse',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({file_b64:fileB64,partner_b64:partnerB64})});
+  const j=await r.json();""",
+        """  const j=await apiParse(b64ToArray(fileB64),
+    partnerB64?b64ToArray(partnerB64):null);""")
 
     # 2. build: server returned the rebuilt file as a blob
     html = html.replace(
@@ -85,10 +93,24 @@ def main():
     html = html.replace(
         """  const r=await fetch('/api/build',{method:'POST',body:JSON.stringify(payload)});
   if(!r.ok){const j=await r.json();toast('저장 실패: '+j.error);return}
-  const blob=await r.blob();""",
-        """  let blob;
-  try { blob=new Blob([await apiBuild(payload)]); }
-  catch(err){ toast('저장 실패: '+err.message); return }""")
+  // a VDP+ is one bundle across two files, so it saves as a pair
+  if(partnerB64){
+    const j=await r.json();""",
+        """  let built;
+  try { built=await apiBuild(payload); }
+  catch(err){ toast('저장 실패: '+err.message); return }
+  // a VDP+ is one bundle across two files, so it saves as a pair
+  if(partnerB64){
+    const j={part1_b64:arrayToB64(built[0]),part2_b64:arrayToB64(built[1])};""")
+    html = html.replace(
+        """  const blob=await r.blob();
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  // name the download after the *file*""",
+        """  const blob=new Blob([built]);
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  // name the download after the *file*""")
 
     # 3. reference body-type sprites are Bandai artwork and are not shipped,
     #    so the device simulation stays off in the web build
@@ -102,6 +124,8 @@ def main():
         raise SystemExit('rewire failed: /api/parse call site not found')
     if "fetch('/api/build'" in html:
         raise SystemExit('rewire failed: an /api/build call site remains')
+    if "fetch('/api/parse'" in html:
+        raise SystemExit('rewire failed: an /api/parse call site remains')
 
     tag = f'<script>\n{bundle}{SHIM}</script>\n'
     html = html.replace('<script>', tag + '<script>', 1)

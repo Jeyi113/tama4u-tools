@@ -409,8 +409,16 @@ def _apply_fields(pkt, edit):
             raise ValueError('bank size mismatch — frame slots must be kept')
         sprites.write_bank(pkt.raw, frames, off)
 
-def apply_edits(data, edits, new_jpeg=None):
+def apply_edits(data, edits, new_jpeg=None, partner=None):
+    """`partner` is a VDP+ continuation; with it, edits reach the whole
+    bundle and the result comes back as (part 1, part 2)."""
     jpeg, packets, trailing = container.parse_file(data)
+    pjpeg = ppk = ptrail = None
+    extra = b''
+    if partner:
+        pjpeg, ppk, ptrail = container.parse_file(partner)
+        if vdp.is_part(ppk[0]):
+            extra = vdp.part_stream(ppk[0])
     # packet swaps first: they rebuild Packet objects the later edits use
     swaps = [e for e in edits
              if (e.get('replace_b64') or e.get('convert'))
@@ -451,7 +459,7 @@ def apply_edits(data, edits, new_jpeg=None):
         groups[tuple(path[:k])].append((path[k + 1], edit))
     for top, jobs in groups.items():
         pkt = _find(packets, list(top))
-        got = vdp.sub_packets(pkt)
+        got = vdp.sub_packets(pkt, extra)
         if got is None:
             raise ValueError('이 VDP는 아직 압축을 풀 수 없습니다')
         payload, base, subs = got
@@ -465,11 +473,22 @@ def apply_edits(data, edits, new_jpeg=None):
                 continue
             _apply_fields(subs[idx], edit)
         before = pkt.size
-        pkt.raw[:] = bytearray(vdp.write_subs(pkt, payload, base, subs))
+        if extra:
+            # split back across the pair: part 1 fills to 32,768 bytes and
+            # the rest goes to the continuation
+            blob = vdp.assemble(payload, base, subs)
+            a, b = vdp.repack_split(pkt, ppk[0], blob)
+            pkt.raw[:] = bytearray(a)
+            ppk[0].raw[:] = bytearray(b)
+        else:
+            pkt.raw[:] = bytearray(vdp.write_subs(pkt, payload, base, subs))
         # the whole file's declared size follows the packet's
         for q in packets:
             q.shift_declared_size(pkt.size - before)
-    return container.build_file(jpeg, packets, trailing)
+    out = container.build_file(jpeg, packets, trailing)
+    if partner:
+        return out, container.build_file(pjpeg, ppk, ptrail)
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -536,8 +555,17 @@ class Handler(BaseHTTPRequestHandler):
                 req = json.loads(body)
                 data = base64.b64decode(req['file_b64'])
                 nj = req.get('jpeg_b64')
+                pb = req.get('partner_b64')
                 built = apply_edits(data, req['edits'],
-                                    base64.b64decode(nj) if nj else None)
+                                    base64.b64decode(nj) if nj else None,
+                                    base64.b64decode(pb) if pb else None)
+                if pb:
+                    # a VDP+ comes back as a pair
+                    built, second = built
+                    self._send(200, json.dumps({
+                        'part1_b64': base64.b64encode(built).decode(),
+                        'part2_b64': base64.b64encode(second).decode()}).encode())
+                    return
                 # sanity: no packet may come out worse than it went in.
                 # A few retail files ship a stale nested checksum, so
                 # compare against the input rather than demanding all-ok.
