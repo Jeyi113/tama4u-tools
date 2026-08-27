@@ -357,6 +357,10 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     const pkt = findPacket(packets, key.split(',').map(Number));
     const got = F.vdpSubPackets(pkt, extra);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
+    // repacking a truncated bundle would drop everything in the other part
+    if (got[2].length && !got[2][got[2].length - 1].checksumOk())
+      throw new Error('VDP+의 뒷부분이 없습니다 — 짝 파일을 함께 불러오지 '
+                      + '않으면 나머지 내용물이 사라집니다');
     const [data, base, subs] = got;
     for (const [idx, edit] of jobs) {
       if (edit.replace_bytes) {

@@ -478,6 +478,13 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
         got = vdp.sub_packets(pkt, extra)
         if got is None:
             raise ValueError('이 VDP는 아직 압축을 풀 수 없습니다')
+        if vdp.truncated(pkt, extra):
+            # repacking what we can see would drop everything that lives in
+            # the other part -- the stream ends mid-content, so the contents
+            # past the cut are simply not here to write back
+            raise ValueError(
+                'VDP+의 뒷부분이 없습니다 — 짝 파일을 함께 불러오지 않으면 '
+                '나머지 내용물이 사라집니다')
         payload, base, subs = got
         for idx, edit in jobs:
             if edit.get('replace_b64'):
