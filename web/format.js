@@ -629,6 +629,9 @@ export function vdpRepack(p, data) {
 const VDP_CHAR_BLOCK = 0x20, VDP_CHAR_STRIDE = 0x180, VDP_CHAR_COUNT_AT = 0x1B;
 const VC_ID = 0x00, VC_GENDER = 0x02, VC_MONTH = 0x18, VC_DAY = 0x19;
 const VC_ITEM = 0x28, VC_LINES = 0x2A, VC_NAME = 0xBA;
+// two (u16, u16) pairs whose second half is one of sixteen ids in
+// 0x3A9A-0x3AA9 -- not items; see tama4u/vdp.py
+const VC_PAIR_A = 0x1C, VC_PAIR_B = 0x20;
 const VC_LINE_LEN = 0x18, VC_LINES_N = 6, VC_NAME_LEN = 14;
 const VDP_GENDER = { 0: 'Boy', 1: 'Girl' };
 
@@ -652,6 +655,8 @@ export function vdpCharBlocks(data, model = "P's") {
       gender: g, gender_label: VDP_GENDER[g] ?? '?',
       birth_month: data[b + VC_MONTH], birth_day: data[b + VC_DAY],
       item_serial: data[b + VC_ITEM] | (data[b + VC_ITEM + 1] << 8),
+      pair_a: [u16le(data, b + VC_PAIR_A), u16le(data, b + VC_PAIR_A + 2)],
+      pair_b: [u16le(data, b + VC_PAIR_B), u16le(data, b + VC_PAIR_B + 2)],
       name: text(b + VC_NAME, VC_NAME_LEN), lines,
     });
   }
@@ -671,6 +676,12 @@ export function vdpWriteCharBlock(data, k, fields, model = "P's") {
   if (fields.item_serial !== undefined) {
     data[b + VC_ITEM] = fields.item_serial & 0xFF;
     data[b + VC_ITEM + 1] = (fields.item_serial >> 8) & 0xFF;
+  }
+  for (const [key, off] of [['pair_a', VC_PAIR_A], ['pair_b', VC_PAIR_B]]) {
+    if (fields[key]) {
+      putU16le(data, b + off, fields[key][0] & 0xFFFF);
+      putU16le(data, b + off + 2, fields[key][1] & 0xFFFF);
+    }
   }
   if (fields.name != null) put(b + VC_NAME, VC_NAME_LEN, fields.name);
   (fields.lines || []).forEach((line, i) => {

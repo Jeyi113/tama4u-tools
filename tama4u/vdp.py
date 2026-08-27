@@ -547,6 +547,13 @@ CHAR_BLOCK, CHAR_STRIDE = 0x20, 0x180
 CHAR_COUNT_AT = 0x1B
 CH_ID, CH_GENDER, CH_MONTH, CH_DAY = 0x00, 0x02, 0x18, 0x19
 CH_ITEM, CH_LINES, CH_NAME = 0x28, 0x2A, 0xBA
+# Two (u16, u16) pairs sit between the birthday and the transform item.
+# The first half is a small count (the left one is always 2, the right one
+# runs 0, 1, 2, 4); the second is one of sixteen ids in 0x3A9A-0x3AA9.
+# Those ids are NOT items: they match no download serial in any of the four
+# packs and no entry in any model's item index.  Kept editable so the values
+# can be tried on hardware, but not labelled as something they may not be.
+CH_PAIR_A, CH_PAIR_B = 0x1C, 0x20
 CH_LINE_LEN, CH_LINES_N, CH_NAME_LEN = 0x18, 6, 14
 GENDER = {0: 'Boy', 1: 'Girl'}
 
@@ -570,6 +577,8 @@ def char_blocks(data, model="P's"):
             'birth_month': data[b + CH_MONTH],
             'birth_day': data[b + CH_DAY],
             'item_serial': struct.unpack_from('<H', data, b + CH_ITEM)[0],
+            'pair_a': list(struct.unpack_from('<HH', data, b + CH_PAIR_A)),
+            'pair_b': list(struct.unpack_from('<HH', data, b + CH_PAIR_B)),
             'name': _get_text(data, b + CH_NAME, CH_NAME_LEN, table),
             'lines': [_get_text(data, b + CH_LINES + i * CH_LINE_LEN,
                                 CH_LINE_LEN, table)
@@ -591,6 +600,10 @@ def write_char_block(data, k, fields, model="P's"):
     if 'item_serial' in fields:
         struct.pack_into('<H', data, b + CH_ITEM,
                          int(fields['item_serial']) & 0xFFFF)
+    for key, off in (('pair_a', CH_PAIR_A), ('pair_b', CH_PAIR_B)):
+        if fields.get(key):
+            struct.pack_into('<HH', data, b + off,
+                             int(fields[key][0]) & 0xFFFF, int(fields[key][1]) & 0xFFFF)
     if fields.get('name') is not None:
         _put_text(data, b + CH_NAME, CH_NAME_LEN, fields['name'], table)
     for i, line in enumerate(fields.get('lines') or []):

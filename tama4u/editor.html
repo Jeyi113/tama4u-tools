@@ -206,7 +206,13 @@
         <b>변신 아이템</b>은 그 캐릭터로 진화시킬 때 쓰는 내용물이고, 릴리스 노트의
         "X를 세 번 먹인다"와 13/13으로 일치합니다. <b>성별</b>은 15/15로 맞습니다.<br>
         <b>"세 번"이라는 횟수는 아직 찾지 못했습니다</b> — 지금까지 나온 VDP가 전부
-        3회로 같아서 어느 바이트인지 가릴 근거가 없습니다.
+        3회로 같아서 어느 바이트인지 가릴 근거가 없습니다.<br>
+        <b>캐릭터별 "좋아하는 아이템" 항목은 파일에 없습니다.</b> 접두부와 캐릭터
+        패킷을 전부 훑어도 이 VDP의 내용물을 가리키는 값은 위의 변신 아이템
+        하나뿐입니다. 아이템 쪽 호불호는 기본 P's 32캐릭터용이라 피어스 캐릭터와
+        무관합니다. <b>미해독 쌍</b>의 두 번째 값(0x3A9A~0x3AA9, 16종)은 어느 기종의
+        아이템 인덱스에도 없어 정체를 단정하지 않았습니다 — 기기에서 시험해 볼 수
+        있도록 값만 열어 두었습니다.
       </div>
     </div>
     <div class="card" id="likesCard">
@@ -804,6 +810,12 @@ function renderVdpChars(){
         <span class="ad" style="white-space:nowrap">변신 아이템을 3번</span>
         <select class="vc-item" style="flex:1">${opts(c)}</select>
       </div>
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <span class="ad" style="white-space:nowrap">미해독 쌍</span>
+        ${['a','b'].map(w=>`<span class="ad">${w.toUpperCase()}</span>
+          <input class="vc-p${w}0" type="number" min="0" max="65535" value="${c['pair_'+w][0]}" style="width:56px">
+          <input class="vc-p${w}1" type="number" min="0" max="65535" value="${c['pair_'+w][1]}" style="width:76px">`).join('')}
+      </div>
       <div class="vc-lines" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
         ${c.lines.map((t,i)=>`<label style="display:flex;gap:6px;align-items:center">
           <span class="ad" style="width:74px;text-align:right">${LINE_LABELS[i]}</span>
@@ -818,6 +830,8 @@ function renderVdpChars(){
     q('.vc-month').oninput=e=>c.birth_month=+e.target.value;
     q('.vc-day').oninput=e=>c.birth_day=+e.target.value;
     q('.vc-item').onchange=e=>c.item_serial=+e.target.value;
+    ['a','b'].forEach(w=>[0,1].forEach(i=>
+      q(`.vc-p${w}${i}`).oninput=e=>c['pair_'+w][i]=+e.target.value));
     [...box.querySelectorAll('.vc-line')].forEach(inp=>
       inp.oninput=e=>c.lines[+e.target.dataset.i]=e.target.value);
   });
@@ -1575,7 +1589,7 @@ $('saveBtn').onclick=async()=>{
     path:[...cctx.parent.path,'vdpchar',k],
     name:c.name, gender:c.gender, lines:c.lines,
     birth_month:c.birth_month, birth_day:c.birth_day,
-    item_serial:c.item_serial}));
+    item_serial:c.item_serial, pair_a:c.pair_a, pair_b:c.pair_b}));
   const par=charParent();
   if(par&&par.char_extra&&par.char_extra.acc_pos)
     edits.push({path:par.path,char_acc_pos:par.char_extra.acc_pos});
