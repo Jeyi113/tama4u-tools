@@ -34,12 +34,27 @@ CATALOG = {
         ('타마데파 · 장난감',  '01040001', 'ffff00ff'),
         ('타마모리 · 액세서리', '01020000', 'ffff00ff'),
         ('고치 인테리어 · 방', '01070000', 'ffff00ff'),
+        # the studio splits in two: 01 is the costume worn, 02 the backdrop
+        # behind it.  The pack's own names agree -- a backdrop file is
+        # STUDIO__<name> with two underscores -- and every backdrop is
+        # 4,134-4,140 bytes with one sprite, against 6.1-7.4 KB and five or
+        # six for a costume.
         ('사진관 · 의상',      '02030001', 'ffff00ff'),
+        ('사진관 · 배경',      '02030002', 'ffff00ff'),
         ('우편함 · 편지',      '01060000', 'ffffffff'),
+        # two donuts sit on 02 rather than the usual 03.  Both are filed
+        # under Snacks and both carry a price, so this is a snack variant,
+        # not the giveaway shelf the same byte means on the later models.
+        ('레스토랑 · 간식 (변종)', '01010002', 'ffff00ff'),
         ('게임센터 · 게임',    '14020000', 'ffffffff', (0x64, 0x37)),
         ('외출지',             '14020000', 'ffffffff', (0x64, 0x0F)),
     ],
     'iDL': _COMMON + [
+        # the giveaway shelves: a handful ship as standalone downloads, but
+        # most arrive nested inside seeds, happy mail, recipes and stamp
+        # cards as the reward those hand out
+        ('레스토랑 · 식사 (비매품)', '81010101', 'ffffffff'),
+        ('레스토랑 · 간식 (비매품)', '81010102', 'ffffffff'),
         ('우편함 · 편지',          '81065101', 'ffffffff'),
         ('우편함 · 해피메일',      '81065202', 'ffffffff'),
         ('타마모리 · 액세서리 (P\'s용)', '81023500', 'ffffffff'),
@@ -50,6 +65,11 @@ CATALOG = {
         ('외출지',                 '94024702', 'ffffffff'),
     ],
     "P's": _COMMON + [
+        # the giveaway shelves: a handful ship as standalone downloads, but
+        # most arrive nested inside seeds, happy mail, recipes and stamp
+        # cards as the reward those hand out
+        ('레스토랑 · 식사 (비매품)', '81010101', 'ffffffff'),
+        ('레스토랑 · 간식 (비매품)', '81010102', 'ffffffff'),
         ('보물상자 · 편지',        '81065101', 'ffffffff'),
         ('보물상자 · 스탬프카드',  '81065203', 'ffffffff'),
         ('통신놀이 · 레시피',      '81092900', 'ffffffff'),
