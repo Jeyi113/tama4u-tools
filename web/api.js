@@ -215,6 +215,7 @@ export function describe(data, opts = {}) {
     if (banks.length)
       info.banks = banks.map(b => ({ offset: b.offset, loose: b.loose ?? null,
                                      frames: b.frames.map(frameOut) }));
+    if (F.isVdpPart(pkt)) info.vdp_part = { stream: F.vdpPartStream(pkt).length };
     if (F.isVdp(pkt) && path.length === 1) {
       const got = F.vdpSubPackets(pkt, extra);
       info.vdp_truncated = !!(got && got[2].length && !got[2][got[2].length - 1].checksumOk());
@@ -230,6 +231,13 @@ export function describe(data, opts = {}) {
         price: F.getPrice(sub),
         sprites: scanLoose(sub.raw, 0x40).length,
       }));
+      if (got) {
+        // the raising conditions, from the payload's 4 KB prefix
+        const where = new Map(got[2].map((sub, k) => [sub.serial, k]));
+        info.vdp_chars = F.vdpCharBlocks(got[0], pkt.model).map(c => ({
+          ...c, item_index: where.has(c.item_serial) ? where.get(c.item_serial) : null,
+        }));
+      }
     }
     out.packets.push(info);
   }
@@ -319,19 +327,25 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     }
   };
   for (const edit of edits) {
-    if (!edit.path.includes('vdp')) applyOne(findPacket(packets, edit.path), edit);
+    if (!edit.path.includes('vdp') && !edit.path.includes('vdpchar'))
+      applyOne(findPacket(packets, edit.path), edit);
   }
   // VDP contents live inside the packed stream: unpack once per bundle,
-  // apply everything, then rebuild the stream once.
+  // apply everything, then rebuild the stream once.  The raising conditions
+  // sit in the same payload, so they ride along rather than costing a
+  // second unpack-repack.
   const groups = new Map();
   for (const edit of edits) {
-    const k = edit.path.indexOf('vdp');
-    if (k < 0) continue;
-    const key = edit.path.slice(0, k).join(',');
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push([edit.path[k + 1], edit]);
+    for (const step of ['vdp', 'vdpchar']) {
+      const k = edit.path.indexOf(step);
+      if (k < 0) continue;
+      const key = edit.path.slice(0, k).join(',');
+      if (!groups.has(key)) groups.set(key, [[], []]);
+      groups.get(key)[step === 'vdp' ? 0 : 1].push([edit.path[k + 1], edit]);
+      break;
+    }
   }
-  for (const [key, jobs] of groups) {
+  for (const [key, [jobs, charjobs]] of groups) {
     const pkt = findPacket(packets, key.split(',').map(Number));
     const got = F.vdpSubPackets(pkt, extra);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
@@ -346,6 +360,8 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
       }
       applyOne(subs[idx], edit);
     }
+    for (const [idx, edit] of charjobs)
+      F.vdpWriteCharBlock(data, idx, edit, pkt.model);
     const before = pkt.size;
     if (extra) {
       // split back across the pair: part 1 fills to 32,768 bytes

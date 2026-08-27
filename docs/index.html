@@ -198,6 +198,17 @@
         저장할 때 압축을 다시 해서 스트림을 새로 만듭니다.
       </div>
     </div>
+    <div class="card" id="vdpCharCard" hidden>
+      <h2>육성 조건 <span id="vdpCharInfo" style="font-weight:400;text-transform:none"></span></h2>
+      <div id="vdpCharList"></div>
+      <div class="hint">
+        압축을 푼 페이로드의 앞 4KB에 캐릭터마다 블록이 하나씩 들어 있습니다.
+        <b>변신 아이템</b>은 그 캐릭터로 진화시킬 때 쓰는 내용물이고, 릴리스 노트의
+        "X를 세 번 먹인다"와 13/13으로 일치합니다. <b>성별</b>은 15/15로 맞습니다.<br>
+        <b>"세 번"이라는 횟수는 아직 찾지 못했습니다</b> — 지금까지 나온 VDP가 전부
+        3회로 같아서 어느 바이트인지 가릴 근거가 없습니다.
+      </div>
+    </div>
     <div class="card" id="likesCard">
       <h2>좋아함 / 싫어함 <span style="font-weight:400;text-transform:none">(클릭: 없음→<span style="color:var(--ok)">좋아함</span>→<span style="color:var(--accent)">싫어함</span>)</span></h2>
       <div class="likes" id="likes"></div>
@@ -1449,6 +1460,62 @@ function vdpRepack(p, data) {
 
 
 
+// The payload opens with a 4 KB pierce header before the first content
+// packet, and the raising conditions live there -- one block per raisable
+// character, 0x180 apart, starting at 0x20.  See tama4u/vdp.py for the
+// field map and how each one was pinned.
+const VDP_CHAR_BLOCK = 0x20, VDP_CHAR_STRIDE = 0x180, VDP_CHAR_COUNT_AT = 0x1B;
+const VC_ID = 0x00, VC_GENDER = 0x02, VC_MONTH = 0x18, VC_DAY = 0x19;
+const VC_ITEM = 0x28, VC_LINES = 0x2A, VC_NAME = 0xBA;
+const VC_LINE_LEN = 0x18, VC_LINES_N = 6, VC_NAME_LEN = 14;
+const VDP_GENDER = { 0: 'Boy', 1: 'Girl' };
+
+function vdpCharBlocks(data, model = "P's") {
+  const table = tableFor(model), out = [];
+  const n = data.length > VDP_CHAR_COUNT_AT ? data[VDP_CHAR_COUNT_AT] : 0;
+  // Array.from first: decode maps over the codes, and mapping a Uint8Array
+  // gives another Uint8Array, which turns every character back into 0
+  const text = (o, len) => decode(Array.from(data.slice(o, o + len)), table)
+    .replace(/[　 ]+$/, '');
+  for (let k = 0; k < n; k++) {
+    const b = VDP_CHAR_BLOCK + k * VDP_CHAR_STRIDE;
+    if (b + VC_NAME + VC_NAME_LEN > data.length) break;
+    const g = data[b + VC_GENDER];
+    const lines = [];
+    for (let i = 0; i < VC_LINES_N; i++)
+      lines.push(text(b + VC_LINES + i * VC_LINE_LEN, VC_LINE_LEN));
+    out.push({
+      index: k, offset: b,
+      id: data[b + VC_ID] | (data[b + VC_ID + 1] << 8),
+      gender: g, gender_label: VDP_GENDER[g] ?? '?',
+      birth_month: data[b + VC_MONTH], birth_day: data[b + VC_DAY],
+      item_serial: data[b + VC_ITEM] | (data[b + VC_ITEM + 1] << 8),
+      name: text(b + VC_NAME, VC_NAME_LEN), lines,
+    });
+  }
+  return out;
+}
+
+function vdpWriteCharBlock(data, k, fields, model = "P's") {
+  const b = VDP_CHAR_BLOCK + k * VDP_CHAR_STRIDE;
+  const put = (off, slots, s) => {
+    const codes = encode(String(s), model), pad = spaceCode(model);
+    for (let i = 0; i < slots; i++)
+      data[off + i] = (i < codes.length ? codes[i] : pad) & 0xFF;
+  };
+  if (fields.gender !== undefined) data[b + VC_GENDER] = fields.gender & 1;
+  if (fields.birth_month !== undefined) data[b + VC_MONTH] = fields.birth_month & 0xFF;
+  if (fields.birth_day !== undefined) data[b + VC_DAY] = fields.birth_day & 0xFF;
+  if (fields.item_serial !== undefined) {
+    data[b + VC_ITEM] = fields.item_serial & 0xFF;
+    data[b + VC_ITEM + 1] = (fields.item_serial >> 8) & 0xFF;
+  }
+  if (fields.name != null) put(b + VC_NAME, VC_NAME_LEN, fields.name);
+  (fields.lines || []).forEach((line, i) => {
+    if (line != null) put(b + VC_LINES + i * VC_LINE_LEN, VC_LINE_LEN, line);
+  });
+}
+
 // What a content packet really is, where the destination misleads --
 // see tama4u/vdp.py.
 function vdpContentLabel(sub, plain) {
@@ -1986,6 +2053,7 @@ function describe(data, opts = {}) {
     if (banks.length)
       info.banks = banks.map(b => ({ offset: b.offset, loose: b.loose ?? null,
                                      frames: b.frames.map(frameOut) }));
+    if (isVdpPart(pkt)) info.vdp_part = { stream: vdpPartStream(pkt).length };
     if (isVdp(pkt) && path.length === 1) {
       const got = vdpSubPackets(pkt, extra);
       info.vdp_truncated = !!(got && got[2].length && !got[2][got[2].length - 1].checksumOk());
@@ -2001,6 +2069,13 @@ function describe(data, opts = {}) {
         price: getPrice(sub),
         sprites: scanLoose(sub.raw, 0x40).length,
       }));
+      if (got) {
+        // the raising conditions, from the payload's 4 KB prefix
+        const where = new Map(got[2].map((sub, k) => [sub.serial, k]));
+        info.vdp_chars = vdpCharBlocks(got[0], pkt.model).map(c => ({
+          ...c, item_index: where.has(c.item_serial) ? where.get(c.item_serial) : null,
+        }));
+      }
     }
     out.packets.push(info);
   }
@@ -2090,19 +2165,25 @@ function applyEdits(data, edits, newJpeg = null, partner = null) {
     }
   };
   for (const edit of edits) {
-    if (!edit.path.includes('vdp')) applyOne(findPacket(packets, edit.path), edit);
+    if (!edit.path.includes('vdp') && !edit.path.includes('vdpchar'))
+      applyOne(findPacket(packets, edit.path), edit);
   }
   // VDP contents live inside the packed stream: unpack once per bundle,
-  // apply everything, then rebuild the stream once.
+  // apply everything, then rebuild the stream once.  The raising conditions
+  // sit in the same payload, so they ride along rather than costing a
+  // second unpack-repack.
   const groups = new Map();
   for (const edit of edits) {
-    const k = edit.path.indexOf('vdp');
-    if (k < 0) continue;
-    const key = edit.path.slice(0, k).join(',');
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push([edit.path[k + 1], edit]);
+    for (const step of ['vdp', 'vdpchar']) {
+      const k = edit.path.indexOf(step);
+      if (k < 0) continue;
+      const key = edit.path.slice(0, k).join(',');
+      if (!groups.has(key)) groups.set(key, [[], []]);
+      groups.get(key)[step === 'vdp' ? 0 : 1].push([edit.path[k + 1], edit]);
+      break;
+    }
   }
-  for (const [key, jobs] of groups) {
+  for (const [key, [jobs, charjobs]] of groups) {
     const pkt = findPacket(packets, key.split(',').map(Number));
     const got = vdpSubPackets(pkt, extra);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
@@ -2117,6 +2198,8 @@ function applyEdits(data, edits, newJpeg = null, partner = null) {
       }
       applyOne(subs[idx], edit);
     }
+    for (const [idx, edit] of charjobs)
+      vdpWriteCharBlock(data, idx, edit, pkt.model);
     const before = pkt.size;
     if (extra) {
       // split back across the pair: part 1 fills to 32,768 bytes
@@ -2575,7 +2658,7 @@ window.addEventListener('keydown',e=>{
 function renderVdp(){
   const rows=pk.vdp||[];
   $('vdpCard').hidden=!rows.length;
-  if(!rows.length)return;
+  if(!rows.length){$('vdpCharCard').hidden=true;return}
   $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`
     +(pk.vdp_merged?' · 짝 파일 합쳐서 읽음 (저장하면 두 파일)':'');
   // one download caps at 32,768 bytes, so a big bundle ships as a VDP+ in
@@ -2594,6 +2677,60 @@ function renderVdp(){
     +`<td class="ad">${r.model} · ${r.size.toLocaleString()}B</td></tr>`).join('');
   [...document.querySelectorAll('#vdpRows tr.pick')].forEach(tr=>
     tr.onclick=()=>selectPacket([...pk.path,'vdp',+tr.dataset.i]));
+  renderVdpChars();
+}
+
+// The raising conditions ride in the same payload as the contents, so they
+// are edited here and shipped with the bundle's other edits on save.
+const LINE_LABELS=['생일','프러포즈','배고픔','간식','놀이','옷갈아입기'];
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function renderVdpChars(){
+  const cs=pk.vdp_chars||[], rows=pk.vdp||[];
+  $('vdpCharCard').hidden=!cs.length;
+  if(!cs.length)return;
+  $('vdpCharInfo').textContent=`— 육성 가능한 캐릭터 ${cs.length}명`;
+  const opts=c=>rows.map(r=>`<option value="${r.serial}"${r.serial===c.item_serial
+      ?' selected':''}>[${r.index}] ${r.name||'(이름 없음)'} — ${r.label}</option>`).join('')
+    +(rows.some(r=>r.serial===c.item_serial)?''
+      :`<option value="${c.item_serial}" selected>0x${(c.item_serial>>>0)
+        .toString(16).toUpperCase().padStart(4,'0')} (이 VDP 안에 없음)</option>`);
+  $('vdpCharList').innerHTML=cs.map((c,k)=>`
+    <div class="vdpchar" data-k="${k}" style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <input class="vc-name" maxlength="14" value="${esc(c.name)}"
+               style="font-weight:600;width:150px">
+        <select class="vc-gender">
+          <option value="0"${c.gender===0?' selected':''}>남</option>
+          <option value="1"${c.gender===1?' selected':''}>여</option>
+        </select>
+        <span class="ad">생일</span>
+        <input class="vc-month" type="number" min="1" max="12" value="${c.birth_month}" style="width:56px">
+        <span class="ad">/</span>
+        <input class="vc-day" type="number" min="1" max="31" value="${c.birth_day}" style="width:56px">
+        <span class="ad">id 0x${(c.id>>>0).toString(16).toUpperCase().padStart(4,'0')}</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <span class="ad" style="white-space:nowrap">변신 아이템을 3번</span>
+        <select class="vc-item" style="flex:1">${opts(c)}</select>
+      </div>
+      <div class="vc-lines" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+        ${c.lines.map((t,i)=>`<label style="display:flex;gap:6px;align-items:center">
+          <span class="ad" style="width:74px;text-align:right">${LINE_LABELS[i]}</span>
+          <input class="vc-line" data-i="${i}" maxlength="24" value="${esc(t)}" style="flex:1">
+        </label>`).join('')}
+      </div>
+    </div>`).join('');
+  [...document.querySelectorAll('#vdpCharList .vdpchar')].forEach(box=>{
+    const c=cs[+box.dataset.k], q=s=>box.querySelector(s);
+    q('.vc-name').oninput=e=>c.name=e.target.value;
+    q('.vc-gender').onchange=e=>c.gender=+e.target.value;
+    q('.vc-month').oninput=e=>c.birth_month=+e.target.value;
+    q('.vc-day').oninput=e=>c.birth_day=+e.target.value;
+    q('.vc-item').onchange=e=>c.item_serial=+e.target.value;
+    [...box.querySelectorAll('.vc-line')].forEach(inp=>
+      inp.oninput=e=>c.lines[+e.target.dataset.i]=e.target.value);
+  });
 }
 
 // ---- animation simulation (loops frames of the current bank) ----
@@ -3339,6 +3476,12 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_stats)edit.char_stats=pk.char_stats;
   if(pk.version)edit.version=pk.version;
   const edits=[edit];
+  // the raising conditions belong to this VDP's payload, not to a content
+  (pk.vdp_chars||[]).forEach((c,k)=>edits.push({
+    path:[...pk.path,'vdpchar',k],
+    name:c.name, gender:c.gender, lines:c.lines,
+    birth_month:c.birth_month, birth_day:c.birth_day,
+    item_serial:c.item_serial}));
   const par=charParent();
   if(par&&par.char_extra&&par.char_extra.acc_pos)
     edits.push({path:par.path,char_acc_pos:par.char_extra.acc_pos});

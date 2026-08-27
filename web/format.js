@@ -622,6 +622,62 @@ export function vdpRepack(p, data) {
 
 
 
+// The payload opens with a 4 KB pierce header before the first content
+// packet, and the raising conditions live there -- one block per raisable
+// character, 0x180 apart, starting at 0x20.  See tama4u/vdp.py for the
+// field map and how each one was pinned.
+const VDP_CHAR_BLOCK = 0x20, VDP_CHAR_STRIDE = 0x180, VDP_CHAR_COUNT_AT = 0x1B;
+const VC_ID = 0x00, VC_GENDER = 0x02, VC_MONTH = 0x18, VC_DAY = 0x19;
+const VC_ITEM = 0x28, VC_LINES = 0x2A, VC_NAME = 0xBA;
+const VC_LINE_LEN = 0x18, VC_LINES_N = 6, VC_NAME_LEN = 14;
+const VDP_GENDER = { 0: 'Boy', 1: 'Girl' };
+
+export function vdpCharBlocks(data, model = "P's") {
+  const table = tableFor(model), out = [];
+  const n = data.length > VDP_CHAR_COUNT_AT ? data[VDP_CHAR_COUNT_AT] : 0;
+  // Array.from first: decode maps over the codes, and mapping a Uint8Array
+  // gives another Uint8Array, which turns every character back into 0
+  const text = (o, len) => decode(Array.from(data.slice(o, o + len)), table)
+    .replace(/[　 ]+$/, '');
+  for (let k = 0; k < n; k++) {
+    const b = VDP_CHAR_BLOCK + k * VDP_CHAR_STRIDE;
+    if (b + VC_NAME + VC_NAME_LEN > data.length) break;
+    const g = data[b + VC_GENDER];
+    const lines = [];
+    for (let i = 0; i < VC_LINES_N; i++)
+      lines.push(text(b + VC_LINES + i * VC_LINE_LEN, VC_LINE_LEN));
+    out.push({
+      index: k, offset: b,
+      id: data[b + VC_ID] | (data[b + VC_ID + 1] << 8),
+      gender: g, gender_label: VDP_GENDER[g] ?? '?',
+      birth_month: data[b + VC_MONTH], birth_day: data[b + VC_DAY],
+      item_serial: data[b + VC_ITEM] | (data[b + VC_ITEM + 1] << 8),
+      name: text(b + VC_NAME, VC_NAME_LEN), lines,
+    });
+  }
+  return out;
+}
+
+export function vdpWriteCharBlock(data, k, fields, model = "P's") {
+  const b = VDP_CHAR_BLOCK + k * VDP_CHAR_STRIDE;
+  const put = (off, slots, s) => {
+    const codes = encode(String(s), model), pad = spaceCode(model);
+    for (let i = 0; i < slots; i++)
+      data[off + i] = (i < codes.length ? codes[i] : pad) & 0xFF;
+  };
+  if (fields.gender !== undefined) data[b + VC_GENDER] = fields.gender & 1;
+  if (fields.birth_month !== undefined) data[b + VC_MONTH] = fields.birth_month & 0xFF;
+  if (fields.birth_day !== undefined) data[b + VC_DAY] = fields.birth_day & 0xFF;
+  if (fields.item_serial !== undefined) {
+    data[b + VC_ITEM] = fields.item_serial & 0xFF;
+    data[b + VC_ITEM + 1] = (fields.item_serial >> 8) & 0xFF;
+  }
+  if (fields.name != null) put(b + VC_NAME, VC_NAME_LEN, fields.name);
+  (fields.lines || []).forEach((line, i) => {
+    if (line != null) put(b + VC_LINES + i * VC_LINE_LEN, VC_LINE_LEN, line);
+  });
+}
+
 // What a content packet really is, where the destination misleads --
 // see tama4u/vdp.py.
 export function vdpContentLabel(sub, plain) {

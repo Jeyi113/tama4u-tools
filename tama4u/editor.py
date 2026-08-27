@@ -321,6 +321,12 @@ def describe(data, partner=None):
                  'price': items.get_price(sub),
                  'sprites': len(sprites.scan_loose(sub.raw, lo=0x40))}
                 for k, sub in enumerate(got[2])]
+            if got is not None:
+                # the raising conditions, from the payload's 4 KB prefix
+                where = {sub.serial: k for k, sub in enumerate(got[2])}
+                info['vdp_chars'] = [
+                    dict(c, item_index=where.get(c['item_serial']))
+                    for c in vdp.char_blocks(got[0], model=pkt.model)]
         out['packets'].append(info)
     return out
 
@@ -445,19 +451,22 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
         jpeg = new_jpeg
     for edit in edits:
         path = list(edit['path'])
-        if 'vdp' in path:
+        if 'vdp' in path or 'vdpchar' in path:
             continue                # collected below
         _apply_fields(_find(packets, path), edit)
     # VDP contents live inside the packed stream: unpack once per
-    # bundle, apply everything, then rebuild the stream once.
-    groups = collections.defaultdict(list)
+    # bundle, apply everything, then rebuild the stream once.  The
+    # raising conditions sit in the same payload, so they ride along
+    # rather than costing a second unpack-repack.
+    groups = collections.defaultdict(lambda: ([], []))
     for edit in edits:
         path = list(edit['path'])
-        if 'vdp' not in path:
-            continue
-        k = path.index('vdp')
-        groups[tuple(path[:k])].append((path[k + 1], edit))
-    for top, jobs in groups.items():
+        for step, bucket in (('vdp', 0), ('vdpchar', 1)):
+            if step in path:
+                k = path.index(step)
+                groups[tuple(path[:k])][bucket].append((path[k + 1], edit))
+                break
+    for top, (jobs, charjobs) in groups.items():
         pkt = _find(packets, list(top))
         got = vdp.sub_packets(pkt, extra)
         if got is None:
@@ -472,6 +481,8 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
                 subs[idx] = vdp.fit_content(subs[idx], srcpkts[0])
                 continue
             _apply_fields(subs[idx], edit)
+        for idx, edit in charjobs:
+            vdp.write_char_block(payload, idx, edit, model=pkt.model)
         before = pkt.size
         if extra:
             # split back across the pair: part 1 fills to 32,768 bytes and

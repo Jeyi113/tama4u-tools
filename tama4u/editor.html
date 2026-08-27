@@ -198,6 +198,17 @@
         저장할 때 압축을 다시 해서 스트림을 새로 만듭니다.
       </div>
     </div>
+    <div class="card" id="vdpCharCard" hidden>
+      <h2>육성 조건 <span id="vdpCharInfo" style="font-weight:400;text-transform:none"></span></h2>
+      <div id="vdpCharList"></div>
+      <div class="hint">
+        압축을 푼 페이로드의 앞 4KB에 캐릭터마다 블록이 하나씩 들어 있습니다.
+        <b>변신 아이템</b>은 그 캐릭터로 진화시킬 때 쓰는 내용물이고, 릴리스 노트의
+        "X를 세 번 먹인다"와 13/13으로 일치합니다. <b>성별</b>은 15/15로 맞습니다.<br>
+        <b>"세 번"이라는 횟수는 아직 찾지 못했습니다</b> — 지금까지 나온 VDP가 전부
+        3회로 같아서 어느 바이트인지 가릴 근거가 없습니다.
+      </div>
+    </div>
     <div class="card" id="likesCard">
       <h2>좋아함 / 싫어함 <span style="font-weight:400;text-transform:none">(클릭: 없음→<span style="color:var(--ok)">좋아함</span>→<span style="color:var(--accent)">싫어함</span>)</span></h2>
       <div class="likes" id="likes"></div>
@@ -715,7 +726,7 @@ window.addEventListener('keydown',e=>{
 function renderVdp(){
   const rows=pk.vdp||[];
   $('vdpCard').hidden=!rows.length;
-  if(!rows.length)return;
+  if(!rows.length){$('vdpCharCard').hidden=true;return}
   $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`
     +(pk.vdp_merged?' · 짝 파일 합쳐서 읽음 (저장하면 두 파일)':'');
   // one download caps at 32,768 bytes, so a big bundle ships as a VDP+ in
@@ -734,6 +745,60 @@ function renderVdp(){
     +`<td class="ad">${r.model} · ${r.size.toLocaleString()}B</td></tr>`).join('');
   [...document.querySelectorAll('#vdpRows tr.pick')].forEach(tr=>
     tr.onclick=()=>selectPacket([...pk.path,'vdp',+tr.dataset.i]));
+  renderVdpChars();
+}
+
+// The raising conditions ride in the same payload as the contents, so they
+// are edited here and shipped with the bundle's other edits on save.
+const LINE_LABELS=['생일','프러포즈','배고픔','간식','놀이','옷갈아입기'];
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function renderVdpChars(){
+  const cs=pk.vdp_chars||[], rows=pk.vdp||[];
+  $('vdpCharCard').hidden=!cs.length;
+  if(!cs.length)return;
+  $('vdpCharInfo').textContent=`— 육성 가능한 캐릭터 ${cs.length}명`;
+  const opts=c=>rows.map(r=>`<option value="${r.serial}"${r.serial===c.item_serial
+      ?' selected':''}>[${r.index}] ${r.name||'(이름 없음)'} — ${r.label}</option>`).join('')
+    +(rows.some(r=>r.serial===c.item_serial)?''
+      :`<option value="${c.item_serial}" selected>0x${(c.item_serial>>>0)
+        .toString(16).toUpperCase().padStart(4,'0')} (이 VDP 안에 없음)</option>`);
+  $('vdpCharList').innerHTML=cs.map((c,k)=>`
+    <div class="vdpchar" data-k="${k}" style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <input class="vc-name" maxlength="14" value="${esc(c.name)}"
+               style="font-weight:600;width:150px">
+        <select class="vc-gender">
+          <option value="0"${c.gender===0?' selected':''}>남</option>
+          <option value="1"${c.gender===1?' selected':''}>여</option>
+        </select>
+        <span class="ad">생일</span>
+        <input class="vc-month" type="number" min="1" max="12" value="${c.birth_month}" style="width:56px">
+        <span class="ad">/</span>
+        <input class="vc-day" type="number" min="1" max="31" value="${c.birth_day}" style="width:56px">
+        <span class="ad">id 0x${(c.id>>>0).toString(16).toUpperCase().padStart(4,'0')}</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <span class="ad" style="white-space:nowrap">변신 아이템을 3번</span>
+        <select class="vc-item" style="flex:1">${opts(c)}</select>
+      </div>
+      <div class="vc-lines" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+        ${c.lines.map((t,i)=>`<label style="display:flex;gap:6px;align-items:center">
+          <span class="ad" style="width:74px;text-align:right">${LINE_LABELS[i]}</span>
+          <input class="vc-line" data-i="${i}" maxlength="24" value="${esc(t)}" style="flex:1">
+        </label>`).join('')}
+      </div>
+    </div>`).join('');
+  [...document.querySelectorAll('#vdpCharList .vdpchar')].forEach(box=>{
+    const c=cs[+box.dataset.k], q=s=>box.querySelector(s);
+    q('.vc-name').oninput=e=>c.name=e.target.value;
+    q('.vc-gender').onchange=e=>c.gender=+e.target.value;
+    q('.vc-month').oninput=e=>c.birth_month=+e.target.value;
+    q('.vc-day').oninput=e=>c.birth_day=+e.target.value;
+    q('.vc-item').onchange=e=>c.item_serial=+e.target.value;
+    [...box.querySelectorAll('.vc-line')].forEach(inp=>
+      inp.oninput=e=>c.lines[+e.target.dataset.i]=e.target.value);
+  });
 }
 
 // ---- animation simulation (loops frames of the current bank) ----
@@ -1480,6 +1545,12 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_stats)edit.char_stats=pk.char_stats;
   if(pk.version)edit.version=pk.version;
   const edits=[edit];
+  // the raising conditions belong to this VDP's payload, not to a content
+  (pk.vdp_chars||[]).forEach((c,k)=>edits.push({
+    path:[...pk.path,'vdpchar',k],
+    name:c.name, gender:c.gender, lines:c.lines,
+    birth_month:c.birth_month, birth_day:c.birth_day,
+    item_serial:c.item_serial}));
   const par=charParent();
   if(par&&par.char_extra&&par.char_extra.acc_pos)
     edits.push({path:par.path,char_acc_pos:par.char_extra.acc_pos});
