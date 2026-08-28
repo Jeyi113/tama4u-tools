@@ -731,6 +731,25 @@ export const gameShape = p =>
   scanLoose(p.raw, 0x40).map(r => [r[1], r[2]])
     .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
 
+// Who an outing carries -- see tama4u/create.py
+export function outingCast(p) {
+  const kids = p.children.map(c => [c.offset, c.offset + c.size]);
+  const inside = o => kids.some(([a, b]) => a <= o && o < b);
+  const sizes = new Map();
+  for (const rec of scanLoose(p.raw, 0x40)) {
+    const key = `${rec[1]}x${rec[2]}`;
+    if ((rec[1] === 128 && rec[2] === 72) || inside(rec[0])) continue;
+    sizes.set(key, (sizes.get(key) || 0) + 1);
+  }
+  if (!sizes.size) return null;
+  let best = null;
+  for (const [k, n] of sizes) if (!best || n > best[1]) best = [k, n];
+  const [w, h] = best[0].split('x').map(Number);
+  return { sprite: [w, h], frames: best[1],
+           characters: Math.max(1, Math.ceil(best[1] / 2)),
+           paired: best[1] % 2 === 0 };
+}
+
 export function vdpIsCharContent(sub) {
   return hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_CHAR_DEST
     && sub.size === VDP_CHAR_SIZE;

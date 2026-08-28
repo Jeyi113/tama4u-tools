@@ -164,6 +164,11 @@ def describe(data, partner=None):
                 shape = create.game_shape(pkt)
                 if shape:
                     info['game_shape'] = shape
+                if items.get_destination(pkt) == '외출지':
+                    cast = create.outing_cast(pkt)
+                    if cast:
+                        cast['gifts'] = len(pkt.children or [])
+                        info['outing'] = cast
         if info['is_item'] and info['stats_verified']:
             anim = items.get_anim(pkt)
             info['fields'] = sorted(items.editable_fields(pkt))

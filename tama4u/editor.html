@@ -133,6 +133,8 @@
       <div class="row">
         <div><label id="serialLabel">시리얼</label><input id="fSerial" type="number" min="0" max="65535"></div>
         <div id="priceBox"><label>가격</label><input id="fPrice" type="number" min="0" max="65535"></div>
+        <div id="outingBox" hidden style="grid-column:1/-1"><label>외출지 구성</label>
+          <div id="outingNote" class="hint" style="margin:4px 0 0"></div></div>
         <div id="shapeBox" hidden style="grid-column:1/-1"><label>스프라이트 구성 (게임 엔진)</label>
           <div id="shapeNote" class="hint" style="margin:4px 0 0"></div></div>
         <div id="idLineBox" hidden style="grid-column:1/-1"><label>iD 계열</label>
@@ -495,6 +497,13 @@ function selectPacket(path){
     + `  (앞 2바이트 = 기종/펌웨어)`;
   // a program's sprite layout is its engine: two different games built on
   // one carry the same set, which is what to match when picking a base
+  const cast=pk.outing;
+  $('outingBox').hidden=!cast;
+  if(cast)$('outingNote').innerHTML=
+    `캐릭터 <b>약 ${cast.characters}명</b> · 선물 <b>${cast.gifts}개</b><br>`
+    +`캐릭터 스프라이트 ${cast.sprite[0]}x${cast.sprite[1]} ${cast.frames}장`
+    +(cast.paired?' (캐릭터당 2장)':' — 홀수라 캐릭터 수는 추정')
+    +`. 선물은 중첩 패킷이라 위 목록에서 골라 편집할 수 있습니다.`;
   $('shapeBox').hidden=!pk.game_shape;
   if(pk.game_shape){
     const c={};

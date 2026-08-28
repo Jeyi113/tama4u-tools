@@ -111,6 +111,10 @@ export function describe(data, opts = {}) {
       if (F.isProgram(pkt)) {
         const shape = F.gameShape(pkt);
         if (shape.length) info.game_shape = shape;
+        if (F.getDestination(pkt) === '외출지') {
+          const cast = F.outingCast(pkt);
+          if (cast) { cast.gifts = pkt.children.length; info.outing = cast; }
+        }
       }
     }
     if (info.is_item && info.stats_verified) {

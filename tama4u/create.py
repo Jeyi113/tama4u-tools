@@ -18,6 +18,7 @@ one for a room), and each frame's slot is only as big as its own pixels and
 palette need, so a 4-colour sprite costs less than a 16-colour one and the
 file comes out as small as the rules allow.
 """
+import collections
 import struct
 
 from . import charset, container, destinations, items, models, sprites
@@ -210,6 +211,45 @@ def game_shape(pkt):
     """
     return sorted((r[1], r[2]) for r in sprites.scan_loose(bytes(pkt.raw),
                                                            lo=0x40))
+
+
+OUTING_BACKDROP = (128, 72)
+OUTING_FRAMES_PER_CHAR = 2
+
+
+def outing_cast(pkt):
+    """Who an outing carries: (sprite size, frame count, character count).
+
+    An outing is a place with characters standing in it, each with a couple
+    of animation frames and a line of dialogue.  The cast shows up as the
+    sprite size that repeats once the 128x72 backdrop and the gifts' own
+    icons are set aside, and the frames come in pairs, so half the count is
+    the head count.  Four of the 37 have an odd number, so it is an
+    estimate rather than a rule -- `paired` says which.
+
+    The gifts are nested packets and are counted separately.  On the
+    regional and sponsor outings the two agree exactly -- Kinki and Kanto
+    carry eight 30x36 frames and four gifts, Calbee and the cafes six and
+    three -- but 15 of the 37 hand out nothing at all, so one gift per
+    character is a pattern of those sets, not of outings generally.
+    """
+    # the gifts are whole packets sitting inside this one and they carry
+    # their own icons, so their bytes have to come out of the count first
+    kids = [(c.offset, c.offset + c.size) for c in (pkt.children or [])]
+    inside = lambda o: any(a <= o < b for a, b in kids)
+    sizes = collections.Counter()
+    for rec in sprites.scan_loose(bytes(pkt.raw), lo=0x40):
+        wh = (rec[1], rec[2])
+        if wh != OUTING_BACKDROP and not inside(rec[0]):
+            sizes[wh] += 1
+    if not sizes:
+        return None
+    (w, h), n = sizes.most_common(1)[0]
+    return {'sprite': [w, h], 'frames': n,
+            # round up, not to even: five frames reads as three characters
+            # with one of them holding a single frame
+            'characters': max(1, -(-n // OUTING_FRAMES_PER_CHAR)),
+            'paired': n % OUTING_FRAMES_PER_CHAR == 0}
 
 
 def from_base(data, model, label, name='', serial=None):
