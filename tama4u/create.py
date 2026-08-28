@@ -26,6 +26,14 @@ from . import charset, container, destinations, items, models, sprites
 # frame and the palette ceiling.  Where a model differs it gets its own
 # entry; '*' is every other model.
 #
+# The ceiling is the largest palette that category is ever seen with, not
+# the commonest -- most clothes use eight colours but P's and iD L ship
+# sixteen-colour ones, and capping at the usual value would refuse artwork
+# the device accepts.  Two of them are genuinely lower: 4U clothes never go
+# past eight and 4U accessories past nine.  Toys reach seventeen on P's and
+# iD, which crosses the codec's boundary -- sixteen or fewer is 4 bits per
+# pixel, more is 8, so those frames cost twice as much per pixel.
+#
 # Toys are the one category with no settled shape -- 101 different frame
 # layouts across 156 4U toys -- so the entry is a starting point, not a rule.
 BLUEPRINTS = {
@@ -37,21 +45,24 @@ BLUEPRINTS = {
     ('*', '냉장고 직행 · 간식 (비매품)'): ([(24, 24)] * 3, 16),
     ('*', '타마베이커리 · 간식'):    ([(24, 24)] * 3, 16),
     ('*', '고치 인테리어 · 방'):    ([(128, 72)], 16),
-    ('*', '타마모리 · 옷'):        ([(30, 12)] * 28, 8),
-    ('*', '타마모리 · 액세서리'):    ([(30, 20)] * 3 + [(44, 30)], 8),
-    ('*', "타마모리 · 액세서리 (P's용)"): ([(30, 20)] * 3 + [(44, 30)], 8),
-    ('*', '타마모리 · 액세서리 2'):  ([(30, 20)] * 3 + [(44, 30)], 8),
-    ('*', '타마데파 · 장난감'):     ([(24, 24), (30, 30)], 16),
+    ('*', '타마모리 · 옷'):        ([(30, 12)] * 28, 16),
+    ('*', '타마모리 · 액세서리'):    ([(30, 20)] * 3 + [(44, 30)], 16),
+    ('*', "타마모리 · 액세서리 (P's용)"): ([(30, 20)] * 3 + [(44, 30)], 16),
+    ('*', '타마모리 · 액세서리 2'):  ([(30, 20)] * 3 + [(44, 30)], 16),
+    ('*', '타마데파 · 장난감'):     ([(24, 24), (30, 30)], 17),
     ('*', '타마데파 · 생활용품'):    ([(24, 24)], 16),
     ('iD', '타마모리 · 액세서리'):   ([(24, 24), (30, 30), (36, 36), (60, 60),
                                    (24, 24), (30, 30), (36, 36)], 16),
     ('iD', '타마데파 · 장난감'):    ([(32, 30), (40, 28), (40, 20), (40, 20),
-                                   (56, 32), (32, 30)], 16),
+                                   (56, 32), (32, 30)], 17),
     ('iD', '사진관 · 의상'):       ([(48, 48)] * 6, 16),
     ('iD', '사진관 · 배경'):       ([(120, 64)], 16),
     ('iD', '우편함 · 편지'):       ([(32, 32)], 15),
     ('iDL', '타마데파 · 장난감'):   ([(32, 30)] + [(24, 24)] * 3, 16),
     ('4U', '타마데파 · 장난감'):    ([(128, 72)], 16),
+    ('4U', '타마모리 · 옷'):       ([(30, 12)] * 28, 8),
+    ('4U', '타마모리 · 액세서리'):   ([(30, 20)] * 3 + [(44, 30)], 9),
+    ('iDL', '타마데파 · 장난감'):   ([(32, 30)] + [(24, 24)] * 3, 16),
 }
 
 # Categories that are program blobs or need a stat block this cannot write.
@@ -114,6 +125,9 @@ CARRY_OVER = {
 }
 
 
+PAL4_MAX = 16       # up to here a pixel is 4 bits; past it, 8
+
+
 def blueprint(model, label):
     """([(w, h), ...], palette ceiling) for a category, or None."""
     return BLUEPRINTS.get((model, label)) or BLUEPRINTS.get(('*', label))
@@ -140,7 +154,10 @@ def blank_frames(model, label, colors=None):
     if spec is None:
         raise ValueError(f'{model}의 "{label}"은(는) 아직 만들 수 없습니다')
     geometry, ceiling = spec
-    ncol = max(2, min(colors or ceiling, ceiling))
+    # default to 16 even where the ceiling is higher: seventeen colours or
+    # more switches the codec to 8 bits per pixel and doubles what the
+    # sprites cost, which is not something to opt into by accident
+    ncol = max(2, min(colors or min(ceiling, PAL4_MAX), ceiling))
     # a flat transparent-ish palette; index 0 is what the device treats as
     # see-through on the categories that honour it
     palette = [(0, 255, 0)] + [(0, 0, 0)] * (ncol - 1)

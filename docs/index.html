@@ -3568,8 +3568,11 @@ function showSpec(){
   const counts={};
   b.frames.forEach(([w,h])=>{const k=`${w}x${h}`;counts[k]=(counts[k]||0)+1});
   const geo=Object.entries(counts).map(([k,n])=>n>1?`${k}×${n}`:k).join(', ');
-  $('mkColors').max=b.colors; $('mkColors').value=Math.min(+$('mkColors').value,b.colors);
-  $('mkNote').textContent=`스프라이트 ${b.frames.length}장 (${geo}) · 최대 ${b.colors}색`;
+  // default to 16 even where the ceiling is higher -- past 16 a pixel takes
+  // 8 bits instead of 4 and the sprites cost twice as much
+  $('mkColors').max=b.colors; $('mkColors').value=Math.min(16,b.colors);
+  $('mkNote').textContent=`스프라이트 ${b.frames.length}장 (${geo}) · 최대 ${b.colors}색`
+    +(b.colors>16?' (17색부터 픽셀당 8비트 — 용량 2배)':'');
 }
 $('mkModel').onchange=fillCats;
 $('mkCat').onchange=showSpec;
