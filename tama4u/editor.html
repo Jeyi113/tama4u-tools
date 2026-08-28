@@ -20,6 +20,9 @@
   .off{opacity:.4}
   .off input,.off select,.off button{pointer-events:none;background:#f2efe9}
   .offtag{font-size:10px;color:#a08c6a;margin-left:4px}
+  /* an inline display: beats the hidden attribute, so say it louder --
+     otherwise a panel that sets its own flex layout never actually hides */
+  [hidden]{display:none!important}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
   .card h2{font-size:13px;margin:0 0 10px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px}
   label{display:block;font-size:12px;color:#8a8172;margin:8px 0 2px}
@@ -810,8 +813,8 @@ function renderVdpChars(){
         <input class="vc-name" maxlength="14" value="${esc(c.name)}"
                style="font-weight:600;width:150px">
         <select class="vc-gender">
-          <option value="0"${c.gender===0?' selected':''}>남</option>
-          <option value="1"${c.gender===1?' selected':''}>여</option>
+          <option value="0"${c.gender===0?' selected':''}>남자</option>
+          <option value="1"${c.gender===1?' selected':''}>여자</option>
         </select>
         <span class="ad">생일</span>
         <input class="vc-month" type="number" min="1" max="12" value="${c.birth_month}" style="width:56px">
@@ -1413,6 +1416,7 @@ const CHAR_FIELDS=[
   ['revert_id','Revert ID (되돌아갈 캐릭터)','roster'],
   ['graphics','Graphics index','u16'],
   ['stage','스테이지','enum'],
+  ['gender','성별','enum'],
   ['body_type','체형','enum'], ['personality','성격 타입','u8'],
   ['weight_std','표준 체중','u8'], ['weight_min','최소 체중','u8'],
   ['hunger_dep','공복 감소율','u8'], ['happy_dep','행복 감소율','u8'],
@@ -1425,6 +1429,9 @@ const CHAR_FIELDS=[
   ['transform_serial','변신 아이템 시리얼','item'],
 ];
 const YESNO={0:'No',1:'Yes'};
+// the packet stores Boy/Girl; the screen says it in Korean, and the VDP
+// card below uses the same words so the two agree
+const ENUM_LABEL={gender:{0:'남자',1:'여자'}};
 function renderCharStats(){
   const el=$('charFields'); el.innerHTML='';
   const cs=pk.char_stats, en=pk.char_enums||{};
@@ -1473,7 +1480,7 @@ function renderCharStats(){
     }
     if(type==='enum'&&en[key]){
       inp=document.createElement('select');
-      const opts=Object.entries(en[key]);
+      const opts=Object.entries(en[key]).map(([k,v])=>[k,(ENUM_LABEL[key]||{})[k]??v]);
       // keep the stored value selectable even when it is not in the table
       if(!opts.some(([k])=>+k===cs[key]))opts.unshift([cs[key],`(0x${(cs[key]||0).toString(16)})`]);
       inp.innerHTML=opts.map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
