@@ -94,6 +94,7 @@
     <select id="mkModel"></select>
     <select id="mkCat" style="min-width:200px"></select>
     <input id="mkName" placeholder="이름" maxlength="14" style="width:120px">
+    <label class="ad" id="mkCountBox" hidden>프레임 <select id="mkCount"></select></label>
     <label class="ad">색 <input id="mkColors" type="number" min="2" max="16" value="16" style="width:56px"></label>
     <button class="btn" id="mkGo">만들기</button>
     <span class="hint" id="mkNote" style="margin:0"></span>
@@ -3565,15 +3566,22 @@ function fillCats(){
 function showSpec(){
   const b=(blueprints[$('mkModel').value]||[])[+$('mkCat').value];
   if(!b){$('mkNote').textContent='';return}
+  // a toy's frame count is what its animation does, so it is picked rather
+  // than fixed; every other category has one shape
+  const box=$('mkCountBox'); box.hidden=!b.counts;
+  if(b.counts&&$('mkCount').options.length!==b.counts.length){
+    $('mkCount').innerHTML=b.counts.map(n=>`<option value="${n}">${n}장</option>`).join('');
+    $('mkCount').value=b.default_count;
+  }
+  const shape=b.counts?b.shapes[$('mkCount').value].frames:b.frames;
   const counts={};
-  b.frames.forEach(([w,h])=>{const k=`${w}x${h}`;counts[k]=(counts[k]||0)+1});
+  shape.forEach(([w,h])=>{const k=`${w}x${h}`;counts[k]=(counts[k]||0)+1});
   const geo=Object.entries(counts).map(([k,n])=>n>1?`${k}×${n}`:k).join(', ');
-  // default to 16 even where the ceiling is higher -- past 16 a pixel takes
-  // 8 bits instead of 4 and the sprites cost twice as much
-  $('mkColors').max=b.colors; $('mkColors').value=Math.min(16,b.colors);
-  $('mkNote').textContent=`스프라이트 ${b.frames.length}장 (${geo}) · 최대 ${b.colors}색`
-    +(b.colors>16?' (17색부터 픽셀당 8비트 — 용량 2배)':'');
+  $('mkColors').max=b.colors; $('mkColors').value=b.colors;
+  $('mkNote').textContent=`스프라이트 ${shape.length}장 (${geo}) · 최대 ${b.colors}색`
+    +(b.counts?` · 애니 ${b.shapes[$('mkCount').value].anim.join(',')} 자동`:'');
 }
+$('mkCount').onchange=showSpec;
 $('mkModel').onchange=fillCats;
 $('mkCat').onchange=showSpec;
 $('mkGo').onclick=async()=>{
@@ -3581,7 +3589,8 @@ $('mkGo').onclick=async()=>{
   const b=list[+$('mkCat').value];
   const r=await fetch('/api/create',{method:'POST',body:JSON.stringify({
     model:$('mkModel').value, label:b.label, name:$('mkName').value.trim(),
-    serial:0, colors:+$('mkColors').value})});
+    serial:0, colors:+$('mkColors').value,
+    nframes:b.counts?+$('mkCount').value:null})});
   if(!r.ok){toast('만들기 실패: '+(await r.json()).error);return}
   const buf=new Uint8Array(await (await r.blob()).arrayBuffer());
   await load(new File([buf],`new_${b.label.replace(/[^가-힣A-Za-z]/g,'')}.jpg`));

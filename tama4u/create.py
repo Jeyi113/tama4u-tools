@@ -23,47 +23,74 @@ import struct
 from . import charset, container, destinations, items, models, sprites
 
 # Frames a category carries, measured across the four packs: (w, h) per
-# frame and the palette ceiling.  Where a model differs it gets its own
-# entry; '*' is every other model.
+# frame.  Where a model differs it gets its own entry; '*' is every other.
 #
-# The ceiling is the largest palette that category is ever seen with, not
-# the commonest -- most clothes use eight colours but P's and iD L ship
-# sixteen-colour ones, and capping at the usual value would refuse artwork
-# the device accepts.  Two of them are genuinely lower: 4U clothes never go
-# past eight and 4U accessories past nine.  Toys reach seventeen on P's and
-# iD, which crosses the codec's boundary -- sixteen or fewer is 4 bits per
-# pixel, more is 8, so those frames cost twice as much per pixel.
+# Toys are the exception and get TOY_SHAPES instead: how many frames one
+# has is what its animation does, so there is no single right answer.
 #
-# Toys are the one category with no settled shape -- 101 different frame
-# layouts across 156 4U toys -- so the entry is a starting point, not a rule.
+# Every category is offered the same sixteen colours, which is the most a
+# 4-bit pixel can index.  What the packs actually contain is narrower, and
+# worth knowing before blaming the tool for a file the device refuses:
+#
+#   옷            iD L 16 · P's 16 · 4U 8      (4U never goes past eight)
+#   악세사리       iD 16 · iD L 16 · P's 16 · 4U 9
+#   장난감         iD 17 · P's 17 · iD L 16 · 4U 16
+#   방 · 식사 · 간식  전 기종 16
+#
+# So a sixteen-colour 4U dress has no retail precedent -- it stays inside
+# the codec, but nothing in the packs vouches for it.  Toys are the other
+# way round: seventeen colours do occur, and those frames switch to 8 bits
+# per pixel and cost twice as much, which is why the ceiling stops at 16.
 BLUEPRINTS = {
-    ('*', '레스토랑 · 식사'):      ([(24, 24)] * 3, 16),
-    ('*', '레스토랑 · 간식'):      ([(24, 24)] * 3, 16),
-    ('*', '레스토랑 · 식사 (비매품)'): ([(24, 24)] * 3, 16),
-    ('*', '레스토랑 · 간식 (비매품)'): ([(24, 24)] * 3, 16),
-    ('*', '냉장고 직행 · 식사 (비매품)'): ([(24, 24)] * 3, 16),
-    ('*', '냉장고 직행 · 간식 (비매품)'): ([(24, 24)] * 3, 16),
-    ('*', '타마베이커리 · 간식'):    ([(24, 24)] * 3, 16),
-    ('*', '고치 인테리어 · 방'):    ([(128, 72)], 16),
-    ('*', '타마모리 · 옷'):        ([(30, 12)] * 28, 16),
-    ('*', '타마모리 · 액세서리'):    ([(30, 20)] * 3 + [(44, 30)], 16),
-    ('*', "타마모리 · 액세서리 (P's용)"): ([(30, 20)] * 3 + [(44, 30)], 16),
-    ('*', '타마모리 · 액세서리 2'):  ([(30, 20)] * 3 + [(44, 30)], 16),
-    ('*', '타마데파 · 장난감'):     ([(24, 24), (30, 30)], 17),
-    ('*', '타마데파 · 생활용품'):    ([(24, 24)], 16),
-    ('iD', '타마모리 · 액세서리'):   ([(24, 24), (30, 30), (36, 36), (60, 60),
-                                   (24, 24), (30, 30), (36, 36)], 16),
-    ('iD', '타마데파 · 장난감'):    ([(32, 30), (40, 28), (40, 20), (40, 20),
-                                   (56, 32), (32, 30)], 17),
-    ('iD', '사진관 · 의상'):       ([(48, 48)] * 6, 16),
-    ('iD', '사진관 · 배경'):       ([(120, 64)], 16),
-    ('iD', '우편함 · 편지'):       ([(32, 32)], 15),
-    ('iDL', '타마데파 · 장난감'):   ([(32, 30)] + [(24, 24)] * 3, 16),
-    ('4U', '타마데파 · 장난감'):    ([(128, 72)], 16),
-    ('4U', '타마모리 · 옷'):       ([(30, 12)] * 28, 8),
-    ('4U', '타마모리 · 액세서리'):   ([(30, 20)] * 3 + [(44, 30)], 9),
-    ('iDL', '타마데파 · 장난감'):   ([(32, 30)] + [(24, 24)] * 3, 16),
+    ('*', '레스토랑 · 식사'):             [(24, 24)] * 3,
+    ('*', '레스토랑 · 간식'):             [(24, 24)] * 3,
+    ('*', '레스토랑 · 식사 (비매품)'):      [(24, 24)] * 3,
+    ('*', '레스토랑 · 간식 (비매품)'):      [(24, 24)] * 3,
+    ('*', '냉장고 직행 · 식사 (비매품)'):    [(24, 24)] * 3,
+    ('*', '냉장고 직행 · 간식 (비매품)'):    [(24, 24)] * 3,
+    ('*', '타마베이커리 · 간식'):          [(24, 24)] * 3,
+    ('*', '고치 인테리어 · 방'):           [(128, 72)],
+    ('*', '타마모리 · 옷'):               [(30, 12)] * 28,
+    ('*', '타마모리 · 액세서리'):          [(30, 20)] * 3 + [(44, 30)],
+    ('*', "타마모리 · 액세서리 (P's용)"):   [(30, 20)] * 3 + [(44, 30)],
+    ('*', '타마모리 · 액세서리 2'):        [(30, 20)] * 3 + [(44, 30)],
+    ('*', '타마데파 · 생활용품'):          [(24, 24)],
+    ('iD', '타마모리 · 액세서리'):         [(24, 24), (30, 30), (36, 36), (60, 60),
+                                        (24, 24), (30, 30), (36, 36)],
+    ('iD', '사진관 · 의상'):              [(48, 48)] * 6,
+    ('iD', '사진관 · 배경'):              [(120, 64)],
+    ('iD', '우편함 · 편지'):              [(32, 32)],
 }
+
+# A toy's frame count is its animation.  Across all four packs the shape
+# follows the count rather than the model -- every three-frame toy is
+# 32x30, 48x32, 40x20 whoever made it -- and the animation bytes follow it
+# too, so the two travel together here.  Counts are 1, 2, 3, 4, 6, 7 and 8;
+# five never occurs.
+TOY_LABEL = '타마데파 · 장난감'
+TOY_SHAPES = {
+    1: ([(32, 30)], (44, 44)),
+    2: ([(32, 30), (32, 48)], (28, 28)),
+    3: ([(32, 30), (48, 32), (40, 20)], (25, 25)),
+    4: ([(32, 30), (24, 24), (24, 24), (24, 24)], (22, 22)),
+    6: ([(32, 30), (40, 28), (40, 20), (40, 20), (56, 32), (48, 32)], (48, 54)),
+    7: ([(32, 30), (40, 28), (40, 20), (40, 20), (56, 32), (48, 32),
+         (16, 16)], (5, 5)),
+    8: ([(32, 30), (24, 30), (24, 64), (24, 30), (24, 64), (24, 30),
+         (24, 64), (16, 16)], (11, 8)),
+}
+TOY_DEFAULT = 4          # the commonest, 281 of 566
+
+
+def toy_counts():
+    return sorted(TOY_SHAPES)
+
+
+def toy_anim(nframes):
+    """The animation bytes retail toys pair with that many frames."""
+    got = TOY_SHAPES.get(nframes)
+    return got[1] if got else None
+
 
 # Categories that are program blobs or need a stat block this cannot write.
 UNSUPPORTED = {
@@ -128,9 +155,17 @@ CARRY_OVER = {
 PAL4_MAX = 16       # up to here a pixel is 4 bits; past it, 8
 
 
-def blueprint(model, label):
-    """([(w, h), ...], palette ceiling) for a category, or None."""
-    return BLUEPRINTS.get((model, label)) or BLUEPRINTS.get(('*', label))
+def blueprint(model, label, nframes=None):
+    """([(w, h), ...], palette ceiling) for a category, or None.
+
+    Toys take `nframes` because the count is a real choice there; every
+    other category has one shape.
+    """
+    if label == TOY_LABEL:
+        got = TOY_SHAPES.get(nframes or TOY_DEFAULT)
+        return None if got is None else (got[0], PAL4_MAX)
+    geometry = BLUEPRINTS.get((model, label)) or BLUEPRINTS.get(('*', label))
+    return None if geometry is None else (geometry, PAL4_MAX)
 
 
 def categories(model):
@@ -149,8 +184,8 @@ def slot_for(w, h, ncol):
     return 6 + 2 * ncol + sprites.pixel_bytes(w, h, 1, ncol)
 
 
-def blank_frames(model, label, colors=None):
-    spec = blueprint(model, label)
+def blank_frames(model, label, colors=None, nframes=None):
+    spec = blueprint(model, label, nframes)
     if spec is None:
         raise ValueError(f'{model}의 "{label}"은(는) 아직 만들 수 없습니다')
     geometry, ceiling = spec

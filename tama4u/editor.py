@@ -562,10 +562,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, json.dumps({'error': str(exc)}).encode())
         elif self.path == '/api/blueprints':
             # what "만들기" can offer: category list per model
-            out = {m: [{'label': lab,
-                        'frames': create.blueprint(m, lab)[0],
-                        'colors': create.blueprint(m, lab)[1]}
-                       for lab in create.categories(m)]
+            def spec(m, lab):
+                geometry, colors = create.blueprint(m, lab)
+                row = {'label': lab, 'frames': geometry, 'colors': colors}
+                if lab == create.TOY_LABEL:
+                    # the frame count is the animation, so it is a choice
+                    row['counts'] = create.toy_counts()
+                    row['default_count'] = create.TOY_DEFAULT
+                    row['shapes'] = {n: {'frames': create.TOY_SHAPES[n][0],
+                                         'anim': create.toy_anim(n)}
+                                     for n in create.toy_counts()}
+                return row
+            out = {m: [spec(m, lab) for lab in create.categories(m)]
                    for m in ('iD', 'iDL', "P's", '4U')}
             self._send(200, json.dumps(out, ensure_ascii=False).encode())
         else:
@@ -586,12 +594,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps(out).encode())
             elif self.path == '/api/create':
                 req = json.loads(body)
+                nframes = req.get('nframes')
+                fields = dict(req.get('fields') or {})
+                if req['label'] == create.TOY_LABEL:
+                    # a toy without the animation its frame count expects
+                    # would play the wrong one
+                    fields.setdefault('anim', create.toy_anim(
+                        nframes or create.TOY_DEFAULT))
                 pkt = create.new_item(
                     req['model'], req['label'],
                     name=req.get('name', ''), serial=int(req.get('serial', 0)),
-                    fields=req.get('fields') or {},
+                    fields=fields,
                     frames=create.blank_frames(req['model'], req['label'],
-                                               req.get('colors')))
+                                               req.get('colors'), nframes))
                 out = create.build_file(pkt)
                 self._send(200, out, 'image/jpeg')
                 return
