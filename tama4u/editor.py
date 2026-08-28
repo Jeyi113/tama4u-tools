@@ -11,8 +11,8 @@ import struct
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import (character, charset, container, convert, destinations, items,
-               sprites, vdp)
+from . import (character, charset, container, convert, create, destinations,
+               items, sprites, vdp)
 
 HTML_PATH = os.path.join(os.path.dirname(__file__), 'editor.html')
 CHARA_DIR = os.path.join(os.path.dirname(__file__), 'charasprites')
@@ -560,6 +560,14 @@ class Handler(BaseHTTPRequestHandler):
                            'application/octet-stream')
             except OSError as exc:
                 self._send(400, json.dumps({'error': str(exc)}).encode())
+        elif self.path == '/api/blueprints':
+            # what "만들기" can offer: category list per model
+            out = {m: [{'label': lab,
+                        'frames': create.blueprint(m, lab)[0],
+                        'colors': create.blueprint(m, lab)[1]}
+                       for lab in create.categories(m)]
+                   for m in ('iD', 'iDL', "P's", '4U')}
+            self._send(200, json.dumps(out, ensure_ascii=False).encode())
         else:
             self._send(404, b'{}')
 
@@ -576,6 +584,17 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     out = describe(body)
                 self._send(200, json.dumps(out).encode())
+            elif self.path == '/api/create':
+                req = json.loads(body)
+                pkt = create.new_item(
+                    req['model'], req['label'],
+                    name=req.get('name', ''), serial=int(req.get('serial', 0)),
+                    fields=req.get('fields') or {},
+                    frames=create.blank_frames(req['model'], req['label'],
+                                               req.get('colors')))
+                out = create.build_file(pkt)
+                self._send(200, out, 'image/jpeg')
+                return
             elif self.path == '/api/build':
                 req = json.loads(body)
                 data = base64.b64decode(req['file_b64'])
