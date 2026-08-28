@@ -104,11 +104,11 @@ export function writeGrouped(raw, parts, text, model, width = 2) {
 // ---- item stats -----------------------------------------------------
 export const OFF_DEST = 0x4e;
 export const OFF_VERSION = 0x4c;
-// 4U marks a few items with the days they were handed out -- see items.py
 // an iD studio costume is cut for one body: five frames for a boy, six for
 // a girl (the extra one is the longer hair) -- see items.py
 export const STUDIO_FRAMES = { 5: 'Boy', 6: 'Girl' };
 export const studioGender = n => STUDIO_FRAMES[n] ?? null;
+// 4U marks a few items with the days they were handed out -- see items.py
 export const OFF_PERIOD = 0xf4;
 const PERIOD_MODELS = ['4U'];
 export function getPeriod(p) {
@@ -712,6 +712,11 @@ export function vdpWriteCharBlock(data, k, fields, model = "P's") {
 // on the clothes shelf, while every raisable character is exactly 14,664
 // bytes.  Character contents also come in the same order as the header's
 // blocks -- checked by name across all 14 bundles.
+// A program packet's sprite layout is its engine -- see tama4u/create.py
+export const gameShape = p =>
+  scanLoose(p.raw, 0x40).map(r => [r[1], r[2]])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
 export function vdpIsCharContent(sub) {
   return hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_CHAR_DEST
     && sub.size === VDP_CHAR_SIZE;

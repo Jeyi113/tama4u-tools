@@ -158,6 +158,12 @@ def describe(data, partner=None):
             # programs have no shop fields, but their destination is what
             # files a game under the Game Center
             info['fields'] = sorted(items.editable_fields(pkt))
+            if items.is_program(pkt):
+                # the sprite layout is the engine -- two different games
+                # built on one carry the same set
+                shape = create.game_shape(pkt)
+                if shape:
+                    info['game_shape'] = shape
         if info['is_item'] and info['stats_verified']:
             anim = items.get_anim(pkt)
             info['fields'] = sorted(items.editable_fields(pkt))
@@ -586,6 +592,10 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == '/api/blueprints':
             # what "만들기" can offer: category list per model
             def spec(m, lab):
+                if lab in create.FROM_BASE:
+                    # no blueprint: the body comes from a file the user picks
+                    return {'label': lab, 'frames': [], 'colors': 16,
+                            'needs_base': create.FROM_BASE[lab]}
                 geometry, colors = create.blueprint(m, lab)
                 row = {'label': lab, 'frames': geometry, 'colors': colors}
                 if lab == create.TOY_LABEL:
@@ -617,6 +627,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, json.dumps(out).encode())
             elif self.path == '/api/create':
                 req = json.loads(body)
+                if req['label'] in create.FROM_BASE:
+                    # a game or an outing is machine code; the body comes
+                    # from a download the user already has
+                    if not req.get('base_b64'):
+                        raise ValueError(
+                            f'{create.FROM_BASE[req["label"]]}은(는) 프로그램이라 '
+                            f'바탕이 될 파일이 필요합니다')
+                    pkt = create.from_base(
+                        base64.b64decode(req['base_b64']),
+                        req['model'], req['label'],
+                        name=req.get('name', ''),
+                        serial=int(req['serial']) if req.get('serial') else None)
+                    self._send(200, create.build_file(pkt), 'image/jpeg')
+                    return
                 nframes = req.get('nframes')
                 fields = dict(req.get('fields') or {})
                 if req['label'] == create.TOY_LABEL:

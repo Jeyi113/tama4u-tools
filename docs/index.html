@@ -98,7 +98,12 @@
     <select id="mkCat" style="min-width:200px"></select>
     <input id="mkName" placeholder="이름" maxlength="14" style="width:120px">
     <label class="ad" id="mkCountBox" hidden>프레임 <select id="mkCount"></select></label>
-    <label class="ad">색 <input id="mkColors" type="number" min="2" max="16" value="16" style="width:56px"></label>
+    <span id="mkBaseBox" hidden>
+      <button class="btn" id="mkBaseBtn">바탕 파일 고르기</button>
+      <input type="file" id="mkBaseInput" accept=".jpg,.jpeg" hidden>
+      <span class="ad" id="mkBaseName">고른 파일 없음</span>
+    </span>
+    <label class="ad" id="mkColorsBox">색 <input id="mkColors" type="number" min="2" max="16" value="16" style="width:56px"></label>
     <button class="btn" id="mkGo">만들기</button>
     <span class="hint" id="mkNote" style="margin:0"></span>
   </div>
@@ -118,6 +123,8 @@
       <div class="row">
         <div><label id="serialLabel">시리얼</label><input id="fSerial" type="number" min="0" max="65535"></div>
         <div id="priceBox"><label>가격</label><input id="fPrice" type="number" min="0" max="65535"></div>
+        <div id="shapeBox" hidden style="grid-column:1/-1"><label>스프라이트 구성 (게임 엔진)</label>
+          <div id="shapeNote" class="hint" style="margin:4px 0 0"></div></div>
         <div id="idLineBox" hidden style="grid-column:1/-1"><label>iD 계열</label>
           <div id="idLineNote" class="hint" style="margin:4px 0 0"></div></div>
         <div id="periodBox" hidden><label>배포 기간 (월/일 ~ 월/일)</label>
@@ -992,11 +999,11 @@ function writeGrouped(raw, parts, text, model, width = 2) {
 // ---- item stats -----------------------------------------------------
 const OFF_DEST = 0x4e;
 const OFF_VERSION = 0x4c;
-// 4U marks a few items with the days they were handed out -- see items.py
 // an iD studio costume is cut for one body: five frames for a boy, six for
 // a girl (the extra one is the longer hair) -- see items.py
 const STUDIO_FRAMES = { 5: 'Boy', 6: 'Girl' };
 const studioGender = n => STUDIO_FRAMES[n] ?? null;
+// 4U marks a few items with the days they were handed out -- see items.py
 const OFF_PERIOD = 0xf4;
 const PERIOD_MODELS = ['4U'];
 function getPeriod(p) {
@@ -1600,6 +1607,11 @@ function vdpWriteCharBlock(data, k, fields, model = "P's") {
 // on the clothes shelf, while every raisable character is exactly 14,664
 // bytes.  Character contents also come in the same order as the header's
 // blocks -- checked by name across all 14 bundles.
+// A program packet's sprite layout is its engine -- see tama4u/create.py
+const gameShape = p =>
+  scanLoose(p.raw, 0x40).map(r => [r[1], r[2]])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
 function vdpIsCharContent(sub) {
   return hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_CHAR_DEST
     && sub.size === VDP_CHAR_SIZE;
@@ -2029,7 +2041,13 @@ function describe(data, opts = {}) {
     if (info.is_item && !info.is_wardrobe) info.price = getPrice(pkt);
     // programs have no shop fields, but their destination is what files a
     // game under the Game Center
-    if (!info.is_item) info.fields = editableFields(pkt);
+    if (!info.is_item) {
+      info.fields = editableFields(pkt);
+      if (isProgram(pkt)) {
+        const shape = gameShape(pkt);
+        if (shape.length) info.game_shape = shape;
+      }
+    }
     if (info.is_item && info.stats_verified) {
       const anim = getAnim(pkt);
       info.fields = editableFields(pkt);
@@ -2496,6 +2514,15 @@ function selectPacket(path){
   $('destLabel').firstChild.textContent=
     `행선지 · 0x4C ${(pk.dest_sig||'').toUpperCase()} ${(pk.dest||'').toUpperCase()}`
     + `  (앞 2바이트 = 기종/펌웨어)`;
+  // a program's sprite layout is its engine: two different games built on
+  // one carry the same set, which is what to match when picking a base
+  $('shapeBox').hidden=!pk.game_shape;
+  if(pk.game_shape){
+    const c={};
+    pk.game_shape.forEach(([w,h])=>{const k=`${w}x${h}`;c[k]=(c[k]||0)+1});
+    $('shapeNote').textContent=`${pk.game_shape.length}장 — `
+      +Object.entries(c).map(([k,n])=>n>1?`${k}×${n}`:k).join(', ');
+  }
   gate('animBox', on('anim'), '장난감 전용');
   gate('statCard', on('stats'), pk.model==='iD'||pk.model==='iDL'?'이 기종에 없음':'해당 없음');
   gate('likesCard', on('likes'), '해당 없음');
@@ -3635,6 +3662,16 @@ function showSpec(){
   if(!b){$('mkNote').textContent='';return}
   // a toy's frame count is what its animation does, so it is picked rather
   // than fixed; every other category has one shape
+  // a game or an outing is machine code: there is no blueprint, only a
+  // file to build on
+  $('mkBaseBox').hidden=!b.needs_base;
+  $('mkColorsBox').hidden=!!b.needs_base;
+  if(b.needs_base){
+    $('mkCountBox').hidden=true;
+    $('mkNote').textContent=`${b.needs_base}은(는) S1C33 프로그램이라 코드를 `
+      +`만들어 낼 수 없습니다 — 기존 파일을 바탕으로 이름과 시리얼만 새로 씁니다.`;
+    return;
+  }
   const box=$('mkCountBox'); box.hidden=!b.counts;
   if(b.counts&&$('mkCount').options.length!==b.counts.length){
     $('mkCount').innerHTML=b.counts.map(n=>`<option value="${n}">${n}장</option>`).join('');
@@ -3649,6 +3686,14 @@ function showSpec(){
     +(b.counts?` · 애니 ${b.shapes[$('mkCount').value].anim.join(',')} 자동`:'');
 }
 $('mkCount').onchange=showSpec;
+let mkBase=null;
+$('mkBaseBtn').onclick=()=>$('mkBaseInput').click();
+$('mkBaseInput').onchange=async e=>{
+  const f=e.target.files[0]; e.target.value='';
+  if(!f)return;
+  mkBase=arrayToB64(new Uint8Array(await f.arrayBuffer()));
+  $('mkBaseName').textContent=f.name;
+};
 $('mkModel').onchange=fillCats;
 $('mkCat').onchange=showSpec;
 $('mkGo').onclick=async()=>{
@@ -3657,6 +3702,7 @@ $('mkGo').onclick=async()=>{
   const r=await fetch('/api/create',{method:'POST',body:JSON.stringify({
     model:$('mkModel').value, label:b.label, name:$('mkName').value.trim(),
     serial:0, colors:+$('mkColors').value,
+    base_b64:b.needs_base?mkBase:null,
     nframes:b.counts?+$('mkCount').value:null})});
   if(!r.ok){toast('만들기 실패: '+(await r.json()).error);return}
   const buf=new Uint8Array(await (await r.blob()).arrayBuffer());

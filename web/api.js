@@ -106,7 +106,13 @@ export function describe(data, opts = {}) {
     if (info.is_item && !info.is_wardrobe) info.price = F.getPrice(pkt);
     // programs have no shop fields, but their destination is what files a
     // game under the Game Center
-    if (!info.is_item) info.fields = F.editableFields(pkt);
+    if (!info.is_item) {
+      info.fields = F.editableFields(pkt);
+      if (F.isProgram(pkt)) {
+        const shape = F.gameShape(pkt);
+        if (shape.length) info.game_shape = shape;
+      }
+    }
     if (info.is_item && info.stats_verified) {
       const anim = F.getAnim(pkt);
       info.fields = F.editableFields(pkt);

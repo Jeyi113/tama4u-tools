@@ -93,10 +93,16 @@ def toy_anim(nframes):
 
 
 # Categories that are program blobs or need a stat block this cannot write.
+# Categories whose body is S1C33 machine code.  Nothing here can write a
+# game, but a new game file can still be made *from* one: the code comes
+# from a download you already have and only the identity is rewritten.
+FROM_BASE = {
+    '게임센터 · 게임': '게임',
+    '외출지': '외출지',
+    'VDP · 아이템 묶음': 'VDP 묶음',
+}
+
 UNSUPPORTED = {
-    '게임센터 · 게임': '게임은 S1C33 프로그램이라 만들어 낼 수 없습니다',
-    '외출지': '외출지는 S1C33 프로그램이라 만들어 낼 수 없습니다',
-    'VDP · 아이템 묶음': 'VDP는 프로그램 + 압축 스트림이라 만들어 낼 수 없습니다',
     '카드 · 캐릭터 프로그램': '캐릭터는 스탯 블록과 대사가 필요합니다 — '
                               '기존 캐릭터 파일을 불러와 편집하세요',
     '우편함 · 편지': '편지는 본문이 스탯 자리에 들어갑니다 — '
@@ -179,9 +185,70 @@ def categories(model):
     out = []
     for entry in destinations.options(model):
         label = entry[0]
+        if label in FROM_BASE:
+            out.append(label)                 # needs a base file, not a blueprint
+            continue
         if label in UNSUPPORTED or blueprint(model, label) is None:
             continue
         out.append(label)
+    return out
+
+
+def game_shape(pkt):
+    """The sprite layout a program packet carries, sorted.
+
+    Games come in engines: what a game *is* shows up as its sprite set, and
+    two different games built on one engine carry the same one.  Across the
+    four packs 99 of the 139 distinct games share a layout with at least one
+    other -- seven of them are the twelve-frame matching game (10x10, ten
+    16x20 cards and the 128x72 backdrop), and かいがらあわせ and
+    ジュエルハンター are different games, different sizes, same engine.
+    So this is what to match on when picking a base to build from.
+    """
+    return sorted((r[1], r[2]) for r in sprites.scan_loose(bytes(pkt.raw),
+                                                           lo=0x40))
+
+
+def from_base(data, model, label, name='', serial=None):
+    """A new program download built on one you already have.
+
+    A game or an outing is S1C33 code and there is no writing that from
+    nothing, so the body comes across untouched and only the identity is
+    rewritten -- the item name, the serial, the ASCII id and the download
+    name.  The destination is set from the chosen category, which is what
+    lets an outing be re-filed as a game.
+    """
+    _, packets, _ = container.parse_file(data)
+    if not packets:
+        raise ValueError('패킷이 없는 파일입니다')
+    pkt = packets[0]
+    if not items.is_program(pkt):
+        raise ValueError('프로그램 패킷이 아닙니다 — 게임이나 외출지 파일을 '
+                         '고르세요')
+    if pkt.model != model:
+        raise ValueError(f'{pkt.model} 파일입니다 — {model}용을 고르거나 '
+                         f'기종을 {pkt.model}로 바꾸세요')
+    entry = next((e for e in destinations.options(model) if e[0] == label), None)
+    if entry is None:
+        raise ValueError(f'{model}에 "{label}" 카테고리가 없습니다')
+
+    out = container.Packet(bytes(pkt.raw), 0)
+    if serial is None:
+        serial = pkt.serial
+    struct.pack_into('>H', out.raw, container.OFF_SERIAL, serial & 0xFFFF)
+    # the destination keeps iD's per-item index byte, and a category that
+    # also depends on a byte outside it gets that written too
+    cur = bytes(out.raw[items.OFF_DEST:items.OFF_DEST + 4])
+    out.raw[items.OFF_DEST:items.OFF_DEST + 4] = destinations.apply(
+        model, entry[1], cur)
+    extra = destinations.extra_for(model, entry[1], label)
+    if extra:
+        off, val = extra
+        if off < len(out.raw):
+            out.raw[off] = val
+    if name:
+        _write_names(out, name, None, None, label, serial)
+    out.fix_checksums()
     return out
 
 
