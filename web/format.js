@@ -292,6 +292,19 @@ export function setVersion(p, version, compat, index) {
   if (index != null) p.raw[OFF_DEST + 2] = index & 0xff;
 }
 
+// Only five shelves carry a character like mask -- see items.py for why the
+// others were wrong and what iD studio costumes keep there instead.
+export const LIKES_LABELS = new Set([
+  '레스토랑 · 식사', '레스토랑 · 간식',
+  '레스토랑 · 식사 (비매품)', '레스토랑 · 간식 (비매품)',
+  '냉장고 직행 · 식사 (비매품)', '냉장고 직행 · 간식 (비매품)',
+  '타마베이커리 · 간식', '레스토랑 · 간식 (변종)',
+  '타마모리 · 액세서리', '타마모리 · 액세서리 2',
+  "타마모리 · 액세서리 (P's용)",
+  '타마모리 · 옷', '타마데파 · 장난감',
+]);
+export const hasLikes = p => LIKES_LABELS.has(getDestination(p));
+
 export function editableFields(p) {
   const kind = effectiveKind(p), model = p.model, lay = p.layout;
   // a program has no shop fields, but it does have a destination -- that is
@@ -301,7 +314,8 @@ export function editableFields(p) {
   const f = new Set(['price', 'dest']);
   if (kind === 'gh' || kind === 'oy') { f.add('hunger'); f.add('friendship'); }
   else if (kind === 'as' && model !== 'iD') f.add('friendship');
-  if (!['bg', 'lv'].includes(kind) && !(model === 'iD' && kind === 'as')) f.add('likes');
+  // iD toys shift their whole record, so the mask is not where food keeps it
+  if (hasLikes(p) && !(model === 'iD' && kind === 'as')) f.add('likes');
   if (lay.stats !== null) f.add('stats');
   // daily necessities are animated exactly as toys are -- see items.py
   if ((kind === 'as' || kind === 'ni') && lay.anim !== null) f.add('anim');

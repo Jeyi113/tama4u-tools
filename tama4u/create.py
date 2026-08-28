@@ -160,7 +160,10 @@ CARRY_OVER = {
     ('4U', '고치 인테리어 · 방'): (0x70,),
     ('iD', '타마데파 · 장난감'): (0x65, 0x66, 0x67),
     ('iD', '타마모리 · 액세서리'): (0x65, 0x66, 0x67),
-    ('iD', '사진관 · 의상'): (0x65, 0x66, 0x67, 0x6C, 0x6D),
+    # 0x68-0x6B is where food keeps its like mask, but a costume keeps a run
+    # of pose indices there instead -- see items.LIKES_LABELS
+    ('iD', '사진관 · 의상'): (0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B,
+                              0x6C, 0x6D),
 }
 
 

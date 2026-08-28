@@ -232,6 +232,35 @@ def text_gaps(spans, size, start=0x60):
     return out
 
 
+# Only five shelves carry a character like/dislike mask: meals, snacks,
+# accessories, clothes and toys.  The same shelves appear under other names
+# (the giveaway meals, the bakery, the second accessory line), and those
+# count too.
+#
+# Everywhere else the field was showing was wrong.  Seeds, recipes, bingo,
+# daily necessities, 4U living rooms and iD studio backdrops are all zero
+# there across the packs -- 145 files, not one set bit.  iD studio costumes
+# are the exception that proves it: all 39 have something at 0x68, but it
+# is a run of indices rather than a mask.  The high nibble counts up by one
+# per byte and starts at 1 for a boy costume, 6 for a girl -- 11 21 31 41
+# against 61 71 81 91 -- which lines up with the five/six frame split
+# exactly.  It points at character poses, not at who likes the thing.
+LIKES_LABELS = frozenset((
+    '레스토랑 · 식사', '레스토랑 · 간식',
+    '레스토랑 · 식사 (비매품)', '레스토랑 · 간식 (비매품)',
+    '냉장고 직행 · 식사 (비매품)', '냉장고 직행 · 간식 (비매품)',
+    '타마베이커리 · 간식', '레스토랑 · 간식 (변종)',
+    '타마모리 · 액세서리', '타마모리 · 액세서리 2',
+    "타마모리 · 액세서리 (P's용)",
+    '타마모리 · 옷', '타마데파 · 장난감',
+))
+
+
+def has_likes(pkt):
+    """Whether this packet's shelf carries a like mask at all."""
+    return get_destination(pkt) in LIKES_LABELS
+
+
 def editable_fields(pkt):
     kind, model, lay = effective_kind(pkt), pkt.model, pkt.layout
     if is_program(pkt):
@@ -249,10 +278,10 @@ def editable_fields(pkt):
         # iDmakeDL greys friendship out for iD toys; those bytes carry the
         # animation program there instead
         f.add('friendship')
-    if kind not in ('bg', 'lv') and not (model == 'iD' and kind == 'as'):
-        # iD toys shift their whole record (price lands on 0x6C), so the
-        # like mask is not where food keeps it — leave it alone until the
-        # offset is confirmed.
+    # iD toys shift their whole record (price lands on 0x6C), so the like
+    # mask is not where food keeps it -- leave it alone until the offset is
+    # confirmed.
+    if has_likes(pkt) and not (model == 'iD' and kind == 'as'):
         f.add('likes')
     if lay.get('stats') is not None:
         f.add('stats')
