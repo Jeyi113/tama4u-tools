@@ -132,6 +132,24 @@ def describe(data, partner=None):
         period = items.get_period(pkt)
         if period is not None:
             info['period'] = period
+        # iD studio costumes and accessories come in firmware-specific lines,
+        # and a costume is cut for one body -- both matter when picking a file
+        if pkt.model == 'iD':
+            label = items.get_destination(pkt)
+            if label in ('사진관 · 의상', '타마모리 · 액세서리'):
+                info['id_line'] = {
+                    'label': label,
+                    'firmware': items.VERSION_NAMES.get(
+                        items.get_version(pkt)['version'], '?'),
+                }
+                if label == '사진관 · 의상':
+                    try:
+                        frames, _ = sprites.parse_bank(
+                            pkt.raw, items.bank_offset(pkt))
+                        info['id_line']['gender'] = items.studio_gender(
+                            pkt, len(frames))
+                    except Exception:
+                        pass
         info['convert'] = {m: convert.plan(pkt, m)
                            for m in ('iD', 'iDL', "P's", '4U') if m != pkt.model}
         if info['is_item'] and not info['is_wardrobe']:

@@ -87,6 +87,20 @@ export function describe(data, opts = {}) {
     info.compat = F.getCompat(pkt);
     const period = F.getPeriod(pkt);
     if (period !== null) info.period = period;
+    if (model === 'iD') {
+      const label = F.getDestination(pkt);
+      if (label === '사진관 · 의상' || label === '타마모리 · 액세서리') {
+        info.id_line = { label,
+          firmware: F.VERSION_NAMES[F.getVersion(pkt).version] ?? '?' };
+        if (label === '사진관 · 의상') {
+          try {
+            const { frames } = parseBank(pkt.raw, F.bankOffset(pkt));
+            const g = F.studioGender(frames.length);
+            if (g !== null) info.id_line.gender = g;
+          } catch (e) { /* not a bank we can read */ }
+        }
+      }
+    }
     info.convert = {};
     for (const m of ['iD', 'iDL', "P's", '4U']) if (m !== model) info.convert[m] = F.convertPlan(pkt, m);
     if (info.is_item && !info.is_wardrobe) info.price = F.getPrice(pkt);

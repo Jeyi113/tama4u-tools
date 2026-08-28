@@ -97,6 +97,21 @@ OPAQUE_KINDS = ('bg', 'lv')
 # iD fills the same eight bytes on 112 items and it is NOT this: its 0xF4
 # runs past twelve (20, 22, 32, 33), so whatever iD keeps there is
 # something else and is left alone.
+# An iD photo-studio costume is cut for one body: five frames for a boy and
+# six for a girl, the extra one being the longer hair.  That splits all 39
+# in the pack the way their own file names do -- STUDIO_..._ARGYLEBOY is
+# five, STUDIO_..._ARGYLEGIRL is six, and the ones whose names say neither
+# (HEROIN, MCDONNA, OTOGIBANASHI) land on six with the rest of the girls.
+# Size follows: 6.1-6.2 KB against 7.3-7.4 KB.
+STUDIO_LABEL = '사진관 · 의상'
+STUDIO_FRAMES = {5: 'Boy', 6: 'Girl'}
+
+
+def studio_gender(pkt, nframes):
+    """Which body an iD studio costume is cut for, or None."""
+    return STUDIO_FRAMES.get(nframes)
+
+
 OFF_PERIOD = 0xF4
 PERIOD_MODELS = ('4U',)
 
