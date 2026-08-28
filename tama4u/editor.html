@@ -462,11 +462,15 @@ function selectPacket(path){
   $('idLineBox').hidden=!line;
   if(line){
     const g=line.gender?(line.gender==='Boy'?'남자용':'여자용'):null;
+    const costume=line.gender!=null;
     $('idLineNote').innerHTML=
       `<b>${line.firmware}</b>${g?` · <b>${g}</b>`:''}<br>`
-      +`사진관 의상과 액세서리는 오리지널 iD와 Lovely Melody가 서로 호환되지 `
-      +`않습니다 — 특히 여자용은 기기를 가립니다. 0x4C 시그니처가 계열을 `
-      +`정하고, 의상은 프레임 수가 성별입니다 (남자 5장 · 여자 6장).`;
+      +(costume
+        ? `사진관 의상은 오리지널 iD와 Lovely Melody가 서로 호환되지 않습니다 `
+          +`— 특히 여자용은 기기를 가립니다. 계열은 0x4C 시그니처가 정하고, `
+          +`성별은 프레임 수로 갈립니다 (남자 5장 · 여자 6장).`
+        : `0x4C 시그니처가 정하는 계열입니다. 액세서리는 두 계열의 구조가 `
+          +`같습니다 (7장 · 좌표블록 784B).`);
   }
   // only 4U carries the hand-out window, and only on a handful of items
   $('periodBox').hidden=!pk.period;
