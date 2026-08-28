@@ -23,6 +23,13 @@
   /* an inline display: beats the hidden attribute, so say it louder --
      otherwise a panel that sets its own flex layout never actually hides */
   [hidden]{display:none!important}
+  #makeModal{position:fixed;inset:0;background:rgba(43,38,32,.42);z-index:40;
+             display:flex;align-items:center;justify-content:center;padding:20px}
+  #makeModal .sheet{background:var(--card);border:1px solid var(--line);border-radius:14px;
+             padding:18px 20px;min-width:min(560px,92vw);max-width:92vw;
+             box-shadow:0 18px 48px rgba(43,38,32,.22)}
+  #makeModal h2{font-size:13px;margin:0 0 14px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px}
+  #makeModal .mkgrid{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
   .card h2{font-size:13px;margin:0 0 10px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px}
   label{display:block;font-size:12px;color:#8a8172;margin:8px 0 2px}
@@ -46,8 +53,6 @@
   .likes button.l1::before{content:'＋ '}
   .likes button.l2{background:#f8c6c1;border-color:var(--accent)}
   .likes button.l2::before{content:'－ '}
-  #drop{margin:60px auto;max-width:520px;padding:60px 30px;border:2px dashed #c8c0b2;border-radius:16px;text-align:center;color:#8a8172;cursor:pointer}
-  #drop.over{border-color:var(--accent);color:var(--accent)}
   .tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;align-items:center}
   .tabs button{border:1px solid var(--line);background:#fdfcfa;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}
   .tabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
@@ -84,17 +89,17 @@
   <span id="fname" style="color:#8a8172;font-size:12px"></span>
   <span id="modelBadge" style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;background:#efe9dd;color:#6b6154"></span>
   <span style="flex:1"></span>
+  <button class="btn" id="makeBtn">새 아이템 만들기</button>
   <button class="btn" id="openBtn">파일 열기</button>
   <button class="btn primary" id="saveBtn" hidden>커스텀 .jpg 다운로드</button>
 </header>
 <input type="file" id="fileInput" accept=".jpg,.jpeg" hidden>
 
-<div id="drop">4U 아이템 .jpg 를 여기로 드래그<br>(또는 클릭해서 선택)</div>
-<div id="makeRow" style="text-align:center;margin:-8px 0 18px">
-  <button class="btn" id="makeBtn">새 아이템 만들기</button>
-  <div id="makeBox" hidden style="display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap;
-       justify-content:center;margin-top:10px;padding:10px;border:1px dashed var(--line);border-radius:8px">
-    <select id="mkModel"></select>
+<div id="makeModal" hidden>
+  <div class="sheet">
+    <h2>새 아이템 만들기</h2>
+    <div class="mkgrid">
+      <select id="mkModel"></select>
     <select id="mkCat" style="min-width:200px"></select>
     <input id="mkName" placeholder="이름" maxlength="14" style="width:120px">
     <label class="ad" id="mkCountBox" hidden>프레임 <select id="mkCount"></select></label>
@@ -104,9 +109,14 @@
       <span class="ad" id="mkBaseName">고른 파일 없음</span>
     </span>
     <label class="ad" id="mkColorsBox">색 <input id="mkColors" type="number" min="2" max="16" value="16" style="width:56px"></label>
-    <button class="btn" id="mkGo">만들기</button>
-    <span class="hint" id="mkNote" style="margin:0"></span>
+    </div>
+    <div class="hint" id="mkNote" style="margin:10px 0 0"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn" id="mkCancel">취소</button>
+      <button class="btn primary" id="mkGo">만들기</button>
+    </div>
   </div>
+</div>
 </div>
 
 <main id="main">
@@ -2395,13 +2405,8 @@ const transGreen=f=>{const c=f&&f.palette&&f.palette[0];return c&&c[1]===255&&c[
 const frOpaque=f=>!!f&&!transGreen(f);
 
 // ---- file open ----
-$('drop').onclick=()=>$('fileInput').click();
 $('openBtn').onclick=()=>$('fileInput').click();
 $('fileInput').onchange=e=>{if(e.target.files[0])load(e.target.files[0])};
-['dragover','dragleave','drop'].forEach(ev=>$('drop').addEventListener(ev,e=>{
-  e.preventDefault();$('drop').classList.toggle('over',ev==='dragover');
-  if(ev==='drop'&&e.dataTransfer.files[0])load(e.dataTransfer.files[0]);
-}));
 function arrayToB64(u8){let s='';const CH=32768;for(let i=0;i<u8.length;i+=CH)s+=String.fromCharCode.apply(null,u8.subarray(i,i+CH));return btoa(s)}
 // re-parse with the VDP+ partner attached, keeping the current selection
 async function reparse(){
@@ -2419,7 +2424,7 @@ async function load(f){
   doc=j; accBuiltFor=null;      // composite tiles must be rebuilt per file
   newJpegB64=null; $('thumbNote').textContent=''; $('fname').textContent=f.name;
   $('preview').src='data:image/jpeg;base64,'+j.jpeg_b64; $('preview').hidden=false;
-  $('drop').style.display='none'; $('main').style.display='grid'; $('saveBtn').hidden=false;
+  $('main').style.display='grid'; $('saveBtn').hidden=false;
   showPackets(j);
 }
 
@@ -3645,13 +3650,19 @@ $('fSerial').addEventListener('input',showSerialHex);
 // with the tool, so the packet is written from the category's own rules.
 let blueprints=null;
 $('makeBtn').onclick=async()=>{
-  const box=$('makeBox');
-  box.hidden=!box.hidden;
-  if(box.hidden||blueprints)return;
+  $('makeModal').hidden=false;
+  if(blueprints)return;
   blueprints=await (await fetch('/api/blueprints')).json();
   $('mkModel').innerHTML=Object.keys(blueprints).map(m=>`<option>${m}</option>`).join('');
   fillCats();
 };
+const closeMake=()=>{$('makeModal').hidden=true};
+$('mkCancel').onclick=closeMake;
+// clicking the backdrop closes it; clicking the sheet must not
+$('makeModal').onclick=e=>{if(e.target===$('makeModal'))closeMake()};
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&!$('makeModal').hidden)closeMake();
+});
 function fillCats(){
   const list=blueprints[$('mkModel').value]||[];
   $('mkCat').innerHTML=list.map((b,i)=>`<option value="${i}">${b.label}</option>`).join('');
@@ -3705,6 +3716,7 @@ $('mkGo').onclick=async()=>{
     base_b64:b.needs_base?mkBase:null,
     nframes:b.counts?+$('mkCount').value:null})});
   if(!r.ok){toast('만들기 실패: '+(await r.json()).error);return}
+  closeMake();
   const buf=new Uint8Array(await (await r.blob()).arrayBuffer());
   await load(new File([buf],`new_${b.label.replace(/[^가-힣A-Za-z]/g,'')}.jpg`));
   toast(`${b.label} 프레임을 만들었습니다 — 스프라이트를 그리고 저장하세요`);
