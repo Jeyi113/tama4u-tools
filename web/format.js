@@ -104,6 +104,17 @@ export function writeGrouped(raw, parts, text, model, width = 2) {
 // ---- item stats -----------------------------------------------------
 export const OFF_DEST = 0x4e;
 export const OFF_VERSION = 0x4c;
+// 4U marks a few items with the days they were handed out -- see items.py
+export const OFF_PERIOD = 0xf4;
+const PERIOD_MODELS = ['4U'];
+export function getPeriod(p) {
+  if (!PERIOD_MODELS.includes(p.model) || p.size <= OFF_PERIOD + 3) return null;
+  return Array.from(p.raw.slice(OFF_PERIOD, OFF_PERIOD + 4));
+}
+export function setPeriod(p, period) {
+  if (!PERIOD_MODELS.includes(p.model) || p.size <= OFF_PERIOD + 3) return;
+  period.slice(0, 4).forEach((v, i) => { p.raw[OFF_PERIOD + i] = v & 0xff; });
+}
 export const OFF_COMPAT = 0xf8;
 export const SECTION_MAIL = 6;
 export const SECTION_KIND = { 1: 'gh', 2: 'ac', 3: 'fk', 4: 'as', 6: 'mail', 7: 'bg' };

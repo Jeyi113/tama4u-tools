@@ -129,6 +129,9 @@ def describe(data, partner=None):
             info['version'] = items.get_version(pkt)
             info['version_presets'] = items.VERSION_PRESETS
         info['compat'] = items.get_compat(pkt)
+        period = items.get_period(pkt)
+        if period is not None:
+            info['period'] = period
         info['convert'] = {m: convert.plan(pkt, m)
                            for m in ('iD', 'iDL', "P's", '4U') if m != pkt.model}
         if info['is_item'] and not info['is_wardrobe']:
@@ -376,6 +379,8 @@ def _apply_fields(pkt, edit):
         items.set_destination(pkt, edit['dest'], edit.get('dest_label'))
     if 'likes' in edit:
         items.set_likes_raw(pkt, edit['likes'])
+    if 'period' in edit and edit['period']:
+        items.set_period(pkt, edit['period'])
     if 'stats' in edit:
         items.set_stats(pkt, edit['stats'])
     if 'acc_pos' in edit:

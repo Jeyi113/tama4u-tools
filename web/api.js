@@ -85,6 +85,8 @@ export function describe(data, opts = {}) {
     };
     if (model === 'iD') { info.version = F.getVersion(pkt); info.version_presets = F.VERSION_PRESETS; }
     info.compat = F.getCompat(pkt);
+    const period = F.getPeriod(pkt);
+    if (period !== null) info.period = period;
     info.convert = {};
     for (const m of ['iD', 'iDL', "P's", '4U']) if (m !== model) info.convert[m] = F.convertPlan(pkt, m);
     if (info.is_item && !info.is_wardrobe) info.price = F.getPrice(pkt);
@@ -307,6 +309,7 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     if ('friendship' in edit) F.setFriendship(pkt, edit.friendship);
     if ('dest' in edit) F.setDestination(pkt, edit.dest, edit.dest_label);
     if ('likes' in edit) F.setLikesRaw(pkt, edit.likes);
+    if (edit.period) F.setPeriod(pkt, edit.period);
     if ('stats' in edit) F.setStats(pkt, edit.stats);
     if ('acc_pos' in edit) F.setAccPositions(pkt, edit.acc_pos);
     if ('char_stats' in edit) F.setCharStats(pkt, edit.char_stats);

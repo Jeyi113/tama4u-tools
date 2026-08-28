@@ -118,6 +118,13 @@
       <div class="row">
         <div><label id="serialLabel">시리얼</label><input id="fSerial" type="number" min="0" max="65535"></div>
         <div id="priceBox"><label>가격</label><input id="fPrice" type="number" min="0" max="65535"></div>
+        <div id="periodBox" hidden><label>배포 기간 (월/일 ~ 월/일)</label>
+          <span style="display:flex;gap:3px;align-items:center">
+            <input id="pM1" type="number" min="0" max="12" style="width:46px">/
+            <input id="pD1" type="number" min="0" max="31" style="width:46px">~
+            <input id="pM2" type="number" min="0" max="12" style="width:46px">/
+            <input id="pD2" type="number" min="0" max="31" style="width:46px">
+          </span></div>
         <div id="hungerBox"><label>만복도</label><input id="fHunger" type="number" min="0" max="255"></div>
         <div id="friendBox"><label>친밀도</label><input id="fFriend" type="number" min="0" max="255"></div>
       </div>
@@ -447,6 +454,9 @@ function selectPacket(path){
     else if(tag)tag.remove();
   };
   gate('priceBox', on('price'));
+  // only 4U carries the hand-out window, and only on a handful of items
+  $('periodBox').hidden=!pk.period;
+  if(pk.period)['pM1','pD1','pM2','pD2'].forEach((id,i)=>$(id).value=pk.period[i]);
   gate('hungerBox', on('hunger'), '음식 전용');
   gate('friendBox', on('friendship'), pk.model==='iD'&&pk.kind==='as'?'iD 장난감 미사용':'해당 없음');
   gate('destBox', on('dest'));
@@ -1632,6 +1642,7 @@ $('saveBtn').onclick=async()=>{
     if(pk.char_extra.transform_name!=null)edit.transform_name=pk.char_extra.transform_name}
   if(pk.compat&&pk.model!=='iD')edit.compat=pk.compat.models;
   if(pk.is_item&&(!pk.fields||pk.fields.includes('price')))edit.price=+$('fPrice').value;
+  if(pk.period)edit.period=['pM1','pD1','pM2','pD2'].map(id=>+$(id).value);
   if((pk.fields||[]).includes('dest')){
     const sel=$('fDest');
     edit.dest=sel.value;

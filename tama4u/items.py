@@ -88,6 +88,34 @@ OPAQUE_KINDS = ('bg', 'lv')
 
 # toys reference two built-in animation programs (usually equal; e.g.
 # watermelon-cutting-set uses 61/67).  Zero for every other item kind.
+# 4U marks a few items with the days they were handed out: month and day to
+# start, month and day to stop.  Seven items carry it and all seven read as
+# a sane range -- 2/1-2/3 for setsubun, 8/12-8/14 for the Perseids, 4/1-4/5
+# for the new school term -- and one of them ships under the name
+# sports-day-0502-0506.jpg against bytes 05 02 05 06.
+#
+# iD fills the same eight bytes on 112 items and it is NOT this: its 0xF4
+# runs past twelve (20, 22, 32, 33), so whatever iD keeps there is
+# something else and is left alone.
+OFF_PERIOD = 0xF4
+PERIOD_MODELS = ('4U',)
+
+
+def get_period(pkt):
+    """(from_month, from_day, to_month, to_day), or None when the model
+    does not use the field."""
+    if pkt.model not in PERIOD_MODELS or pkt.size <= OFF_PERIOD + 3:
+        return None
+    return list(pkt.raw[OFF_PERIOD:OFF_PERIOD + 4])
+
+
+def set_period(pkt, period):
+    if pkt.model not in PERIOD_MODELS or pkt.size <= OFF_PERIOD + 3:
+        return
+    for i, v in enumerate(list(period)[:4]):
+        pkt.raw[OFF_PERIOD + i] = int(v) & 0xFF
+
+
 OFF_ANIM_A = 0x78
 OFF_ANIM_B = 0x79
 

@@ -136,6 +136,12 @@ EXTRA_BYTES = {
 # and clothes keep one at 0xA8 (values 3 to 30 with no favourite), 4U snacks
 # one at 0xB2 (1 to 4).  Reproduction copies them; a new item leaves them at
 # whatever EXTRA_BYTES says, which for these is nothing.
+# iD keeps a per-file block at 0xF0-0xF7, right in front of the two
+# firmware words.  0xF3 is always 03 and the three bytes after it vary the
+# way a date would (02 09 0d, 04 07 0c, 03 08 1b); only about a fifth of iD
+# items carry it at all.  Undecoded, so it travels as-is.
+MODEL_CARRY = {'iD': tuple(range(0xF0, 0xF8))}
+
 CARRY_OVER = {
     ("P's", '타마모리 · 액세서리'): (0xA8,),
     ("P's", '타마모리 · 액세서리 2'): (0xA8,),
@@ -148,7 +154,7 @@ CARRY_OVER = {
     ('4U', '고치 인테리어 · 방'): (0x70,),
     ('iD', '타마데파 · 장난감'): (0x65, 0x66, 0x67),
     ('iD', '타마모리 · 액세서리'): (0x65, 0x66, 0x67),
-    ('iD', '사진관 · 의상'): (0x65, 0x66, 0x67),
+    ('iD', '사진관 · 의상'): (0x65, 0x66, 0x67, 0x6C, 0x6D),
 }
 
 
@@ -358,6 +364,10 @@ def _write_fields(pkt, fields):
         items.set_stats(pkt, fields['stats'])
     if 'likes' in allowed and 'likes' in fields:
         items.set_likes_raw(pkt, fields['likes'])
+    if 'id_compat' in fields and fields['id_compat']:
+        # iD keeps two firmware version words at 0xF8; a Lovely Melody item
+        # carries 0x0DC0 there and a later-revision one 0x1DC0
+        items.set_version(pkt, compat=fields['id_compat'])
     if 'compat' in fields:
         # get_compat hands back {'mask', 'models'}; the mask is the field
         items.set_compat(pkt, fields['compat'].get('models', [])
@@ -396,6 +406,8 @@ def reproduce(pkt):
         fields['stats'] = items.get_stats(pkt)
     if 'likes' in allowed:
         fields['likes'] = items.get_likes_raw(pkt)
+    if pkt.model == 'iD':
+        fields['id_compat'] = items.get_version(pkt)['compat']
     acc_len = items.acc_block_len(pkt)
     at = pkt.layout['bank'] + items.ACC_POS_REL
     out = new_item(
@@ -410,7 +422,8 @@ def reproduce(pkt):
         dest=bytes(pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]),
         signature=struct.unpack_from('>H', pkt.raw, container.OFF_TYPE_SIG)[0],
         extra={o: pkt.raw[o]
-               for o in CARRY_OVER.get((pkt.model, label), ())
+               for o in (CARRY_OVER.get((pkt.model, label), ())
+                         + MODEL_CARRY.get(pkt.model, ()))
                if o < pkt.size},
         acc_block=bytes(pkt.raw[at:at + acc_len]) if acc_len else None,
         pad_to=pkt.size)
