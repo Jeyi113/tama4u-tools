@@ -600,9 +600,11 @@ class Handler(BaseHTTPRequestHandler):
                 if lab in create.FROM_BASE:
                     # no blueprint: the body comes from a file the user picks
                     return {'label': lab, 'frames': [], 'colors': 16,
-                            'needs_base': create.FROM_BASE[lab]}
+                            'needs_base': create.FROM_BASE[lab],
+                            'next_serial': create.next_serial(m, lab)}
                 geometry, colors = create.blueprint(m, lab)
-                row = {'label': lab, 'frames': geometry, 'colors': colors}
+                row = {'label': lab, 'frames': geometry, 'colors': colors,
+                       'next_serial': create.next_serial(m, lab)}
                 if lab == create.TOY_LABEL:
                     # the frame count is the animation, so it is a choice
                     row['counts'] = create.toy_counts()

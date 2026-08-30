@@ -168,6 +168,67 @@ CARRY_OVER = {
 }
 
 
+# The lowest serial no retail file of that shelf uses.  Serials are
+# numbered per shelf, not per model -- 4U 1001 belongs to a living room,
+# an outing, an accessory and a dress at once -- so a new item only has
+# to miss the ones its own category already took.  See SERIALS.md.
+NEXT_SERIAL = {
+    ('4U', '게임센터 · 게임'): 1026,
+    ('4U', '고치 인테리어 · 방'): 33214,
+    ('4U', '냉장고 직행 · 간식 (비매품)'): 1167,
+    ('4U', '냉장고 직행 · 식사 (비매품)'): 1106,
+    ('4U', '레스토랑 · 간식'): 15024,
+    ('4U', '레스토랑 · 식사'): 1867,
+    ('4U', '빙고 정의'): 1621,
+    ('4U', '외출지'): 1015,
+    ('4U', '카드 · 캐릭터 프로그램'): 1184,
+    ('4U', '타마데파 · 장난감'): 1807,
+    ('4U', '타마모리 · 액세서리'): 16176,
+    ('4U', '타마모리 · 옷'): 16005,
+    ("P's", 'VDP · 아이템 묶음'): 2523,
+    ("P's", '게임센터 · 게임'): 16553,
+    ("P's", '고치 인테리어 · 방'): 39170,
+    ("P's", '레스토랑 · 간식'): 16586,
+    ("P's", '레스토랑 · 간식 (비매품)'): 16612,
+    ("P's", '레스토랑 · 식사'): 16606,
+    ("P's", '레스토랑 · 식사 (비매품)'): 16628,
+    ("P's", '보물상자 · 스탬프카드'): 11025,
+    ("P's", '보물상자 · 편지'): 11122,
+    ("P's", '외출지'): 16559,
+    ("P's", '타마데파 · 장난감'): 16731,
+    ("P's", '타마모리 · 액세서리'): 39170,
+    ("P's", '타마모리 · 액세서리 2'): 16141,
+    ("P's", '타마모리 · 옷'): 39169,
+    ("P's", '통신놀이 · 레시피'): 16024,
+    ('iD', '게임센터 · 게임'): 296,
+    ('iD', '고치 인테리어 · 방'): 60921,
+    ('iD', '레스토랑 · 간식'): 50826,
+    ('iD', '레스토랑 · 간식 (변종)'): 4128,
+    ('iD', '레스토랑 · 식사'): 50826,
+    ('iD', '사진관 · 배경'): 37026,
+    ('iD', '사진관 · 의상'): 50078,
+    ('iD', '외출지'): 517,
+    ('iD', '우편함 · 편지'): 49859,
+    ('iD', '타마데파 · 장난감'): 50347,
+    ('iD', '타마모리 · 액세서리'): 50085,
+    ('iDL', '게임센터 · 게임'): 11103,
+    ('iDL', '고치 인테리어 · 방'): 39170,
+    ('iDL', '레스토랑 · 간식'): 11343,
+    ('iDL', '레스토랑 · 간식 (비매품)'): 11266,
+    ('iDL', '레스토랑 · 식사'): 11254,
+    ('iDL', '레스토랑 · 식사 (비매품)'): 11197,
+    ('iDL', '외출지'): 11058,
+    ('iDL', '우편함 · 편지'): 11336,
+    ('iDL', '우편함 · 해피메일'): 11083,
+    ('iDL', '타마데파 · 생활용품'): 12056,
+    ('iDL', '타마데파 · 씨앗'): 13124,
+    ('iDL', '타마데파 · 장난감'): 11239,
+    ('iDL', '타마모리 · 액세서리'): 39170,
+    ('iDL', "타마모리 · 액세서리 (P's용)"): 11200,
+    ('iDL', '타마모리 · 옷'): 39169,
+    ('iDL', '타마베이커리 · 간식'): 11276,
+}
+
 PAL4_MAX = 16       # up to here a pixel is 4 bits; past it, 8
 
 
@@ -182,6 +243,11 @@ def blueprint(model, label, nframes=None):
         return None if got is None else (got[0], PAL4_MAX)
     geometry = BLUEPRINTS.get((model, label)) or BLUEPRINTS.get(('*', label))
     return None if geometry is None else (geometry, PAL4_MAX)
+
+
+def next_serial(model, label):
+    """A serial that collides with nothing retail ships for that shelf."""
+    return NEXT_SERIAL.get((model, label), 1)
 
 
 def categories(model):
