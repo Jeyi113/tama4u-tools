@@ -260,6 +260,32 @@
         있도록 값만 열어 두었습니다.
       </div>
     </div>
+    <div class="card" id="composeCard" hidden>
+      <h2>썸네일 합성 <span style="font-weight:400;text-transform:none">— 배경 위에 스프라이트를 끌어다 놓으세요</span></h2>
+      <div style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+        <div>
+          <canvas id="cmpCv" style="border:1px solid var(--line);border-radius:6px;
+                  image-rendering:pixelated;cursor:crosshair"></canvas>
+          <div class="hint" id="cmpNote" style="margin:6px 0 0"></div>
+        </div>
+        <div style="min-width:190px">
+          <div class="ad" style="margin-bottom:6px">올릴 스프라이트</div>
+          <div id="cmpList" style="display:flex;flex-wrap:wrap;gap:4px;max-width:260px;
+               max-height:240px;overflow:auto"></div>
+          <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn" id="cmpUndo">되돌리기</button>
+            <button class="btn" id="cmpClear">비우기</button>
+            <button class="btn primary" id="cmpApply">썸네일로 적용</button>
+          </div>
+        </div>
+      </div>
+      <div class="hint">
+        게임 썸네일은 <b>배경 스프라이트(128x72) 위에 다른 스프라이트를 올린
+        합성 그림</b>입니다. 어디에 올릴지는 파일에 적혀 있지 않습니다 — 스프라이트
+        레코드는 크기·색수·픽셀만 담고 좌표 자리가 없으며, 게임 중 위치는 코드가
+        실행하며 정합니다. 그래서 이 화면은 표지 그림을 손으로 짜는 곳입니다.
+      </div>
+    </div>
     <div class="card" id="likesCard">
       <h2>좋아함 / 싫어함 <span style="font-weight:400;text-transform:none">(클릭: 없음→<span style="color:var(--ok)">좋아함</span>→<span style="color:var(--accent)">싫어함</span>)</span></h2>
       <div class="likes" id="likes"></div>
@@ -283,6 +309,7 @@
       <button class="btn" id="impBtn">BMP 가져오기</button>
       <button class="btn" id="expBtn">BMP 내보내기</button>
       <button class="btn" id="thumbBtn">이 프레임으로 썸네일(JPEG 미리보기) 만들기</button>
+      <button class="btn" id="composeBtn" hidden>썸네일 합성하기</button>
       <span class="hint" id="thumbNote" style="margin-left:8px"></span></div>
     <input type="file" id="bmpInput" accept=".bmp" hidden>
     <div id="canvasWrap"><canvas id="cv"></canvas></div>
@@ -2561,6 +2588,11 @@ function selectPacket(path){
     + `  (앞 2바이트 = 기종/펌웨어)`;
   // a program's sprite layout is its engine: two different games built on
   // one carry the same set, which is what to match when picking a base
+  // a cover made of several sprites only makes sense where there is a
+  // backdrop to lay them on -- games and outings carry one
+  const canCompose=!!(pk.game_shape&&(pk.banks||[]).some(b=>b.frames.some(f=>f.w===128&&f.h===72)));
+  $('composeBtn').hidden=!canCompose;
+  if(!canCompose)$('composeCard').hidden=true;
   const cast=pk.outing;
   $('outingBox').hidden=!cast;
   if(cast)$('outingNote').innerHTML=
@@ -3217,6 +3249,88 @@ function animStart(){
 function animStop(){if(animTimer){clearInterval(animTimer);animTimer=null}$('animBtn').textContent='▶'}
 $('animBtn').onclick=()=>animTimer?animStop():animStart();
 $('animFps').oninput=()=>{$('animFpsLabel').textContent=$('animFps').value+' fps';if(animTimer)animStart()};
+
+// ---- thumbnail composer -------------------------------------------
+// A game's cover is its 128x72 backdrop with other sprites laid over it.
+// Nothing in the file says where they go -- a sprite record carries size,
+// palette and pixels and no coordinates, and the game works its own
+// positions out as it runs -- so this is a place to arrange one by hand.
+const CMP_SCALE=3;
+let cmpBase=null, cmpPlaced=[], cmpPick=0;
+const cmpFrames=()=>(pk&&pk.banks?pk.banks.flatMap(b=>b.frames):[]);
+
+function cmpBackdrop(){
+  const all=cmpFrames();
+  return all.find(f=>f.w===128&&f.h===72)
+      || all.reduce((a,b)=>(!a||b.w*b.h>a.w*a.h)?b:a, null);
+}
+function drawFrameOn(g, f, ox, oy, scale, keepIndex0){
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    const v=f.pixels[y*f.w+x];
+    if(v===0&&!keepIndex0)continue;
+    const c=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    g.fillRect((ox+x)*scale,(oy+y)*scale,scale,scale);
+  }
+}
+function cmpRender(){
+  const c=$('cmpCv'); if(!cmpBase)return;
+  c.width=cmpBase.w*CMP_SCALE; c.height=cmpBase.h*CMP_SCALE;
+  const g=c.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height);
+  drawFrameOn(g, cmpBase, 0, 0, CMP_SCALE, true);
+  cmpPlaced.forEach(p=>drawFrameOn(g, p.f, p.x, p.y, CMP_SCALE, false));
+  $('cmpNote').textContent=`배경 ${cmpBase.w}x${cmpBase.h} · 올린 것 ${cmpPlaced.length}개`
+    +' — 캔버스를 누르면 고른 스프라이트가 그 자리에 놓입니다';
+}
+function cmpFill(){
+  const all=cmpFrames();
+  cmpBase=cmpBackdrop();
+  const list=$('cmpList'); list.innerHTML='';
+  all.forEach((f,i)=>{
+    if(f===cmpBase)return;
+    const b=document.createElement('canvas');
+    const s=Math.max(1,Math.min(3,Math.floor(36/Math.max(f.w,f.h))));
+    b.width=f.w*s; b.height=f.h*s; b.title=`${f.w}x${f.h}`;
+    b.style.cssText='border:1px solid var(--line);border-radius:4px;cursor:pointer;background:#fff';
+    drawFrameOn(b.getContext('2d'), f, 0, 0, s, false);
+    b.onclick=()=>{cmpPick=i;[...list.children].forEach(x=>x.style.outline='');
+                   b.style.outline='2px solid var(--accent)'};
+    if(i===cmpPick)b.style.outline='2px solid var(--accent)';
+    list.appendChild(b);
+  });
+  cmpRender();
+}
+$('composeBtn').onclick=()=>{
+  const on=$('composeCard').hidden;
+  $('composeCard').hidden=!on;
+  if(on){cmpPlaced=[];cmpFill();$('composeCard').scrollIntoView({block:'nearest'})}
+};
+$('cmpCv').onclick=e=>{
+  const all=cmpFrames(), f=all[cmpPick];
+  if(!f||f===cmpBase)return;
+  const r=e.target.getBoundingClientRect();
+  const x=Math.round((e.clientX-r.left)/CMP_SCALE - f.w/2);
+  const y=Math.round((e.clientY-r.top)/CMP_SCALE - f.h/2);
+  cmpPlaced.push({f, x:Math.max(0,Math.min(cmpBase.w-1,x)),
+                     y:Math.max(0,Math.min(cmpBase.h-1,y))});
+  cmpRender();
+};
+$('cmpUndo').onclick=()=>{cmpPlaced.pop();cmpRender()};
+$('cmpClear').onclick=()=>{cmpPlaced=[];cmpRender()};
+$('cmpApply').onclick=()=>{
+  if(!cmpBase)return;
+  const c=document.createElement('canvas');
+  c.width=cmpBase.w; c.height=cmpBase.h;
+  const g=c.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,c.width,c.height);
+  drawFrameOn(g, cmpBase, 0, 0, 1, true);
+  cmpPlaced.forEach(p=>drawFrameOn(g, p.f, p.x, p.y, 1, false));
+  const url=c.toDataURL('image/jpeg',0.92);
+  newJpegB64=url.split(',')[1];
+  $('preview').src=url;
+  $('thumbNote').textContent=`합성 ${cmpPlaced.length}개 적용됨 — 저장 시 반영`;
+};
 
 // ---- thumbnail: regenerate the file's JPEG preview from the current frame
 let newJpegB64=null;
