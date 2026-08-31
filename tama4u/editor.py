@@ -480,7 +480,13 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
                 continue
             src = base64.b64decode(e['replace_b64'])
             _, srcpkts, _ = container.parse_file(src)
-            replace_packet(packets, e['path'], bytes(srcpkts[0].raw))
+            new = srcpkts[0]
+            # a donor from another model has its sprite bank, name encoding
+            # and destination in different places, so it is converted before
+            # it goes in rather than pushed in as raw bytes
+            if e.get('convert_to') and new.model != e['convert_to']:
+                new = convert.convert(new, e['convert_to'])
+            replace_packet(packets, e['path'], bytes(new.raw))
         delta = sum(p.size for p in packets) - before
         for p in packets:
             p.shift_declared_size(delta)
@@ -526,7 +532,10 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
                 # is reassembled around it, so the sizes need not match
                 src = base64.b64decode(edit['replace_b64'])
                 _, srcpkts, _ = container.parse_file(src)
-                subs[idx] = vdp.fit_content(subs[idx], srcpkts[0])
+                donor = srcpkts[0]
+                if edit.get('convert_to') and donor.model != edit['convert_to']:
+                    donor = convert.convert(donor, edit['convert_to'])
+                subs[idx] = vdp.fit_content(subs[idx], donor)
                 continue
             _apply_fields(subs[idx], edit)
         for idx, edit in charjobs:

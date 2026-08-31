@@ -312,7 +312,12 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
         continue;
       }
       const { packets: srcpkts } = parseFile(e.replace_bytes);
-      replacePacket(packets, e.path, srcpkts[0].raw);
+      let donor = srcpkts[0];
+      // a donor from another model keeps its bank, name encoding and
+      // destination elsewhere, so convert it rather than splice raw bytes
+      if (e.convert_to && donor.model !== e.convert_to)
+        donor = F.convert(donor, e.convert_to);
+      replacePacket(packets, e.path, donor.raw);
     }
     const delta = packets.reduce((a, p) => a + p.size, 0) - before;
     for (const p of packets) p.shiftDeclaredSize(delta);
@@ -394,7 +399,10 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
         // swap one content for a whole downloaded item; the payload is
         // reassembled around it, so the sizes need not match
         const { packets: srcpkts } = parseFile(edit.replace_bytes);
-        subs[idx] = F.vdpFitContent(subs[idx], srcpkts[0]);
+        let donor = srcpkts[0];
+        if (edit.convert_to && donor.model !== edit.convert_to)
+          donor = F.convert(donor, edit.convert_to);
+        subs[idx] = F.vdpFitContent(subs[idx], donor);
         continue;
       }
       applyOne(subs[idx], edit);

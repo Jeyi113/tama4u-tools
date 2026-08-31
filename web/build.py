@@ -83,12 +83,13 @@ def main():
       catch(err){ toast('변환 실패: '+err.message); return }""")
     html = html.replace(
         """  const r=await fetch('/api/build',{method:'POST',body:JSON.stringify({
-    file_b64:fileB64, edits:[{path:pk.path, replace_b64:arrayToB64(buf)}]})});
+    file_b64:fileB64,
+    edits:[{path:pk.path, replace_b64:arrayToB64(buf), convert_to:convertTo}]})});
   if(!r.ok){toast('교체 실패: '+(await r.json()).error);return}
   const blob=await r.blob();""",
         """  let blob;
   try { blob=new Blob([await apiBuild({file_b64:fileB64,
-    edits:[{path:pk.path, replace_b64:arrayToB64(buf)}]})]); }
+    edits:[{path:pk.path, replace_b64:arrayToB64(buf), convert_to:convertTo}]})]); }
   catch(err){ toast('교체 실패: '+err.message); return }""")
     html = html.replace(
         """  const r=await fetch('/api/build',{method:'POST',body:JSON.stringify(payload)});

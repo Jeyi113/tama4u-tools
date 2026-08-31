@@ -1709,21 +1709,40 @@ async function swapWith(file){
   const info=await (await fetch('/api/parse',{method:'POST',body:buf})).json();
   if(info.error){toast('교체 실패: '+info.error);return}
   const src=info.packets[0];
-  if(src.model!==pk.model&&!confirm(
-      `기종이 다릅니다 (${src.model} → ${pk.model}). 그래도 교체할까요?`))return;
+  // a donor from another model keeps its bank, name encoding and
+  // destination in different places, so it is converted on the way in
+  // rather than dropped in as raw bytes
+  let convertTo=null;
+  if(src.model!==pk.model){
+    const plan=(src.convert||{})[pk.model];
+    if(!plan||!plan.ok){
+      toast(`${src.model} → ${pk.model} 변환 불가: `
+        +((plan&&plan.blockers||['이 기종 조합은 변환할 수 없습니다']).join(' ')));
+      return;
+    }
+    const lines=[`${src.model} 파일입니다 — ${pk.model}로 변환해서 넣습니다.`,''];
+    if(plan.changes.length)lines.push('바뀌는 것:', ...plan.changes.map(c=>'  · '+c));
+    if(plan.warnings.length)lines.push('', '주의:', ...plan.warnings.map(w=>'  · '+w));
+    lines.push('', '진행할까요?');
+    if(!confirm(lines.join('\n')))return;
+    convertTo=pk.model;
+  }
   // the destination is what files an item on the device, so swapping across
-  // categories moves it to a different shelf -- worth saying out loud
-  if(src.dest!==pk.dest&&!confirm(
+  // categories moves it to a different shelf -- worth saying out loud.
+  // A conversion already re-files it, so this only asks when it does not.
+  if(!convertTo&&src.dest!==pk.dest&&!confirm(
       `카테고리가 다릅니다.\n\n  지금: ${pk.dest_label} (0x${(pk.dest||'').toUpperCase()})`
       +`\n  교체: ${src.dest_label} (0x${(src.dest||'').toUpperCase()})\n\n`
       +`교체하면 이 자리는 "${src.dest_label}" 가 됩니다. 진행할까요?`))return;
   const r=await fetch('/api/build',{method:'POST',body:JSON.stringify({
-    file_b64:fileB64, edits:[{path:pk.path, replace_b64:arrayToB64(buf)}]})});
+    file_b64:fileB64,
+    edits:[{path:pk.path, replace_b64:arrayToB64(buf), convert_to:convertTo}]})});
   if(!r.ok){toast('교체 실패: '+(await r.json()).error);return}
   const blob=await r.blob();
   const nb=new Uint8Array(await blob.arrayBuffer());
   await load(new File([nb],$('fname').textContent||'custom.jpg'));
-  toast(`"${src.name||src.ansi_id}" 로 교체됨 — 저장하면 반영됩니다`);
+  toast(`"${src.name||src.ansi_id}" 로 교체됨`
+    +(convertTo?` (${src.model} → ${convertTo} 변환)`:'')+` — 저장하면 반영됩니다`);
 }
 
 // the top-level packet's download name is the file's identity: the display
