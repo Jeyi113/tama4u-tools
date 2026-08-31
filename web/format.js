@@ -108,15 +108,21 @@ export const OFF_VERSION = 0x4c;
 // a girl (the extra one is the longer hair) -- see items.py
 export const STUDIO_FRAMES = { 5: 'Boy', 6: 'Girl' };
 export const studioGender = n => STUDIO_FRAMES[n] ?? null;
-// 4U marks a few items with the days they were handed out -- see items.py
+// Only 4U decorations carry the days they were handed out.  They ride the
+// toy destination but the serial band separates them -- see items.py.
 export const OFF_PERIOD = 0xf4;
 const PERIOD_MODELS = ['4U'];
+const PERIOD_LABEL = '타마데파 · 장난감';
+const PERIOD_SERIAL_BAND = 0x07;
+export const hasPeriod = p =>
+  PERIOD_MODELS.includes(p.model) && p.size > OFF_PERIOD + 3
+  && getDestination(p) === PERIOD_LABEL && (p.serial >> 8) === PERIOD_SERIAL_BAND;
 export function getPeriod(p) {
-  if (!PERIOD_MODELS.includes(p.model) || p.size <= OFF_PERIOD + 3) return null;
+  if (!hasPeriod(p)) return null;
   return Array.from(p.raw.slice(OFF_PERIOD, OFF_PERIOD + 4));
 }
 export function setPeriod(p, period) {
-  if (!PERIOD_MODELS.includes(p.model) || p.size <= OFF_PERIOD + 3) return;
+  if (!hasPeriod(p)) return;
   period.slice(0, 4).forEach((v, i) => { p.raw[OFF_PERIOD + i] = v & 0xff; });
 }
 export const OFF_COMPAT = 0xf8;

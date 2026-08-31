@@ -112,20 +112,44 @@ def studio_gender(pkt, nframes):
     return STUDIO_FRAMES.get(nframes)
 
 
+# 4U decorations carry the days they were handed out: month and day to
+# start, month and day to stop.  All six read as a sane range -- 2/1-2/3
+# for setsubun, 8/12-8/14 for the Perseids, 4/1-4/5 for the new school
+# term -- and one ships as sports-day-0502-0506.jpg against 05 02 05 06.
+#
+# Only decorations have it.  They own no shelf and ride the toy
+# destination, but the serial separates them: the toy shop runs 0x03xx and
+# 0x04xx, coupons sit at 0x06xx and decorations at 0x07xx.  All six with a
+# period are 0x07xx, and the 144 toys and 5 coupons are zero, so the band
+# is the test.
+#
+# iD fills the same eight bytes on 112 items and it is NOT this: its 0xF4
+# runs past twelve (20, 22, 32, 33), so whatever iD keeps there is
+# something else and is left alone.
 OFF_PERIOD = 0xF4
 PERIOD_MODELS = ('4U',)
+PERIOD_LABEL = '타마데파 · 장난감'
+PERIOD_SERIAL_BAND = 0x07
+
+
+def has_period(pkt):
+    """Whether this packet's shelf carries the hand-out window at all."""
+    return (pkt.model in PERIOD_MODELS
+            and pkt.size > OFF_PERIOD + 3
+            and get_destination(pkt) == PERIOD_LABEL
+            and (pkt.serial >> 8) == PERIOD_SERIAL_BAND)
 
 
 def get_period(pkt):
     """(from_month, from_day, to_month, to_day), or None when the model
     does not use the field."""
-    if pkt.model not in PERIOD_MODELS or pkt.size <= OFF_PERIOD + 3:
+    if not has_period(pkt):
         return None
     return list(pkt.raw[OFF_PERIOD:OFF_PERIOD + 4])
 
 
 def set_period(pkt, period):
-    if pkt.model not in PERIOD_MODELS or pkt.size <= OFF_PERIOD + 3:
+    if not has_period(pkt):
         return
     for i, v in enumerate(list(period)[:4]):
         pkt.raw[OFF_PERIOD + i] = int(v) & 0xFF
