@@ -35,6 +35,12 @@
   label{display:block;font-size:12px;color:#8a8172;margin:8px 0 2px}
   input,select{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fdfcfa}
   .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 90px;min-width:90px}
+  /* four date boxes need more room than a 90px column gives, so this one
+     takes a line of its own and the inputs shrink instead of spilling */
+  #periodBox{flex:1 1 100%}
+  .daterange{display:flex;gap:4px;align-items:center}
+  .daterange input{flex:1 1 0;min-width:0;text-align:center;padding:6px 2px}
+  .daterange i{font-style:normal;color:#8a8172;flex:0 0 auto}
   .statgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;text-align:center}
   .statgrid label{margin:0;font-size:11px}
   table.vdp{width:100%;border-collapse:collapse;font-size:12px}
@@ -141,11 +147,11 @@
         <div id="idLineBox" hidden style="grid-column:1/-1"><label>iD 계열</label>
           <div id="idLineNote" class="hint" style="margin:4px 0 0"></div></div>
         <div id="periodBox" hidden><label>배포 기간 (월/일 ~ 월/일)</label>
-          <span style="display:flex;gap:3px;align-items:center">
-            <input id="pM1" type="number" min="0" max="12" style="width:46px">/
-            <input id="pD1" type="number" min="0" max="31" style="width:46px">~
-            <input id="pM2" type="number" min="0" max="12" style="width:46px">/
-            <input id="pD2" type="number" min="0" max="31" style="width:46px">
+          <span class="daterange">
+            <input id="pM1" type="number" min="0" max="12"><i>/</i>
+            <input id="pD1" type="number" min="0" max="31"><i>~</i>
+            <input id="pM2" type="number" min="0" max="12"><i>/</i>
+            <input id="pD2" type="number" min="0" max="31">
           </span></div>
         <div id="hungerBox"><label>만복도</label><input id="fHunger" type="number" min="0" max="255"></div>
         <div id="friendBox"><label>친밀도</label><input id="fFriend" type="number" min="0" max="255"></div>
