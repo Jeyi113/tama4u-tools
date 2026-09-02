@@ -3651,8 +3651,21 @@ $('bmpInput').onchange=async e=>{
   e.target.value='';
   try{
     const src=bmpToFrame(await file.arrayBuffer()), f=curFrame();
+    let resized='';
     if(src.w!==f.w||src.h!==f.h){
-      toast(`크기가 다릅니다: ${src.w}×${src.h} → ${f.w}×${f.h} 필요`);return;
+      // Where the slot is allowed to stretch there is no reason to make
+      // the size be typed in first -- the BMP already says what it is.
+      // Everywhere else the size is load-bearing (the device picks poses
+      // and pieces by it), so a mismatch is still refused.
+      const e2=resizableFrame();
+      if(!e2){
+        toast(`크기가 다릅니다: ${src.w}×${src.h} → ${f.w}×${f.h} 필요`
+          +' (크기를 바꿀 수 있는 것은 캐릭터 23~26번 프레임뿐입니다)');
+        return;
+      }
+      resized=` · ${f.w}×${f.h} → ${src.w}×${src.h}로 맞췄습니다`;
+      f.w=src.w; f.h=src.h;
+      pk.banks[e2.bank].grow=true;      // the slot may have to grow on save
     }
     // 투명 여부는 크기가 아니라 이 프레임의 0번 색이 정한다. 원래 투명이던
     // 자리에 외부 BMP(보통 0번이 검정)를 넣으면 투명이어야 할 픽셀이 검게
@@ -3667,8 +3680,9 @@ $('bmpInput').onchange=async e=>{
       f.palette[0]=TRANSPARENT;
       note=' · 0번을 투명색으로 맞췄습니다';
     }
+    if(resized){undoStack=[]; renderTabs()}   // the tab label carries the size
     renderFrame(); drawSim();
-    toast('BMP 가져오기 완료'+note);
+    toast('BMP 가져오기 완료'+resized+note);
   }catch(err){toast('가져오기 실패: '+err.message)}
 };
 
