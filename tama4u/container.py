@@ -158,23 +158,47 @@ class Packet:
             out.append(ch)
         return ''.join(out) or '?'
 
+    def _ansi_parts(self):
+        """('t4u_gh', '01855', '_1') for `t4u_gh01855_1`, else None."""
+        s = self.ansi_id
+        if not s.startswith('t4u_') or self.kind == '?':
+            return None
+        head = 't4u_' + self.kind
+        rest = s[len(head):]                           # "01855_1"
+        digits = ''
+        for ch in rest:
+            if not ch.isdigit():
+                break
+            digits += ch
+        return (head, digits, rest[len(digits):]) if digits else None
+
+    @property
+    def ansi_num(self):
+        """The number inside the ASCII id, or None when it has none."""
+        parts = self._ansi_parts()
+        return int(parts[1]) if parts else None
+
     # --- setters ----------------------------------------------------
+    def set_ansi_num(self, value):
+        parts = self._ansi_parts()
+        if not parts:
+            return
+        head, digits, tail = parts
+        new = f'{head}{int(value):0{len(digits)}d}{tail}'
+        field = new.encode('ascii')[:OFF_PACKET_SIZE - OFF_ANSI_ID]
+        field += b'\x00' * (OFF_PACKET_SIZE - OFF_ANSI_ID - len(field))
+        self.raw[OFF_ANSI_ID:OFF_PACKET_SIZE] = field
+
     def set_serial(self, value):
+        # The ASCII id usually repeats the serial (t4u_gh01855_1), so it is
+        # kept in sync -- but only where it actually agreed to begin with.
+        # A 4U character card does not: it carries serial 1111 against id
+        # t4u_fk01601_a2, and syncing there would overwrite the number that
+        # its nested body packet has to match.  Edit ansi_num for those.
+        was_synced = self.ansi_num == self.serial
         struct.pack_into('>H', self.raw, OFF_SERIAL, value)
-        # keep the ASCII id's digits in sync: t4u_gh01855_1
-        old = self.ansi_id
-        if old.startswith('t4u_') and self.kind != '?':
-            head = 't4u_' + self.kind
-            tail = old[len(head):]                     # "01855_1"
-            digits = ''
-            for ch in tail:
-                if not ch.isdigit():
-                    break
-                digits += ch
-            new = f'{head}{value:0{len(digits) or 5}d}{tail[len(digits):]}'
-            field = new.encode('ascii')[:OFF_PACKET_SIZE - OFF_ANSI_ID]
-            field += b'\x00' * (OFF_PACKET_SIZE - OFF_ANSI_ID - len(field))
-            self.raw[OFF_ANSI_ID:OFF_PACKET_SIZE] = field
+        if was_synced:
+            self.set_ansi_num(value)
 
     def set_item_name_codes(self, codes):
         lay = self.layout

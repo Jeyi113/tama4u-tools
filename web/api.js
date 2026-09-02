@@ -3,7 +3,7 @@
 // unchanged; web/selftest.js diffs the two implementations file by file.
 import {
   parseFile, buildFile, Packet, u16, putU16, OFF_PACKET_SIZE,
-  parseBank, writeBank, scanBanks, scanLoose, readLoose, writeLoose,
+  parseBank, writeBank, encodeBank, sum16, scanBanks, scanLoose, readLoose, writeLoose,
   destOptions,
   OFF_TYPE_SIG,
 } from './core.js';
@@ -61,6 +61,7 @@ export function describe(data, opts = {}) {
       stats_verified: pkt.packetClass === 'S',
       path,
       ansi_id: pkt.ansiId,
+      ansi_num: pkt.ansiNum,
       kind: F.effectiveKind(pkt),
       section: pkt.section,
       serial: pkt.serial,
@@ -203,7 +204,18 @@ export function describe(data, opts = {}) {
           transform_name: F.decode(nm([F.CH.TRANSFORM_NAME, 10]), table).replace(/^[　\s]+|[　\s]+$/g, ''),
           name2: F.decode(nm([F.CH.NAME2, pkt.layout.slots]), table),
         };
-        info.char_enums = { gender: F.GENDER, stage: F.STAGE, body_type: F.bodyTypes(model),
+        // A character is two packets: this card, and the body nested at
+        // 0xB00.  Their ASCII ids share one number and the body repeats it
+        // as *its* serial (68/68 in the 4U pack), so the screen edits the
+        // number once and writes both.
+        if (pkt.children.length) {
+          const body = pkt.children[0];
+          info.char_body = {
+            path: [...path, 0], ansi_id: body.ansiId, ansi_num: body.ansiNum,
+            serial: body.serial, name: F.decode(body.itemNameCodes, table),
+          };
+        }
+        info.char_enums = { stage: F.STAGE, personality: F.PERSONALITY, body_type: F.bodyTypes(model),
                             transform_type: F.TRANSFORM_TYPE, like_index: F.LIKE_INDEX };
       } else {
         // dialogue is 1 byte/char on iD/iD L/P's and 2 on 4U, and it only
@@ -292,6 +304,45 @@ function replacePacket(packets, path, newRaw) {
   replacePacket(packets, path.slice(0, -1), raw);
 }
 
+// Rewrite banks whose frames no longer fit their slots.  A bigger frame
+// makes the packet longer, invalidating its 0x4A, every enclosing 0x4A and
+// every top-level 0x32; splicing through replacePacket fixes the first two
+// and the returned delta is what the caller shifts the 0x32s by.  Only
+// banks marked `grow` are considered, so an ordinary edit still fails
+// loudly rather than quietly moving everything after the bank.
+function resizeBanks(packets, edits) {
+  let delta = 0;
+  for (const edit of edits) {
+    if (edit.path.includes('vdp') || edit.path.includes('vdpchar')) continue;
+    for (const bank of edit.banks || []) {
+      if (bank.loose || !bank.grow) continue;
+      const pkt = findPacket(packets, edit.path);
+      const off = bank.offset;
+      const oldEnd = parseBank(pkt.raw, off).end;
+      const frames = bank.frames.map(f => ({ slot_size: f.slot, w: f.w, h: f.h,
+                                             palette: f.palette, pixels: f.pixels }));
+      const blob = encodeBank(frames, true);
+      bank.frames.forEach((f, i) => { f.slot = frames[i].slot_size; });
+      if (off + blob.length === oldEnd) continue;   // fits; in-place path has it
+      const raw = new Uint8Array(pkt.size - (oldEnd - off) + blob.length);
+      raw.set(pkt.raw.subarray(0, off), 0);
+      raw.set(blob, off);
+      raw.set(pkt.raw.subarray(oldEnd), off + blob.length);
+      putU16(raw, OFF_PACKET_SIZE, raw.length);
+      // replacePacket re-parses from these bytes, so the new Packet would
+      // consider itself untouched and keep the checksum that belonged to
+      // the shorter body.  Seal it here; parents then reseal themselves.
+      putU16(raw, raw.length - 2, sum16(raw.subarray(0, raw.length - 2)));
+      delta += raw.length - pkt.size;
+      replacePacket(packets, edit.path, raw);
+      bank.done = true;
+    }
+  }
+  for (const edit of edits)
+    if (edit.banks) edit.banks = edit.banks.filter(b => !b.done);
+  return delta;
+}
+
 // `partner` is a VDP+ continuation; with it, edits reach the whole bundle
 // and the result comes back as [part 1, part 2].
 export function applyEdits(data, edits, newJpeg = null, partner = null) {
@@ -331,6 +382,7 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
   const applyOne = (pkt, edit) => {
     const model = pkt.model;
     if ('serial' in edit) pkt.setSerial(+edit.serial);
+    if (edit.ansi_num != null) pkt.setAnsiNum(+edit.ansi_num);
     if ('name' in edit) pkt.setItemNameCodes(F.encode(edit.name, model));
     if ('unicode_name' in edit) pkt.setUnicodeName(edit.unicode_name);
     if ('price' in edit) F.setPrice(pkt, +edit.price);
@@ -366,6 +418,10 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
       writeBank(pkt.raw, frames, off);
     }
   };
+  // a frame that outgrew its slot lengthens the packet, so this runs before
+  // the field edits (which need the re-parsed Packet objects)
+  const grew = resizeBanks(packets, edits);
+  if (grew) for (const p of packets) p.shiftDeclaredSize(grew);
   for (const edit of edits) {
     if (!edit.path.includes('vdp') && !edit.path.includes('vdpchar'))
       applyOne(findPacket(packets, edit.path), edit);

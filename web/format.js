@@ -841,18 +841,19 @@ export const CH = {
   TAMA_ID: 0x204, REVERT_ID: 0x206, GRAPHICS: 0x208, PERSONALITY: 0x20c,
   SKILLS: 0x20d, STAGE: 0x212, WEIGHT_STD: 0x213, WEIGHT_MIN: 0x214,
   HUNGER_DEP: 0x215, HAPPY_DEP: 0x216, SICKNESS: 0x217, WAKE: 0x218,
-  SLEEP: 0x219, GENDER: 0x21a, BODY_TYPE: 0x21b, SEP_CLOTHES: 0x21c,
-  SEP_ACCESSORY: 0x21e, BIRTH_MONTH: 0x220, BIRTH_DAY: 0x221,
+  // 0x21c/0x21e swapped round on 2026-09-02 -- see character.py
+  SLEEP: 0x219, BYTE_21A: 0x21a, BODY_TYPE: 0x21b, SEP_ACCESSORY: 0x21c,
+  SEP_CLOTHES: 0x21e, BIRTH_MONTH: 0x220, BIRTH_DAY: 0x221,
   LIKE_INDEX: 0x222, TRANSFORM_TYPE: 0x22e, TRANSFORM_SERIAL: 0x230,
   TRANSFORM_NAME: 0x232, NAME2: 0x246, DIALOGUE: 0x272,
 };
 const CH_U8 = ['personality', 'stage', 'weight_std', 'weight_min', 'hunger_dep',
-  'happy_dep', 'sickness', 'wake', 'gender', 'body_type', 'sep_clothes',
+  'happy_dep', 'sickness', 'wake', 'byte_21a', 'body_type', 'sep_clothes',
   'sep_accessory', 'birth_month', 'birth_day'];
 const CH_U8_OFF = {
   personality: CH.PERSONALITY, stage: CH.STAGE, weight_std: CH.WEIGHT_STD,
   weight_min: CH.WEIGHT_MIN, hunger_dep: CH.HUNGER_DEP, happy_dep: CH.HAPPY_DEP,
-  sickness: CH.SICKNESS, wake: CH.WAKE, gender: CH.GENDER, body_type: CH.BODY_TYPE,
+  sickness: CH.SICKNESS, wake: CH.WAKE, byte_21a: CH.BYTE_21A, body_type: CH.BODY_TYPE,
   sep_clothes: CH.SEP_CLOTHES, sep_accessory: CH.SEP_ACCESSORY,
   birth_month: CH.BIRTH_MONTH, birth_day: CH.BIRTH_DAY,
 };
@@ -866,7 +867,29 @@ export const ROSTER_PAGE = { 0x13: 'Boy', 0x1b: 'Girl' };
 export const roster = v => ({ page: (v >> 8) & 0xff, slot: v & 0xff,
   gender: ROSTER_PAGE[(v >> 8) & 0xff] ?? null, value: v });
 
-export const GENDER = { 0: 'Boy', 1: 'Girl' };
+// The personality byte's meaning is not in the file -- it tracks neither
+// gender, body type, skills nor the like index.  What the pack gives is who
+// shares each value, and the device shows personality in a character's
+// profile, so a few holders of each value make the number checkable on
+// hardware.  1-14 appear across the 68 downloads; 7 never does.
+export const PERSONALITY_EXAMPLES = {
+  1: 'まめっち96 · ライトっち · ござるっち',
+  2: 'コフレっち · まきこ · ももっち',
+  3: 'おやじっち96 · ねば～るっち',
+  4: 'あんとわねっち · みまもりーぬっち',
+  5: 'ジュリエっち · おうじちゃまっち · マイスターっち',
+  6: 'みらいっち · ゆめっち · トロピカっち',
+  8: 'くるるっち · クマトモっち',
+  9: 'ちゃまめっち · ひめっち · キラリっち',
+  10: 'おっさんっち · ききっち · ふなっしーっち',
+  11: 'アイルーっち · おじぱんっち',
+  12: 'いちごちゃんっち · ふらわっち · ハープっち',
+  13: 'ローラっち · もりりっち · くまもっち',
+  14: 'なんでっち · ペパっち',
+};
+export const PERSONALITY = Object.fromEntries(
+  Object.entries(PERSONALITY_EXAMPLES).map(([k, v]) => [k, `${k} — ${v}`]));
+
 export const STAGE = { 1: 'Baby', 2: 'Toddler', 3: 'Adult', 4: 'Transform character', 5: 'Download character' };
 export const BODY_TYPE = {
   '4U': { 0: 'Ignore', 1: 'Normal', 2: 'Kuchipatchi', 3: 'Neenetchi', 4: 'Toddlers' },
@@ -900,9 +923,12 @@ export function getCharStats(p) {
   out.sleep = p.raw[CH.SLEEP] + 1;             // displayed value
   return out;
 }
+// Constant across all 68 4U download characters -- shown, never written.
+export const CHAR_READONLY = ['byte_21a', 'graphics'];
 export function setCharStats(p, s) {
-  for (const k of CH_U8) if (k in s) p.raw[CH_U8_OFF[k]] = s[k] & 0xff;
-  for (const [k, o] of Object.entries(CH_U16_OFF)) if (k in s) putU16le(p.raw, o, s[k] & 0xffff);
+  const ro = k => CHAR_READONLY.includes(k);
+  for (const k of CH_U8) if (k in s && !ro(k)) p.raw[CH_U8_OFF[k]] = s[k] & 0xff;
+  for (const [k, o] of Object.entries(CH_U16_OFF)) if (k in s && !ro(k)) putU16le(p.raw, o, s[k] & 0xffff);
   if ('skills' in s) s.skills.slice(0, 5).forEach((v, i) => { p.raw[CH.SKILLS + i] = v & 0xff; });
   if ('sleep' in s) p.raw[CH.SLEEP] = (s.sleep - 1) & 0xff;
 }

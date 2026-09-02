@@ -43,6 +43,30 @@
   .daterange i{font-style:normal;color:#8a8172;flex:0 0 auto}
   .statgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;text-align:center}
   .statgrid label{margin:0;font-size:11px}
+  /* the character card is ~25 fields; ungrouped they read as one wall, so
+     each concern gets a heading and the rarely-touched ones fold away */
+  .grp{border-top:1px solid var(--line);margin-top:14px;padding-top:11px}
+  .grp:first-child{border-top:0;margin-top:0;padding-top:0}
+  .grp>h3,.grp>summary{font-size:11px;font-weight:700;letter-spacing:.3px;margin:0}
+  .grp>h3{margin-bottom:2px}
+  .grp>.hint{margin:2px 0 9px}
+  .grp>.hint:last-child{margin-bottom:0}
+  details.grp>summary{cursor:pointer;list-style:none;color:#8a8172}
+  details.grp>summary::-webkit-details-marker{display:none}
+  details.grp>summary::before{content:'▸ '}
+  details.grp[open]>summary{margin-bottom:8px}
+  details.grp[open]>summary::before{content:'▾ '}
+  .fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:9px}
+  .fgrid>div>label:first-child{margin-top:0}
+  /* two or three choices read better as one segmented control than as a
+     dropdown you have to open to see the options */
+  .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .seg button{flex:1;border:0;border-left:1px solid var(--line);background:#fdfcfa;
+    padding:6px 4px;cursor:pointer;font:inherit;font-size:12px;white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .seg button:first-child{border-left:0}
+  .seg button.on{background:var(--ink);color:#fff}
+  .flag{font-size:10px;color:#a08c6a;font-weight:400;margin-left:3px}
   table.vdp{width:100%;border-collapse:collapse;font-size:12px}
   table.vdp td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
   table.vdp td.nm{font-weight:600}
@@ -139,6 +163,11 @@
       <div class="hint" id="nameNote" hidden></div>
       <div class="row">
         <div><label id="serialLabel">시리얼</label><input id="fSerial" type="number" min="0" max="65535"></div>
+        <div id="ansiBox" hidden><label>ANSI 번호</label><input id="fAnsiNum" type="number" min="0" max="99999"></div>
+        <div id="charBodyBox" hidden style="flex:1 1 100%">
+          <label>몸 패킷 이름 <span class="flag" id="charBodyId"></span></label>
+          <input id="fBodyName">
+          <div class="hint" id="charBodyNote"></div></div>
         <div id="priceBox"><label>가격</label><input id="fPrice" type="number" min="0" max="65535"></div>
         <div id="outingBox" hidden style="grid-column:1/-1"><label>외출지 구성</label>
           <div id="outingNote" class="hint" style="margin:4px 0 0"></div></div>
@@ -222,10 +251,6 @@
       <div class="hint" id="cvCompatNote"></div>
       <div class="hint" id="cvNote"></div>
     </div>
-    <div class="card" id="charCard" hidden>
-      <h2>캐릭터 스탯</h2>
-      <div id="charFields"></div>
-    </div>
     <div class="card" id="emptyNote" hidden>
       <h2>편집 항목 없음</h2>
       <div class="hint">이 패킷에는 스프라이트·대사·스탯이 없습니다 (정의/헤더 전용).</div>
@@ -299,6 +324,14 @@
     </div>
   </div>
 
+  <div>
+  <!-- the character card is ~25 fields; in the 360px sidebar it ran to
+       1,300px of single-file inputs, so it lives in the wide column -->
+  <div class="card" id="charCard" hidden>
+    <h2>캐릭터 <span id="charWho" style="font-weight:400;text-transform:none"></span></h2>
+    <div id="charFields"></div>
+  </div>
+
   <div class="card" id="spriteCard">
     <h2>스프라이트 <span id="bankInfo" style="font-weight:400;text-transform:none"></span></h2>
     <div class="tabs" id="frameTabs"></div>
@@ -311,6 +344,12 @@
         <button class="btn nudge" data-dx="0" data-dy="-1" title="위로 1px">↑</button>
         <button class="btn nudge" data-dx="0" data-dy="1" title="아래로 1px">↓</button>
         <button class="btn nudge" data-dx="1" data-dy="0" title="오른쪽으로 1px">→</button>
+      </span>
+      <span id="sizeBox" hidden style="display:inline-flex;gap:3px;align-items:center;font-size:12px;color:var(--ink)">
+        크기
+        <input id="frW" type="number" min="1" max="255" style="width:52px;text-align:center"><i style="font-style:normal;color:#8a8172">×</i>
+        <input id="frH" type="number" min="1" max="255" style="width:52px;text-align:center">
+        <button class="btn" id="frResize">적용</button>
       </span>
       <button class="btn" id="impBtn">BMP 가져오기</button>
       <button class="btn" id="expBtn">BMP 내보내기</button>
@@ -330,6 +369,15 @@
     <div id="chAccRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
       <div style="font-size:12px;color:#8a8172;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span>내장 액세서리 합성 <span id="chAccInfo"></span></span>
+        <label style="margin:0">체형</label>
+        <select id="chAccBody" style="width:auto">
+          <option value="0">Body type 1</option>
+          <option value="1">Body type 2</option>
+          <option value="2">Body type 3</option>
+          <option value="3">Body type 4</option>
+        </select>
+        <label style="margin:0;display:flex;align-items:center;gap:4px">
+          <input id="chAccAll" type="checkbox" style="width:auto" checked> 네 체형 함께</label>
         <label style="margin:0">X 오프셋</label>
         <input id="chAccDx" type="number" value="0" style="width:64px">
         <label style="margin:0">Y 오프셋</label>
@@ -378,12 +426,18 @@
       </div>
       <div id="accPosCard" hidden style="margin-top:12px">
         <h2 style="font-size:13px;margin:0 0 6px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px">
-          액세서리 착용 좌표 <span style="font-weight:400;text-transform:none">— 선택한 body type의 14행 (중심 64,50)</span></h2>
-        <div id="accGrid" style="display:grid;grid-template-columns:repeat(5,auto);gap:4px;align-items:center;font-size:12px"></div>
-        <div class="hint">미리보기에서 액세서리를 <b>드래그</b>하면 1px 그리드에 스냅되어 좌표가 바뀝니다.
+          액세서리 착용 좌표 <span id="accPosInfo" style="font-weight:400;text-transform:none"></span></h2>
+        <div style="font-size:12px;color:#8a8172;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="margin:0;display:flex;align-items:center;gap:4px">
+            <input id="accOnly" type="checkbox" style="width:auto"> 액세서리만</label>
+          <span>체형은 위 선택을 따릅니다</span>
+        </div>
+        <div id="accGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px"></div>
+        <div class="hint">타일을 <b>드래그</b>하거나 아래 X·Y를 고치면 그 포즈의 착용 좌표가 바뀝니다.
           모든 body type을 채워야 어느 체형에서도 제자리에 붙습니다.</div>
       </div>
     </div>
+  </div>
   </div>
 </main>
 <div id="toast"></div>
@@ -655,20 +709,36 @@ class Packet {
     for (const ch of s) { if (!/[a-zA-Z]/.test(ch)) break; out += ch; }
     return out || '?';
   }
+  _ansiParts() {                    // ['t4u_gh', '01855', '_1'] or null
+    const old = this.ansiId;
+    if (!old.startsWith('t4u_') || this.kind === '?') return null;
+    const head = 't4u_' + this.kind;
+    const rest = old.slice(head.length);
+    let digits = '';
+    for (const ch of rest) { if (!/[0-9]/.test(ch)) break; digits += ch; }
+    return digits ? [head, digits, rest.slice(digits.length)] : null;
+  }
+  get ansiNum() {
+    const p = this._ansiParts();
+    return p ? parseInt(p[1], 10) : null;
+  }
+  setAnsiNum(value) {
+    const p = this._ansiParts();
+    if (!p) return;
+    const [head, digits, tail] = p;
+    const next = head + String(value).padStart(digits.length, '0') + tail;
+    const field = new Uint8Array(OFF_PACKET_SIZE - OFF_ANSI_ID);
+    for (let i = 0; i < next.length && i < field.length; i++) field[i] = next.charCodeAt(i);
+    this.raw.set(field, OFF_ANSI_ID);
+  }
   setSerial(value) {
+    // The ASCII id usually repeats the serial (t4u_gh01855_1), so it is kept
+    // in sync -- but only where it actually agreed to begin with.  A 4U
+    // character card does not: serial 1111 against id t4u_fk01601_a2, and
+    // syncing there would overwrite the number its nested body must match.
+    const wasSynced = this.ansiNum === this.serial;
     putU16(this.raw, OFF_SERIAL, value);
-    const old = this.ansiId;                     // keep t4u_gh01855_1 in sync
-    if (old.startsWith('t4u_') && this.kind !== '?') {
-      const head = 't4u_' + this.kind;
-      const tail = old.slice(head.length);
-      let digits = '';
-      for (const ch of tail) { if (!/[0-9]/.test(ch)) break; digits += ch; }
-      const pad = digits.length || 5;
-      const next = head + String(value).padStart(pad, '0') + tail.slice(digits.length);
-      const field = new Uint8Array(OFF_PACKET_SIZE - OFF_ANSI_ID);
-      for (let i = 0; i < next.length && i < field.length; i++) field[i] = next.charCodeAt(i);
-      this.raw.set(field, OFF_ANSI_ID);
-    }
+    if (wasSynced) this.setAnsiNum(value);
   }
   setItemNameCodes(codes) {
     const { name: off, width, slots } = this.layout;
@@ -793,22 +863,31 @@ function parseBank(raw, offset) {
   return { frames, end: o };
 }
 
-function writeBank(raw, frames, offset) {
-  putU16(raw, offset, frames.length);
-  let o = offset + 2;
+// `grow` lets a slot stretch to fit rather than refusing.  Slots are
+// normally fixed so nothing downstream of the bank moves; a 4U character's
+// built-in accessory (frames 23-26) ships as 2x2 though, and a real
+// accessory drawn there needs the room -- the caller then owns fixing
+// every size field the longer packet invalidates.
+function encodeBank(frames, grow = false) {
+  const out = [frames.length >> 8, frames.length & 0xff];
   for (const f of frames) {
     const body = [f.w, f.h, f.palette.length, 0, 0x01, 0xff];
     for (const c of f.palette) { const v = rgbToBgr565(c); body.push(v >> 8, v & 0xff); }
     const px = f.pixels.slice();
     if (px.length % 2) px.push(0);
     body.push(...packPixels(px, f.palette.length));
-    if (body.length > f.slot_size)
-      throw new Error(`frame data ${body.length} exceeds slot ${f.slot_size} (reduce palette size)`);
+    if (body.length > f.slot_size) {
+      if (!grow) throw new Error(`frame data ${body.length} exceeds slot ${f.slot_size} (reduce palette size)`);
+      f.slot_size = body.length;
+    }
     while (body.length < f.slot_size) body.push(0);
-    putU16(raw, o, f.slot_size);
-    raw.set(body, o + 2);
-    o += 2 + f.slot_size;
+    out.push(f.slot_size >> 8, f.slot_size & 0xff, ...body);
   }
+  return Uint8Array.from(out);
+}
+
+function writeBank(raw, frames, offset) {
+  raw.set(encodeBank(frames), offset);
 }
 
 // Standalone records inside gm/dlode program blobs: a bank record without
@@ -1782,18 +1861,19 @@ const CH = {
   TAMA_ID: 0x204, REVERT_ID: 0x206, GRAPHICS: 0x208, PERSONALITY: 0x20c,
   SKILLS: 0x20d, STAGE: 0x212, WEIGHT_STD: 0x213, WEIGHT_MIN: 0x214,
   HUNGER_DEP: 0x215, HAPPY_DEP: 0x216, SICKNESS: 0x217, WAKE: 0x218,
-  SLEEP: 0x219, GENDER: 0x21a, BODY_TYPE: 0x21b, SEP_CLOTHES: 0x21c,
-  SEP_ACCESSORY: 0x21e, BIRTH_MONTH: 0x220, BIRTH_DAY: 0x221,
+  // 0x21c/0x21e swapped round on 2026-09-02 -- see character.py
+  SLEEP: 0x219, BYTE_21A: 0x21a, BODY_TYPE: 0x21b, SEP_ACCESSORY: 0x21c,
+  SEP_CLOTHES: 0x21e, BIRTH_MONTH: 0x220, BIRTH_DAY: 0x221,
   LIKE_INDEX: 0x222, TRANSFORM_TYPE: 0x22e, TRANSFORM_SERIAL: 0x230,
   TRANSFORM_NAME: 0x232, NAME2: 0x246, DIALOGUE: 0x272,
 };
 const CH_U8 = ['personality', 'stage', 'weight_std', 'weight_min', 'hunger_dep',
-  'happy_dep', 'sickness', 'wake', 'gender', 'body_type', 'sep_clothes',
+  'happy_dep', 'sickness', 'wake', 'byte_21a', 'body_type', 'sep_clothes',
   'sep_accessory', 'birth_month', 'birth_day'];
 const CH_U8_OFF = {
   personality: CH.PERSONALITY, stage: CH.STAGE, weight_std: CH.WEIGHT_STD,
   weight_min: CH.WEIGHT_MIN, hunger_dep: CH.HUNGER_DEP, happy_dep: CH.HAPPY_DEP,
-  sickness: CH.SICKNESS, wake: CH.WAKE, gender: CH.GENDER, body_type: CH.BODY_TYPE,
+  sickness: CH.SICKNESS, wake: CH.WAKE, byte_21a: CH.BYTE_21A, body_type: CH.BODY_TYPE,
   sep_clothes: CH.SEP_CLOTHES, sep_accessory: CH.SEP_ACCESSORY,
   birth_month: CH.BIRTH_MONTH, birth_day: CH.BIRTH_DAY,
 };
@@ -1807,7 +1887,29 @@ const ROSTER_PAGE = { 0x13: 'Boy', 0x1b: 'Girl' };
 const roster = v => ({ page: (v >> 8) & 0xff, slot: v & 0xff,
   gender: ROSTER_PAGE[(v >> 8) & 0xff] ?? null, value: v });
 
-const GENDER = { 0: 'Boy', 1: 'Girl' };
+// The personality byte's meaning is not in the file -- it tracks neither
+// gender, body type, skills nor the like index.  What the pack gives is who
+// shares each value, and the device shows personality in a character's
+// profile, so a few holders of each value make the number checkable on
+// hardware.  1-14 appear across the 68 downloads; 7 never does.
+const PERSONALITY_EXAMPLES = {
+  1: 'まめっち96 · ライトっち · ござるっち',
+  2: 'コフレっち · まきこ · ももっち',
+  3: 'おやじっち96 · ねば～るっち',
+  4: 'あんとわねっち · みまもりーぬっち',
+  5: 'ジュリエっち · おうじちゃまっち · マイスターっち',
+  6: 'みらいっち · ゆめっち · トロピカっち',
+  8: 'くるるっち · クマトモっち',
+  9: 'ちゃまめっち · ひめっち · キラリっち',
+  10: 'おっさんっち · ききっち · ふなっしーっち',
+  11: 'アイルーっち · おじぱんっち',
+  12: 'いちごちゃんっち · ふらわっち · ハープっち',
+  13: 'ローラっち · もりりっち · くまもっち',
+  14: 'なんでっち · ペパっち',
+};
+const PERSONALITY = Object.fromEntries(
+  Object.entries(PERSONALITY_EXAMPLES).map(([k, v]) => [k, `${k} — ${v}`]));
+
 const STAGE = { 1: 'Baby', 2: 'Toddler', 3: 'Adult', 4: 'Transform character', 5: 'Download character' };
 const BODY_TYPE = {
   '4U': { 0: 'Ignore', 1: 'Normal', 2: 'Kuchipatchi', 3: 'Neenetchi', 4: 'Toddlers' },
@@ -1841,9 +1943,12 @@ function getCharStats(p) {
   out.sleep = p.raw[CH.SLEEP] + 1;             // displayed value
   return out;
 }
+// Constant across all 68 4U download characters -- shown, never written.
+const CHAR_READONLY = ['byte_21a', 'graphics'];
 function setCharStats(p, s) {
-  for (const k of CH_U8) if (k in s) p.raw[CH_U8_OFF[k]] = s[k] & 0xff;
-  for (const [k, o] of Object.entries(CH_U16_OFF)) if (k in s) putU16le(p.raw, o, s[k] & 0xffff);
+  const ro = k => CHAR_READONLY.includes(k);
+  for (const k of CH_U8) if (k in s && !ro(k)) p.raw[CH_U8_OFF[k]] = s[k] & 0xff;
+  for (const [k, o] of Object.entries(CH_U16_OFF)) if (k in s && !ro(k)) putU16le(p.raw, o, s[k] & 0xffff);
   if ('skills' in s) s.skills.slice(0, 5).forEach((v, i) => { p.raw[CH.SKILLS + i] = v & 0xff; });
   if ('sleep' in s) p.raw[CH.SLEEP] = (s.sleep - 1) & 0xff;
 }
@@ -2081,6 +2186,7 @@ function describe(data, opts = {}) {
       stats_verified: pkt.packetClass === 'S',
       path,
       ansi_id: pkt.ansiId,
+      ansi_num: pkt.ansiNum,
       kind: effectiveKind(pkt),
       section: pkt.section,
       serial: pkt.serial,
@@ -2223,7 +2329,18 @@ function describe(data, opts = {}) {
           transform_name: decode(nm([CH.TRANSFORM_NAME, 10]), table).replace(/^[　\s]+|[　\s]+$/g, ''),
           name2: decode(nm([CH.NAME2, pkt.layout.slots]), table),
         };
-        info.char_enums = { gender: GENDER, stage: STAGE, body_type: bodyTypes(model),
+        // A character is two packets: this card, and the body nested at
+        // 0xB00.  Their ASCII ids share one number and the body repeats it
+        // as *its* serial (68/68 in the 4U pack), so the screen edits the
+        // number once and writes both.
+        if (pkt.children.length) {
+          const body = pkt.children[0];
+          info.char_body = {
+            path: [...path, 0], ansi_id: body.ansiId, ansi_num: body.ansiNum,
+            serial: body.serial, name: decode(body.itemNameCodes, table),
+          };
+        }
+        info.char_enums = { stage: STAGE, personality: PERSONALITY, body_type: bodyTypes(model),
                             transform_type: TRANSFORM_TYPE, like_index: LIKE_INDEX };
       } else {
         // dialogue is 1 byte/char on iD/iD L/P's and 2 on 4U, and it only
@@ -2312,6 +2429,45 @@ function replacePacket(packets, path, newRaw) {
   replacePacket(packets, path.slice(0, -1), raw);
 }
 
+// Rewrite banks whose frames no longer fit their slots.  A bigger frame
+// makes the packet longer, invalidating its 0x4A, every enclosing 0x4A and
+// every top-level 0x32; splicing through replacePacket fixes the first two
+// and the returned delta is what the caller shifts the 0x32s by.  Only
+// banks marked `grow` are considered, so an ordinary edit still fails
+// loudly rather than quietly moving everything after the bank.
+function resizeBanks(packets, edits) {
+  let delta = 0;
+  for (const edit of edits) {
+    if (edit.path.includes('vdp') || edit.path.includes('vdpchar')) continue;
+    for (const bank of edit.banks || []) {
+      if (bank.loose || !bank.grow) continue;
+      const pkt = findPacket(packets, edit.path);
+      const off = bank.offset;
+      const oldEnd = parseBank(pkt.raw, off).end;
+      const frames = bank.frames.map(f => ({ slot_size: f.slot, w: f.w, h: f.h,
+                                             palette: f.palette, pixels: f.pixels }));
+      const blob = encodeBank(frames, true);
+      bank.frames.forEach((f, i) => { f.slot = frames[i].slot_size; });
+      if (off + blob.length === oldEnd) continue;   // fits; in-place path has it
+      const raw = new Uint8Array(pkt.size - (oldEnd - off) + blob.length);
+      raw.set(pkt.raw.subarray(0, off), 0);
+      raw.set(blob, off);
+      raw.set(pkt.raw.subarray(oldEnd), off + blob.length);
+      putU16(raw, OFF_PACKET_SIZE, raw.length);
+      // replacePacket re-parses from these bytes, so the new Packet would
+      // consider itself untouched and keep the checksum that belonged to
+      // the shorter body.  Seal it here; parents then reseal themselves.
+      putU16(raw, raw.length - 2, sum16(raw.subarray(0, raw.length - 2)));
+      delta += raw.length - pkt.size;
+      replacePacket(packets, edit.path, raw);
+      bank.done = true;
+    }
+  }
+  for (const edit of edits)
+    if (edit.banks) edit.banks = edit.banks.filter(b => !b.done);
+  return delta;
+}
+
 // `partner` is a VDP+ continuation; with it, edits reach the whole bundle
 // and the result comes back as [part 1, part 2].
 function applyEdits(data, edits, newJpeg = null, partner = null) {
@@ -2351,6 +2507,7 @@ function applyEdits(data, edits, newJpeg = null, partner = null) {
   const applyOne = (pkt, edit) => {
     const model = pkt.model;
     if ('serial' in edit) pkt.setSerial(+edit.serial);
+    if (edit.ansi_num != null) pkt.setAnsiNum(+edit.ansi_num);
     if ('name' in edit) pkt.setItemNameCodes(encode(edit.name, model));
     if ('unicode_name' in edit) pkt.setUnicodeName(edit.unicode_name);
     if ('price' in edit) setPrice(pkt, +edit.price);
@@ -2386,6 +2543,10 @@ function applyEdits(data, edits, newJpeg = null, partner = null) {
       writeBank(pkt.raw, frames, off);
     }
   };
+  // a frame that outgrew its slot lengthens the packet, so this runs before
+  // the field edits (which need the re-parsed Packet objects)
+  const grew = resizeBanks(packets, edits);
+  if (grew) for (const p of packets) p.shiftDeclaredSize(grew);
   for (const edit of edits) {
     if (!edit.path.includes('vdp') && !edit.path.includes('vdpchar'))
       applyOne(findPacket(packets, edit.path), edit);
@@ -2555,15 +2716,30 @@ function selectPacket(path){
     $('fName2').value=ex.name2||''; $('fName2').maxLength=pk.name_slots||9;
     $('name2Label').textContent=`Name 2 (프로필 표시, 최대 ${pk.name_slots||9}자)`;
     $('nameNote').innerHTML='<b>Name 1</b>은 기기에서 이름을 붙일 때, <b>Name 2</b>는 프로필에 표시됩니다. '
-      +'옷장 패킷(↳)의 이름은 <b>또 다른 세 번째 필드</b>라 여기서 바꿔도 따라오지 않습니다 — '
-      +'옷장 패킷을 직접 선택해서 고치세요.';
+      +'몸 패킷의 이름은 <b>또 다른 세 번째 필드</b>라 따로 있습니다 — 아래 "몸 패킷 이름"에서 함께 고치세요.';
   }else if(pk.is_wardrobe){
     $('nameNote').innerHTML='이건 캐릭터의 <b>옷장 패킷 이름</b>입니다. 캐릭터 본체의 Name 1/2와 별개 필드라 '
       +'커스텀 캐릭터를 만들 때 여기까지 같이 고쳐야 합니다.';
   }
-  serialLabelBase = pk.packet_class==='A' ? '캐릭터 슬롯 번호'
+  serialLabelBase = pk.packet_class==='A' ? '카드 시리얼 (0x5A)'
     : (pk.is_wardrobe ? '카탈로그 번호 (파일 번호)' : '시리얼');
   showSerialHex();
+  // A character keeps two numbers that a normal item keeps as one: the
+  // shop serial, and the ANSI number that its nested body packet repeats
+  // as *its* serial.  So the number gets its own box here, and the body
+  // is written to match instead of being edited on its own screen.
+  const cb=pk.char_body;
+  $('ansiBox').hidden=!cb; $('charBodyBox').hidden=!cb;
+  if(cb){
+    $('fAnsiNum').value=pk.ansi_num??'';
+    $('fBodyName').value=(cb.name||'').replace(/　+$/,'');
+    $('fBodyName').maxLength=pk.name_slots||9;
+    $('charBodyId').textContent=`${cb.ansi_id} · 시리얼 ${cb.serial}`;
+    $('charBodyNote').innerHTML='캐릭터는 <b>패킷이 둘</b>입니다 — 이 카드와, 안에 든 몸. '
+      +'<b>ANSI 번호를 바꾸면 몸의 식별자와 시리얼도 같이 갑니다</b> '
+      +'(정품 68개가 전부 몸 시리얼 = ANSI 번호입니다). '
+      +'카드 시리얼은 별개 번호라 따라가지 않고, 몸의 이름도 별개 필드라 위에서 고칩니다.';
+  }
   const verified=item&&pk.stats_verified;
   const F=pk.fields||[];
   // shop fields need a verified stat block; the destination does not --
@@ -2759,7 +2935,39 @@ function renderTabs(){
 function scaleFor(f){return Math.max(3,Math.min(16,Math.floor(560/Math.max(f.w,f.h))))}
 let showGrid=true;
 $('gridChk').onchange=()=>{showGrid=$('gridChk').checked;renderFrame()};
+// A 4U character's built-in accessory sits in frames 23-26 and ships as a
+// 2x2 placeholder, so anything actually drawn there needs a bigger frame.
+// The poses themselves stay fixed -- the device indexes them by size --
+// which is why this is offered on those four frames only.
+const RESIZABLE_FRAMES=[23,24,25,26];
+function resizableFrame(){
+  if(!pk||!pk.is_wardrobe||pk.model!=='4U')return null;
+  const e=flat[cur];
+  return (e&&RESIZABLE_FRAMES.includes(e.idx+1)&&!e.loose)?e:null;
+}
+function renderSizeBox(){
+  const e=resizableFrame();
+  $('sizeBox').hidden=!e;
+  if(e){$('frW').value=e.frame.w; $('frH').value=e.frame.h}
+}
+$('frResize').onclick=()=>{
+  const e=resizableFrame(); if(!e)return;
+  const w=Math.max(1,Math.min(255,+$('frW').value|0));
+  const h=Math.max(1,Math.min(255,+$('frH').value|0));
+  const f=e.frame;
+  if(w===f.w&&h===f.h)return;
+  // keep what overlaps, pad the rest with the transparent index
+  const px=new Array(w*h).fill(0);
+  for(let y=0;y<Math.min(h,f.h);y++)
+    for(let x=0;x<Math.min(w,f.w);x++)px[y*w+x]=f.pixels[y*f.w+x];
+  f.w=w; f.h=h; f.pixels=px;
+  pk.banks[e.bank].grow=true;     // the slot may have to stretch on save
+  undoStack=[]; renderTabs(); renderFrame();
+  toast(`${e.idx+1}번 프레임을 ${w}×${h}로 바꿨습니다 — 저장하면 슬롯이 늘어납니다`);
+};
+
 function renderFrame(){
+  renderSizeBox();
   const f=curFrame(), sc=scaleFor(f), cv=$('cv');
   cv.width=f.w*sc; cv.height=f.h*sc;
   const g=cv.getContext('2d');
@@ -3030,14 +3238,14 @@ function renderVdpChars(){
 // ---- animation simulation (loops frames of the current bank) ----
 let animTimer=null, animIdx=0;
 const bankFrames=()=>flat.length?pk.banks[flat[cur].bank].frames:[];
-// the frame-cycling preview only makes sense where the bank really is an
-// animation: characters and food.  Clothes/accessories are per-pose pieces,
-// so those get a composite strip on the body instead.
+// Only meals (gh) and snacks (oy) hold a bank that is genuinely a loop of
+// one animation.  Everything else is a set of separate pictures -- a
+// character's 28 frames are poses, clothes and accessories are per-pose
+// pieces -- and cycling through those just flickers between unrelated
+// images.  Those get a composite on the body instead.
 const ANIM_KINDS=['gh','oy'];
 function animAllowed(){
-  if(!pk)return false;
-  if(pk.is_wardrobe)return true;                 // character pose bank
-  return ANIM_KINDS.includes(pk.kind);
+  return !!pk && ANIM_KINDS.includes(pk.kind);
 }
 function drawAnim(){
   const frames=bankFrames();
@@ -3116,12 +3324,24 @@ function defaultXY(t){
 function accDelta(cf,af,pose,table){
   if(!table)return[0,0];
   const r=CHAR_ACC_ROW[pose]; if(r==null)return[0,0];
-  const [x,y]=table[0][r];      // one body type: row 0 is authoritative
+  const [x,y]=(table[accBody()]||table[0])[r];
   return [(x-(af.w>>1))-(64-(cf.w>>1)), (y-(af.h>>1))-(50-(cf.h>>1))];
 }
 
 let accTiles=[], accBuiltFor=null;
 const TILE_S=3;
+// The table holds one row per body type.  It used to be read at [0] and
+// written to all four at once, on the assumption that a character has one
+// body -- 16 of the 17 that carry a table do have four identical rows.
+// たまここひめ does not (its last two rows sit one byte later, so they read
+// transposed), and writing all four in step silently overwrote that.  The
+// body type is now picked on screen, and "네 체형 함께" keeps the old
+// behaviour as the default rather than the only option.
+const accBody=()=>Math.max(0,Math.min(3,+($('chAccBody').value||0)));
+function accWrite(t,row,k,v){
+  if($('chAccAll').checked)t.forEach(r=>r[row][k]=v);
+  else if(t[accBody()])t[accBody()][row][k]=v;
+}
 function paintAccTile(t){
   const table=charAccTable(false);
   const dx=+$('chAccDx').value||0, dy=+$('chAccDy').value||0;
@@ -3141,7 +3361,7 @@ function syncAccInputs(){
   accTiles.forEach(t=>{
     // with no table the fields still show the effective values (greyed), so
     // typing in one only moves that pose instead of shifting everything
-    const [x,y]=table?table[0][t.row]:defaultXY(t);
+    const [x,y]=table?(table[accBody()]||table[0])[t.row]:defaultXY(t);
     t.xi.classList.toggle('off',!table); t.yi.classList.toggle('off',!table);
     if(document.activeElement!==t.xi)t.xi.value=x;
     if(document.activeElement!==t.yi)t.yi.value=y;
@@ -3168,8 +3388,7 @@ function buildCharAcc(){
       i.type='number'; i.min=0; i.max=255;
       i.style.cssText='width:48px;padding:1px 3px;font-size:11px;text-align:center';
       i.oninput=()=>{const t2=charAccTable(true); if(!t2)return;
-        const v=Math.max(0,Math.min(255,+i.value||0));
-        t2.forEach(r=>r[row][k]=v);       // one body type: keep all four in step
+        accWrite(t2,row,k,Math.max(0,Math.min(255,+i.value||0)));
         paintAccTile(tile);};
       return i};
     const xi=mk(0), yi=mk(1);
@@ -3192,11 +3411,25 @@ function drawCharAcc(){
   syncAccInputs();
   const table=charAccTable(false);
   $('chAccInfo').textContent=`— ${accTiles.length}쌍`;
+  // whether the four body-type rows actually agree; 16 of the 17 that
+  // carry a table do, so a file that does not is worth saying out loud
+  let uneven=false;
+  if(table&&table.length>1){
+    const key=r=>r.map(xy=>xy.join(',')).join(' ');
+    uneven=new Set(table.map(key)).size>1;
+  }
+  const b=accBody();
   $('chAccNote').innerHTML='스프라이트 <b>23~26</b>은 이 캐릭터 전용 액세서리입니다 '
     +'(1~6·11→23, 7~10→24, 13→25, 14·15→26). 타일을 <b>드래그</b>하거나 아래 X·Y를 고치면 '
     +'그 포즈의 착용 좌표가 바뀝니다.<br>'
     +(table
-      ? `<b>착용 좌표표 있음</b> — 부모 패킷 끝 112바이트(4체형×14프레임). 정지 포즈 (${table[0][0][0]}, ${table[0][0][1]}).`
+      ? `<b>착용 좌표표 있음</b> — 부모 패킷 끝 112바이트(4체형×14프레임). `
+        +`지금 보는 것은 <b>Body type ${b+1}</b>, 정지 포즈 (${table[b][0][0]}, ${table[b][0][1]}).`
+        +(uneven
+          ? '<br><b style="color:#a8632f">네 체형의 값이 서로 다릅니다.</b> '
+            +'“네 체형 함께”를 켠 채로 고치면 나머지 체형 값이 덮어써집니다 — '
+            +'한 체형만 손보려면 체크를 끄세요.'
+          : '')
       : '이 캐릭터는 좌표표가 비어 있어(전부 0) 그대로 겹칩니다. 값을 넣으면 표가 생성됩니다.');
 }
 $('chAccFill').onclick=()=>{
@@ -3213,6 +3446,7 @@ $('chAccClear').onclick=()=>{
   toast('좌표표를 비웠습니다 — 저장하면 그대로 겹치기로 돌아갑니다');
 };
 $('chAccDx').oninput=drawCharAcc; $('chAccDy').oninput=drawCharAcc;
+$('chAccBody').onchange=drawCharAcc;
 $('chAccOnly').onchange=()=>accTiles.forEach(paintAccTile);
 
 // drag a tile's accessory: 1px snap, writes straight into the wear table
@@ -3221,14 +3455,15 @@ function startCharAccDrag(ev,tile){
   ev.preventDefault();
   const r=tile.cv.getBoundingClientRect(), sx=tile.cv.width/r.width;
   const x0=ev.clientX, y0=ev.clientY;
-  const base=[t[0][tile.row][0],t[0][tile.row][1]];
+  const src=t[accBody()]||t[0];
+  const base=[src[tile.row][0],src[tile.row][1]];
   tile.cv.style.cursor='grabbing';
   const move=e=>{
     // CSS px -> canvas px -> sprite px, snapped to the 1px grid
     const dx=Math.round((e.clientX-x0)*sx/TILE_S);
     const dy=Math.round((e.clientY-y0)*sx/TILE_S);
-    t.forEach(rr=>{rr[tile.row][0]=Math.max(0,Math.min(255,base[0]+dx));
-                   rr[tile.row][1]=Math.max(0,Math.min(255,base[1]+dy))});
+    accWrite(t,tile.row,0,Math.max(0,Math.min(255,base[0]+dx)));
+    accWrite(t,tile.row,1,Math.max(0,Math.min(255,base[1]+dy)));
     paintAccTile(tile); syncAccInputs();
   };
   const up=()=>{tile.cv.style.cursor='grab';
@@ -3441,7 +3676,13 @@ $('bmpInput').onchange=async e=>{
 // clothes piece per pose within a 7-piece set; a shop clothes item holds
 // 4 sets back to back (one per body type)
 const FK_MAP={0:0,3:0, 2:1,4:1,5:1,10:1, 6:2,7:2,12:2, 8:3, 9:4, 13:5, 14:6};
-const AC_PRIMARY={0:0,2:0,3:0,4:0,5:0,10:0, 6:1,7:1,8:1,9:1, 12:2, 13:3,14:3};
+// pose -> which of the item's accessory sprites is drawn on it.  Poses 1
+// and 15 are in the wear table but were missing here, so the sim (which
+// only walks 8 poses) never noticed; the per-pose tiles would have dropped
+// two editable rows.  They follow their neighbours -- 1 stands with the
+// other standing poses, and 15 pairs with 14, exactly as the character's
+// own accessory map pairs them (14, 15 -> frame 26).
+const AC_PRIMARY={0:0,1:0,2:0,3:0,4:0,5:0,10:0, 6:1,7:1,8:1,9:1, 12:2, 13:3,14:3,15:3};
 const PIECES_PER_SET=7;
 let chara=null, simTimer=null, simStep=0, bodyType=0;
 // The wear-coordinate space puts the character sprite's CENTRE at (64, 50)
@@ -3450,7 +3691,8 @@ let chara=null, simTimer=null, simStep=0, bodyType=0;
 // than the 128x72 room so those poses aren't clipped.
 const SIMS=4, STAGE_W=128, STAGE_H=76, ANCHOR_X=64, ANCHOR_Y=50, FLOOR_Y=68;
 
-chara=null;   // no reference sprites in the web build (see README)
+fetch('/api/charasprites').then(r=>r.ok?r.json():null)
+  .then(j=>{chara=j;accItemBuiltFor=null;renderAccGrid();drawSim()}).catch(()=>{});
 
 function simSupported(){
   if(!pk||!pk.banks||!pk.banks[0]||!chara)return false;
@@ -3557,20 +3799,108 @@ $('simBody').onchange=()=>{
   renderAccGrid(); drawSim(); drawStripIfVisible();   // strip follows the body type
 };
 
-function renderAccGrid(){
-  const el=$('accGrid'); if(!pk||!pk.acc_pos){el.innerHTML='';return}
-  const LABELS=[0,1,2,3,4,5,6,7,8,9,10,12,13,14];
-  el.innerHTML='<b>프레임</b><b>X</b><b>Y</b><span></span><span></span>';
-  pk.acc_pos[bodyType].forEach((xy,i)=>{
-    const lab=document.createElement('span'); lab.textContent=LABELS[i];
-    const mk=(k)=>{const inp=document.createElement('input');
-      inp.type='number';inp.min=0;inp.max=255;inp.value=xy[k];
-      inp.style.cssText='width:56px;padding:2px 4px';
-      inp.oninput=()=>{pk.acc_pos[bodyType][i][k]=+inp.value||0;drawSim()};
-      return inp};
-    el.append(lab,mk(0),mk(1),document.createElement('span'),document.createElement('span'));
+// The wear table used to be a bare grid of 28 number boxes, which told you
+// nothing about where the accessory actually lands.  It is drawn the same
+// way as a character's built-in accessory instead: one tile per row showing
+// the reference character for the chosen body type with this row's sprite
+// laid on at its stored centre, draggable.
+const ACC_FRAME_LABELS=[0,1,2,3,4,5,6,7,8,9,10,12,13,14];
+let accItemTiles=[], accItemBuiltFor=null;
+
+function accItemParts(row){
+  const rows=pk.acc_rows||[0,1,2,3,4,5,6,7,8,9,10,12,14,15];
+  const pose=rows[row], pri=AC_PRIMARY[pose];
+  const it=(pk.banks&&pk.banks[0])?pk.banks[0].frames:[];
+  const cf=(chara&&(chara[bodyType]||[])[ACC_FRAME_LABELS[row]])||null;
+  const af=it[pri!==undefined?pri:0]||it[0]||null;
+  return {pose, cf, af};
+}
+function paintAccItemTile(t){
+  const g=t.cv.getContext('2d'); g.clearRect(0,0,t.cv.width,t.cv.height);
+  const put=(f,x,y)=>{for(let yy=0;yy<f.h;yy++)for(let xx=0;xx<f.w;xx++){
+    const v=f.pixels[yy*f.w+xx]; if(v===0&&!frOpaque(f))continue;
+    const c=f.palette[v]||[255,0,255];
+    g.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+    g.fillRect((x+xx)*TILE_S,(y+yy)*TILE_S,TILE_S,TILE_S);}};
+  const {cf,af}=accItemParts(t.row);
+  if(!cf||!af)return;
+  const cx=(t.W-cf.w)>>1, cy=2;
+  if(!$('accOnly').checked)put(cf,cx,cy);
+  // stored value is the accessory's CENTRE on a stage where the character
+  // is centred at (64, 50) -- the same space the device simulation uses
+  const [x,y]=pk.acc_pos[bodyType][t.row];
+  put(af, cx+((x-(af.w>>1))-(ANCHOR_X-(cf.w>>1))),
+          cy+((y-(af.h>>1))-(ANCHOR_Y-(cf.h>>1))));
+}
+function buildAccItemTiles(){
+  const el=$('accGrid'); el.innerHTML=''; accItemTiles=[];
+  ACC_FRAME_LABELS.forEach((label,row)=>{
+    const {pose,cf,af}=accItemParts(row);
+    if(!cf||!af)return;
+    const W=Math.max(cf.w,af.w)+8, H=cf.h+6;
+    const cv=document.createElement('canvas');
+    cv.width=W*TILE_S; cv.height=H*TILE_S;
+    cv.style.cssText='image-rendering:pixelated;border-radius:6px;background:#f3f6f1;cursor:grab;display:block;margin:0 auto';
+    cv.title=`포즈 ${pose} · 프레임 라벨 ${label}`;
+    const box=document.createElement('div');
+    box.style.cssText='border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center;background:#fff';
+    const lab=document.createElement('div');
+    lab.style.cssText='font-size:11px;color:#8a8172;margin:4px 0 3px';
+    lab.textContent=`포즈 ${pose} · 행 ${row}`;
+    const mk=k=>{const i=document.createElement('input');
+      i.type='number'; i.min=0; i.max=255;
+      i.style.cssText='width:48px;padding:1px 3px;font-size:11px;text-align:center';
+      i.oninput=()=>{pk.acc_pos[bodyType][row][k]=Math.max(0,Math.min(255,+i.value||0));
+        paintAccItemTile(tile); drawSim()};
+      return i};
+    const xi=mk(0), yi=mk(1);
+    const row2=document.createElement('div');
+    row2.style.cssText='display:flex;gap:3px;justify-content:center;align-items:center;font-size:10px;color:#8a8172';
+    row2.append('X',xi,'Y',yi);
+    box.append(cv,lab,row2); el.appendChild(box);
+    const tile={cv,row,pose,W,xi,yi};
+    cv.onmousedown=ev=>startAccItemDrag(ev,tile);
+    accItemTiles.push(tile);
   });
 }
+function startAccItemDrag(ev,tile){
+  ev.preventDefault();
+  const r=tile.cv.getBoundingClientRect(), sx=tile.cv.width/r.width;
+  const x0=ev.clientX, y0=ev.clientY;
+  const base=[...pk.acc_pos[bodyType][tile.row]];
+  tile.cv.style.cursor='grabbing';
+  const move=e=>{
+    const dx=Math.round((e.clientX-x0)*sx/TILE_S);
+    const dy=Math.round((e.clientY-y0)*sx/TILE_S);
+    pk.acc_pos[bodyType][tile.row]=[Math.max(0,Math.min(255,base[0]+dx)),
+                                    Math.max(0,Math.min(255,base[1]+dy))];
+    paintAccItemTile(tile); syncAccItemInputs(); drawSim();
+  };
+  const up=()=>{tile.cv.style.cursor='grab';
+    window.removeEventListener('mousemove',move);
+    window.removeEventListener('mouseup',up)};
+  window.addEventListener('mousemove',move);
+  window.addEventListener('mouseup',up);
+}
+function syncAccItemInputs(){
+  accItemTiles.forEach(t=>{
+    const [x,y]=pk.acc_pos[bodyType][t.row];
+    if(document.activeElement!==t.xi)t.xi.value=x;
+    if(document.activeElement!==t.yi)t.yi.value=y;
+  });
+}
+function renderAccGrid(){
+  const el=$('accGrid');
+  if(!pk||!pk.acc_pos){el.innerHTML='';$('accPosInfo').textContent='';accItemBuiltFor=null;return}
+  const key=pk.path.join(',')+'/'+bodyType+'/'+(chara?'c':'-');
+  if(accItemBuiltFor!==key){buildAccItemTiles();accItemBuiltFor=key}
+  accItemTiles.forEach(paintAccItemTile);
+  syncAccItemInputs();
+  $('accPosInfo').textContent=chara
+    ? `— Body type ${bodyType+1} · ${accItemTiles.length}포즈 (중심 64,50)`
+    : '— 기준 캐릭터 스프라이트가 없어 좌표만 보입니다';
+}
+$('accOnly').onchange=()=>accItemTiles.forEach(paintAccItemTile);
 
 // ---- iD device version / Lovely Melody conversion ----
 // Only the girls' accessory shop and girls' photo-studio costumes are
@@ -3666,102 +3996,162 @@ function renderConvert(){
 }
 
 // ---- character stats ----
-const CHAR_FIELDS=[
-  ['tama_id','Tamagotchi ID (로스터)','roster'],
-  ['revert_id','Revert ID (되돌아갈 캐릭터)','roster'],
-  ['graphics','Graphics index','u16'],
-  ['stage','스테이지','enum'],
-  ['gender','성별','enum'],
-  ['body_type','체형','enum'], ['personality','성격 타입','u8'],
-  ['weight_std','표준 체중','u8'], ['weight_min','최소 체중','u8'],
-  ['hunger_dep','공복 감소율','u8'], ['happy_dep','행복 감소율','u8'],
-  ['sickness','병 확률','u8'],
-  ['wake','기상 시각','u8'], ['sleep','취침 시각','u8'],
-  ['birth_month','생일 월','u8'], ['birth_day','생일 일','u8'],
-  ['sep_clothes','옷 분리','yesno'], ['sep_accessory','액세서리 분리','yesno'],
-  ['like_index','호불호 인덱스','enum'],
-  ['transform_type','변신 아이템 타입','enum'],
-  ['transform_serial','변신 아이템 시리얼','item'],
+// Grouped by what you are actually doing, because the flat list of ~25
+// fields gave no clue which ones a new character has to change.  The
+// first group is exactly that set; everything after it can stay at the
+// value it was copied from.  `fold` opens closed.
+const CHAR_GROUPS=[
+  ['자리', '기기 로스터에서 이 캐릭터가 앉는 칸입니다. 새 캐릭터라면 '
+   +'비어 있는 슬롯을 골라야 하고, <b>성별은 여기서 정해집니다</b> — '
+   +'슬롯 번호 위쪽(0x13 남 / 0x1B 여)이 기기가 보는 자리입니다.', [
+    ['tama_id','캐릭터 슬롯','roster'],
+    ['revert_id','되돌아갈 슬롯','roster'],
+  ]],
+  ['프로필', '', [
+    ['body_type','체형','enum'],
+    ['stage','스테이지','enum'],
+    ['personality','성격 타입','enum','뜻 미확인 — 같은 값을 쓰는 정품 캐릭터를 함께 적었습니다'],
+    ['birth_month','생일 월','u8'],
+    ['birth_day','생일 일','u8'],
+  ]],
+  ['생활 리듬', '취침 시각은 파일에 표시값−1로 저장되며, 여기서는 표시값으로 편집합니다.', [
+    ['wake','기상 시각','u8'], ['sleep','취침 시각','u8'],
+    ['hunger_dep','공복 감소율','u8'], ['happy_dep','행복 감소율','u8'],
+    ['sickness','병 확률','u8'],
+    ['weight_std','표준 체중','u8'], ['weight_min','최소 체중','u8'],
+  ]],
+  ['스킬', '', [['skills','스킬 1~5','skills']]],
+  ['변신', '이 캐릭터로 진화시킬 때 먹이거나 쓰는 아이템입니다.', [
+    ['transform_type','아이템 타입','enum'],
+    ['transform_serial','아이템 시리얼','item'],
+  ]],
+  ['호불호', '', [['like_index','좋아하는 대상','enum']]],
+  ['거의 건드릴 일 없음', '', [
+    ['sep_clothes','옷 분리','yesno'],
+    ['sep_accessory','액세서리 분리','yesno'],
+    ['byte_21a','0x21A (용도 미상)','ro','성별이 아닙니다'],
+    ['graphics','Graphics index','ro',''],
+  ], 'fold', '아래 둘은 정품 68개가 전부 같은 값이라 읽기 전용입니다 — '
+   +'뜻을 모르는 채로 바꾸면 파일만 위험해집니다.'],
 ];
 const YESNO={0:'No',1:'Yes'};
-// the packet stores Boy/Girl; the screen says it in Korean, and the VDP
-// card below uses the same words so the two agree
-const ENUM_LABEL={gender:{0:'남자',1:'여자'}};
+const ENUM_LABEL={};
+// a segmented control for the short enums; anything longer stays a select
+function segment(opts, value, onPick){
+  const seg=document.createElement('div'); seg.className='seg';
+  opts.forEach(([k,v])=>{
+    const b=document.createElement('button');
+    b.type='button'; b.textContent=v; b.title=v;
+    b.className=(+k===+value)?'on':'';
+    b.onclick=()=>{[...seg.children].forEach(c=>c.classList.remove('on'));
+      b.classList.add('on'); onPick(+k)};
+    seg.appendChild(b);
+  });
+  return seg;
+}
+const SEG_MAX=3;   // beyond this a row of buttons is worse than a dropdown
+
+function charField(spec, grid){
+  const [key,label,type,flag]=spec;
+  const cs=pk.char_stats, en=pk.char_enums||{};
+  const box=document.createElement('div');
+  box.dataset.field=key;
+  const showFlag=!!flag;
+  const l=document.createElement('label'); l.innerHTML=label
+    +(showFlag?` <span class="flag">${flag}</span>`:''); box.appendChild(l);
+  const put=el=>{box.appendChild(el); grid.appendChild(box)};
+  if(type==='skills'){
+    box.style.gridColumn='1/-1';
+    const row=document.createElement('div'); row.className='row';
+    (cs.skills||[]).forEach((v,i)=>{
+      const s=document.createElement('input');
+      s.type='number'; s.min=0; s.max=255; s.value=v;
+      s.oninput=()=>{pk.char_stats.skills[i]=+s.value};
+      row.appendChild(s);
+    });
+    return put(row);
+  }
+  if(type==='roster'){
+    // one u16 holding two things: a page that is the gender, and a slot.
+    // Splitting them is the whole point -- the raw number told you neither.
+    const r=(pk.char_extra||{})[key==='tama_id'?'tama_roster':'revert_roster']||{};
+    box.style.gridColumn='span 2';
+    const wrap=document.createElement('div');
+    wrap.style.cssText='display:flex;gap:6px;align-items:center';
+    let girl=(r.gender||'Boy')==='Girl';
+    const sl=document.createElement('input');
+    sl.type='number'; sl.min=0; sl.max=255; sl.value=r.slot||0;
+    sl.title='슬롯 번호';
+    sl.style.cssText='flex:0 0 62px;text-align:center';
+    const show=()=>{l.innerHTML=`${label} <span class="flag">`
+      +`0x${(pk.char_stats[key]||0).toString(16).toUpperCase().padStart(4,'0')}`
+      +` · ${girl?'여자':'남자'} 페이지 ${+sl.value}번</span>`};
+    const push=()=>{pk.char_stats[key]=((girl?0x1B:0x13)<<8)|(+sl.value&0xFF);show()};
+    const seg=segment([[0,'남자'],[1,'여자']], girl?1:0, v=>{girl=!!v; push()});
+    seg.style.flex='1 1 130px';
+    sl.oninput=push;
+    wrap.appendChild(seg); wrap.appendChild(sl);
+    show();
+    return put(wrap);
+  }
+  if(type==='item'){
+    // serial + the name the packet itself stores at 0x232 (10 chars)
+    const inp=document.createElement('input');
+    inp.type='number'; inp.min=0; inp.max=65535; inp.value=cs[key];
+    const nm=document.createElement('input');
+    nm.value=(pk.char_extra||{}).transform_name||'';
+    nm.maxLength=10; nm.placeholder='아이템 이름'; nm.style.marginTop='4px';
+    nm.oninput=()=>{pk.char_extra.transform_name=nm.value};
+    inp.oninput=()=>{pk.char_stats[key]=+inp.value};
+    box.appendChild(inp);
+    return put(nm);
+  }
+  if(type==='ro'){
+    const inp=document.createElement('input');
+    inp.value=cs[key]; inp.readOnly=true; inp.tabIndex=-1;
+    inp.style.cssText='background:#f2efe9;color:#8a8172;cursor:default';
+    return put(inp);
+  }
+  if(type==='yesno')
+    return put(segment([[0,'아니오'],[1,'예']], cs[key]?1:0,
+                       v=>{pk.char_stats[key]=v}));
+  if(type==='enum'&&en[key]){
+    const opts=Object.entries(en[key]).map(([k,v])=>[k,(ENUM_LABEL[key]||{})[k]??v]);
+    // keep the stored value selectable even when it is not in the table
+    if(!opts.some(([k])=>+k===cs[key]))opts.unshift([cs[key],`(0x${(cs[key]||0).toString(16)})`]);
+    if(opts.length<=SEG_MAX)
+      return put(segment(opts, cs[key], v=>{pk.char_stats[key]=v}));
+    if(opts.length>8)box.style.gridColumn='span 2';   // long lists need room
+    const sel=document.createElement('select');
+    sel.innerHTML=opts.map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
+    sel.value=cs[key];
+    sel.onchange=()=>{pk.char_stats[key]=+sel.value};
+    return put(sel);
+  }
+  const inp=document.createElement('input');
+  inp.type='number'; inp.min=0; inp.max=type==='u16'?65535:255;
+  inp.value=cs[key];
+  inp.oninput=()=>{pk.char_stats[key]=+inp.value};
+  return put(inp);
+}
+
 function renderCharStats(){
   const el=$('charFields'); el.innerHTML='';
-  const cs=pk.char_stats, en=pk.char_enums||{};
-  const grid=document.createElement('div');
-  grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px';
-  CHAR_FIELDS.forEach(([key,label,type])=>{
-    const box=document.createElement('div');
-    const l=document.createElement('label'); l.textContent=label; box.appendChild(l);
-    let inp;
-    if(type==='roster'){
-      const r=(pk.char_extra||{})[key==='tama_id'?'tama_roster':'revert_roster']||{};
-      const wrap=document.createElement('div'); wrap.className='row';
-      const gsel=document.createElement('select');
-      gsel.innerHTML='<option value="Boy">남자</option><option value="Girl">여자</option>';
-      gsel.value=r.gender||'Boy';
-      const sl=document.createElement('input');
-      sl.type='number'; sl.min=0; sl.max=255; sl.value=r.slot||0;
-      const page=()=>gsel.value==='Girl'?0x1B:0x13;
-      const push=()=>{pk.char_stats[key]=(page()<<8)|(+sl.value&0xFF);
-        l.textContent=`${label} · 0x${pk.char_stats[key].toString(16)}`};
-      gsel.onchange=push; sl.oninput=push;
-      wrap.appendChild(gsel); wrap.appendChild(sl);
-      box.appendChild(wrap); grid.appendChild(box);
-      l.textContent=`${label} · 0x${(cs[key]||0).toString(16)}`;
-      return;
-    }
-    if(type==='item'){
-      // serial + the name the packet itself stores at 0x232 (10 chars)
-      inp=document.createElement('input');
-      inp.type='number'; inp.min=0; inp.max=65535; inp.value=cs[key];
-      const nm=document.createElement('input');
-      nm.value=(pk.char_extra||{}).transform_name||'';
-      nm.maxLength=10; nm.placeholder='아이템 이름';
-      nm.style.marginTop='4px';
-      nm.oninput=()=>{pk.char_extra.transform_name=nm.value};
-      inp.oninput=()=>{pk.char_stats[key]=+inp.value};
-      l.textContent=`${label} + 이름 (파일에 함께 저장)`;
-      box.appendChild(inp); box.appendChild(nm); grid.appendChild(box); return;
-    }
-    if(type==='yesno'){
-      inp=document.createElement('select');
-      inp.innerHTML='<option value="0">No</option><option value="1">Yes</option>';
-      inp.value=cs[key]?1:0;
-      inp.onchange=()=>{pk.char_stats[key]=+inp.value};
-      box.appendChild(inp); grid.appendChild(box); return;
-    }
-    if(type==='enum'&&en[key]){
-      inp=document.createElement('select');
-      const opts=Object.entries(en[key]).map(([k,v])=>[k,(ENUM_LABEL[key]||{})[k]??v]);
-      // keep the stored value selectable even when it is not in the table
-      if(!opts.some(([k])=>+k===cs[key]))opts.unshift([cs[key],`(0x${(cs[key]||0).toString(16)})`]);
-      inp.innerHTML=opts.map(([k,v])=>`<option value="${k}">${v}</option>`).join('');
-      inp.value=cs[key];
-    }else{
-      inp=document.createElement('input');
-      inp.type='number'; inp.min=0; inp.max=type==='u16'?65535:255;
-      inp.value=cs[key];
-    }
-    inp.oninput=()=>{pk.char_stats[key]=+inp.value};
-    box.appendChild(inp); grid.appendChild(box);
+  $('charWho').textContent=`— ${(pk.name||'').replace(/　+$/,'')}`;
+  CHAR_GROUPS.forEach(([title,note,fields,fold,footer])=>{
+    const g=document.createElement(fold?'details':'div');
+    g.className='grp';
+    const head=document.createElement(fold?'summary':'h3');
+    head.textContent=title; g.appendChild(head);
+    if(note){const h=document.createElement('div');
+      h.className='hint'; h.innerHTML=note; g.appendChild(h)}
+    const grid=document.createElement('div'); grid.className='fgrid';
+    fields.forEach(spec=>charField(spec, grid));
+    g.appendChild(grid);
+    if(footer){const f=document.createElement('div');
+      f.className='hint'; f.innerHTML=footer; g.appendChild(f)}
+    el.appendChild(g);
   });
-  el.appendChild(grid);
-  const sk=document.createElement('div');
-  sk.innerHTML='<label>스킬 1~5</label>';
-  const row=document.createElement('div'); row.className='row';
-  (cs.skills||[]).forEach((v,i)=>{
-    const s=document.createElement('input'); s.type='number'; s.min=0; s.max=255; s.value=v;
-    s.oninput=()=>{pk.char_stats.skills[i]=+s.value};
-    row.appendChild(s);
-  });
-  sk.appendChild(row); el.appendChild(sk);
-  const note=document.createElement('div');
-  note.className='hint';
-  note.textContent='취침 시각은 파일에 표시값−1로 저장되며, 여기서는 표시값 기준으로 편집합니다.';
-  el.appendChild(note);
 }
 
 // ---- packet swap: drop another .jpg's packet into this slot ----
@@ -3955,6 +4345,15 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_stats)edit.char_stats=pk.char_stats;
   if(pk.version)edit.version=pk.version;
   const edits=[edit];
+  // the ANSI number is one number living in two packets -- see charBodyNote
+  if(pk.char_body){
+    const body={path:pk.char_body.path, name:$('fBodyName').value.trim()};
+    if($('fAnsiNum').value!==''){
+      const n=+$('fAnsiNum').value;
+      edit.ansi_num=n; body.serial=n; body.ansi_num=n;
+    }
+    edits.push(body);
+  }
   // the raising conditions belong to the bundle's payload, not to a
   // content, so they are addressed from the bundle even when the card is
   // being shown on one character

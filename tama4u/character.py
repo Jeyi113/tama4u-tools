@@ -27,10 +27,19 @@ OFF_HAPPY_DEP  = 0x216   # u8  happiness depletion rate
 OFF_SICKNESS   = 0x217   # u8  random sickness rate
 OFF_WAKE       = 0x218   # u8  wake-up hour
 OFF_SLEEP      = 0x219   # u8  sleep hour, STORED AS (displayed - 1)
-OFF_GENDER     = 0x21A   # u8
+# NOT gender, despite the name it carries in Mr.Blinky's editor.  All 68
+# 4U download characters have 0 here -- including the 33 the device treats
+# as female -- so it cannot be what the device reads.  Gender comes from
+# the roster page in TAMA_ID (0x13 boy / 0x1B girl).  Left editable under
+# its address until something identifies it.
+OFF_BYTE_21A   = 0x21A   # u8, purpose unknown
 OFF_BODY_TYPE  = 0x21B   # u8  1..3 -> clothes piece set 1..3
-OFF_SEP_CLOTHES = 0x21C  # u8
-OFF_SEP_ACCESSORY = 0x21E  # u8
+# Swapped round on 2026-09-02: these two came from single-field diffs
+# against Mr.Blinky's editor, which is exactly the pairing a diff can get
+# backwards, and UJ reports the device behaving the other way.  Not
+# re-checked against the download pack yet.
+OFF_SEP_ACCESSORY = 0x21C  # u8
+OFF_SEP_CLOTHES = 0x21E    # u8
 OFF_BIRTH_MONTH = 0x220  # u8
 OFF_BIRTH_DAY  = 0x221   # u8
 OFF_LIKE_INDEX = 0x222   # u16
@@ -40,7 +49,6 @@ OFF_TRANSFORM_NAME = 0x232    # 10 slots, internal charset u16
 OFF_NAME2      = 0x246   # 9 slots
 OFF_DIALOGUE   = 0x272   # 14 slots x 150 bytes
 
-GENDER = {0: 'Boy', 1: 'Girl'}
 STAGE = {1: 'Baby', 2: 'Toddler', 3: 'Adult',
          4: 'Transform character', 5: 'Download character'}
 # body type numbering differs between models
@@ -72,6 +80,30 @@ for _i, _n in enumerate(_LIKE_TRAITS):
     LIKE_INDEX[0x4141 + _i] = _n
 
 
+# The personality byte's meaning is not in the file -- it does not track
+# gender, body type, skills or the like/dislike index.  What the pack does
+# give is who shares each value, and the device shows a character's
+# personality in its profile, so naming a few holders of each value turns
+# an opaque number into something checkable on hardware.
+# 1-14 appear across the 68 downloads; 7 never does.
+PERSONALITY_EXAMPLES = {
+    1: 'まめっち96 · ライトっち · ござるっち',
+    2: 'コフレっち · まきこ · ももっち',
+    3: 'おやじっち96 · ねば～るっち',
+    4: 'あんとわねっち · みまもりーぬっち',
+    5: 'ジュリエっち · おうじちゃまっち · マイスターっち',
+    6: 'みらいっち · ゆめっち · トロピカっち',
+    8: 'くるるっち · クマトモっち',
+    9: 'ちゃまめっち · ひめっち · キラリっち',
+    10: 'おっさんっち · ききっち · ふなっしーっち',
+    11: 'アイルーっち · おじぱんっち',
+    12: 'いちごちゃんっち · ふらわっち · ハープっち',
+    13: 'ローラっち · もりりっち · くまもっち',
+    14: 'なんでっち · ペパっち',
+}
+PERSONALITY = {k: f'{k} — {v}' for k, v in PERSONALITY_EXAMPLES.items()}
+
+
 def body_types(model='4U'):
     return BODY_TYPE.get(model, BODY_TYPE['4U'])
 
@@ -87,7 +119,7 @@ _U8 = {
     'graphics': None, 'personality': OFF_PERSONALITY, 'stage': OFF_STAGE,
     'weight_std': OFF_WEIGHT_STD, 'weight_min': OFF_WEIGHT_MIN,
     'hunger_dep': OFF_HUNGER_DEP, 'happy_dep': OFF_HAPPY_DEP,
-    'sickness': OFF_SICKNESS, 'wake': OFF_WAKE, 'gender': OFF_GENDER,
+    'sickness': OFF_SICKNESS, 'wake': OFF_WAKE, 'byte_21a': OFF_BYTE_21A,
     'body_type': OFF_BODY_TYPE, 'sep_clothes': OFF_SEP_CLOTHES,
     'sep_accessory': OFF_SEP_ACCESSORY,
     'birth_month': OFF_BIRTH_MONTH, 'birth_day': OFF_BIRTH_DAY,
@@ -96,6 +128,13 @@ _U16 = {'tama_id': OFF_TAMA_ID, 'revert_id': OFF_REVERT_ID,
         'graphics': OFF_GRAPHICS, 'like_index': OFF_LIKE_INDEX,
         'transform_type': OFF_TRANSFORM_TYPE,
         'transform_serial': OFF_TRANSFORM_SERIAL}
+
+
+# Constant across all 68 4U download characters, so there is nothing to
+# learn from editing them and a wrong guess only risks the file: shown on
+# screen, never written back.  Drop a name from here once its meaning is
+# actually known.
+READONLY = frozenset({'byte_21a', 'graphics'})
 
 
 def get_stats(pkt):
@@ -109,10 +148,10 @@ def get_stats(pkt):
 
 def set_stats(pkt, stats):
     for k, o in _U8.items():
-        if o is not None and k in stats:
+        if o is not None and k in stats and k not in READONLY:
             pkt.raw[o] = int(stats[k]) & 0xFF
     for k, o in _U16.items():
-        if k in stats:
+        if k in stats and k not in READONLY:
             struct.pack_into('<H', pkt.raw, o, int(stats[k]) & 0xFFFF)
     if 'skills' in stats:
         for i, v in enumerate(stats['skills'][:5]):

@@ -63,7 +63,16 @@ class Frame:
         self.palette = palette              # list[(r,g,b)]
         self.pixels = pixels                # flat list of palette indices
 
-    def encode(self):
+    def encode(self, grow=False):
+        """`grow` lets the slot stretch to fit rather than refusing.
+
+        Slots are normally fixed so the bank stays the same length and
+        nothing downstream of it moves.  A 4U character's built-in
+        accessory (frames 23-26) ships as 2x2, though, and a real
+        accessory drawn there needs more room -- so the caller may allow
+        the slot to grow and take on the job of fixing every size field
+        the longer packet invalidates.
+        """
         body = struct.pack('>BBBBH', self.width, self.height,
                            len(self.palette), 0, 0x01FF)
         body += b''.join(struct.pack('>H', rgb_to_bgr565(c)) for c in self.palette)
@@ -72,8 +81,10 @@ class Frame:
             px.append(0)
         body += pack_pixels(px, len(self.palette))
         if len(body) > self.slot_size:
-            raise ValueError(f'frame data {len(body)} exceeds slot {self.slot_size}'
-                             ' (reduce palette size)')
+            if not grow:
+                raise ValueError(f'frame data {len(body)} exceeds slot '
+                                 f'{self.slot_size} (reduce palette size)')
+            self.slot_size = len(body)
         body += b'\x00' * (self.slot_size - len(body))
         return struct.pack('>H', self.slot_size) + body
 
@@ -186,9 +197,13 @@ def write_loose(packet_raw, rec, palette, pixel_lists):
     packet_raw[pal_off + 2 * ncol: pal_off + 2 * ncol + len(packed)] = packed
 
 
+def encode_bank(frames, grow=False):
+    return struct.pack('>H', len(frames)) + b''.join(f.encode(grow) for f in frames)
+
+
 def write_bank(packet_raw, frames, offset=BANK_OFFSET):
     """Encode frames back into packet_raw (bytearray) in place."""
-    blob = struct.pack('>H', len(frames)) + b''.join(f.encode() for f in frames)
+    blob = encode_bank(frames)
     packet_raw[offset:offset + len(blob)] = blob
 
 

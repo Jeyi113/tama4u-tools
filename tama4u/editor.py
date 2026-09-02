@@ -98,6 +98,7 @@ def describe(data, partner=None):
                                and pkt.packet_class == 'S'),
             'path': path,
             'ansi_id': pkt.ansi_id,
+            'ansi_num': pkt.ansi_num,
             'kind': items.effective_kind(pkt),
             'section': pkt.section,
             'serial': pkt.serial,
@@ -279,9 +280,22 @@ def describe(data, partner=None):
                                             character.OFF_NAME2 + 2 * i)[0]
                          for i in range(pkt.layout['slots'])], table),
                 }
+                # A character is two packets: this card, and the body
+                # nested at 0xB00.  Their ASCII ids share one number and
+                # the body repeats it as its serial (68/68 in the 4U pack),
+                # so the screen edits the number once and writes both.
+                if pkt.children:
+                    body = pkt.children[0]
+                    info['char_body'] = {
+                        'path': path + [0],
+                        'ansi_id': body.ansi_id,
+                        'ansi_num': body.ansi_num,
+                        'serial': body.serial,
+                        'name': charset.decode(body.item_name_codes, table),
+                    }
                 info['char_enums'] = {
-                    'gender': character.GENDER,
                     'stage': character.STAGE,
+                    'personality': character.PERSONALITY,
                     'body_type': character.body_types(pkt.model),
                     'transform_type': character.TRANSFORM_TYPE,
                     'like_index': character.LIKE_INDEX,
@@ -394,6 +408,8 @@ def _apply_fields(pkt, edit):
     table = charset.load_table(model=pkt.model)
     if 'serial' in edit:
         pkt.set_serial(int(edit['serial']))
+    if edit.get('ansi_num') is not None:
+        pkt.set_ansi_num(int(edit['ansi_num']))
     if 'name' in edit:
         pkt.set_item_name_codes(charset.encode(edit['name'], table))
     if 'unicode_name' in edit:
@@ -446,15 +462,64 @@ def _apply_fields(pkt, edit):
                                 [tuple(c) for c in bank['frames'][0]['palette']],
                                 [f['pixels'] for f in bank['frames']])
             continue
-        frames = [sprites.Frame(f['slot'], f['w'], f['h'],
-                                [tuple(c) for c in f['palette']],
-                                f['pixels']) for f in bank['frames']]
-        # in-place rewrite must not change the bank's byte length
+        frames = _bank_frames(bank)
+        # in-place rewrite must not change the bank's byte length.  Where
+        # the caller wants a frame bigger than its slot it asks for that
+        # explicitly, and _resize_banks handles it before we get here.
         old_end = sprites.parse_bank(pkt.raw, off)[1]
         blob_len = 2 + sum(2 + f.slot_size for f in frames)
         if off + blob_len != old_end:
             raise ValueError('bank size mismatch — frame slots must be kept')
         sprites.write_bank(pkt.raw, frames, off)
+
+
+def _bank_frames(bank):
+    return [sprites.Frame(f['slot'], f['w'], f['h'],
+                          [tuple(c) for c in f['palette']], f['pixels'])
+            for f in bank['frames']]
+
+
+def _resize_banks(packets, edits):
+    """Rewrite banks whose frames no longer fit their slots.
+
+    A bigger frame makes the packet longer, which invalidates its 0x4A,
+    every enclosing 0x4A and every top-level 0x32.  Splicing through
+    replace_packet fixes the first two; the delta returned here is what
+    the caller shifts the 0x32s by.  Only banks marked `grow` are
+    considered, so an ordinary edit still fails loudly rather than
+    quietly moving everything after the bank.
+    """
+    delta = 0
+    for edit in edits:
+        path = list(edit['path'])
+        if 'vdp' in path or 'vdpchar' in path:
+            continue            # packed stream; repacked wholesale instead
+        for bank in edit.get('banks', []):
+            if bank.get('loose') or not bank.get('grow'):
+                continue
+            pkt = _find(packets, path)
+            off = bank['offset']
+            old_end = sprites.parse_bank(pkt.raw, off)[1]
+            blob = sprites.encode_bank(_bank_frames(bank), grow=True)
+            if off + len(blob) == old_end:
+                continue                      # fits; the in-place path has it
+            raw = bytearray(pkt.raw)
+            raw[off:old_end] = blob
+            struct.pack_into('>H', raw, container.OFF_PACKET_SIZE, len(raw))
+            # replace_packet re-parses from these bytes, so the new Packet
+            # would consider itself untouched and keep the checksum that
+            # belonged to the shorter body.  Seal it here instead; the
+            # change then ripples out and the parents reseal themselves.
+            struct.pack_into('>H', raw, len(raw) - 2,
+                             container.sum16(raw[:-2]))
+            delta += len(raw) - len(pkt.raw)
+            replace_packet(packets, path, bytes(raw))
+            # the slots just moved, so the in-place write must not re-run
+            bank['done'] = True
+    for edit in edits:
+        if 'banks' in edit:
+            edit['banks'] = [b for b in edit['banks'] if not b.get('done')]
+    return delta
 
 def apply_edits(data, edits, new_jpeg=None, partner=None):
     """`partner` is a VDP+ continuation; with it, edits reach the whole
@@ -496,6 +561,12 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
         for pkt in packets:
             pkt.shift_declared_size(delta)
         jpeg = new_jpeg
+    # a frame that outgrew its slot lengthens the packet, so this runs
+    # before the field edits (which need the re-parsed Packet objects)
+    grew = _resize_banks(packets, edits)
+    if grew:
+        for pkt in packets:
+            pkt.shift_declared_size(grew)
     for edit in edits:
         path = list(edit['path'])
         if 'vdp' in path or 'vdpchar' in path:

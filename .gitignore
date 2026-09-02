@@ -9,5 +9,10 @@ tama4u/charasprites/
 tama4u/itemindex.json
 tama4u/charset*.json
 
+# The character roster workbook is harvested from the 4U pack as well --
+# 68 character names against their internal ids.
+4U_characters.xlsx
+~$*.xlsx
+
 # web/charset-data.js is generated from charset*.json but *is* committed:
 # it is the encoding table the browser build needs to work at all.

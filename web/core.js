@@ -257,20 +257,36 @@ export class Packet {
     for (const ch of s) { if (!/[a-zA-Z]/.test(ch)) break; out += ch; }
     return out || '?';
   }
+  _ansiParts() {                    // ['t4u_gh', '01855', '_1'] or null
+    const old = this.ansiId;
+    if (!old.startsWith('t4u_') || this.kind === '?') return null;
+    const head = 't4u_' + this.kind;
+    const rest = old.slice(head.length);
+    let digits = '';
+    for (const ch of rest) { if (!/[0-9]/.test(ch)) break; digits += ch; }
+    return digits ? [head, digits, rest.slice(digits.length)] : null;
+  }
+  get ansiNum() {
+    const p = this._ansiParts();
+    return p ? parseInt(p[1], 10) : null;
+  }
+  setAnsiNum(value) {
+    const p = this._ansiParts();
+    if (!p) return;
+    const [head, digits, tail] = p;
+    const next = head + String(value).padStart(digits.length, '0') + tail;
+    const field = new Uint8Array(OFF_PACKET_SIZE - OFF_ANSI_ID);
+    for (let i = 0; i < next.length && i < field.length; i++) field[i] = next.charCodeAt(i);
+    this.raw.set(field, OFF_ANSI_ID);
+  }
   setSerial(value) {
+    // The ASCII id usually repeats the serial (t4u_gh01855_1), so it is kept
+    // in sync -- but only where it actually agreed to begin with.  A 4U
+    // character card does not: serial 1111 against id t4u_fk01601_a2, and
+    // syncing there would overwrite the number its nested body must match.
+    const wasSynced = this.ansiNum === this.serial;
     putU16(this.raw, OFF_SERIAL, value);
-    const old = this.ansiId;                     // keep t4u_gh01855_1 in sync
-    if (old.startsWith('t4u_') && this.kind !== '?') {
-      const head = 't4u_' + this.kind;
-      const tail = old.slice(head.length);
-      let digits = '';
-      for (const ch of tail) { if (!/[0-9]/.test(ch)) break; digits += ch; }
-      const pad = digits.length || 5;
-      const next = head + String(value).padStart(pad, '0') + tail.slice(digits.length);
-      const field = new Uint8Array(OFF_PACKET_SIZE - OFF_ANSI_ID);
-      for (let i = 0; i < next.length && i < field.length; i++) field[i] = next.charCodeAt(i);
-      this.raw.set(field, OFF_ANSI_ID);
-    }
+    if (wasSynced) this.setAnsiNum(value);
   }
   setItemNameCodes(codes) {
     const { name: off, width, slots } = this.layout;
@@ -395,22 +411,31 @@ export function parseBank(raw, offset) {
   return { frames, end: o };
 }
 
-export function writeBank(raw, frames, offset) {
-  putU16(raw, offset, frames.length);
-  let o = offset + 2;
+// `grow` lets a slot stretch to fit rather than refusing.  Slots are
+// normally fixed so nothing downstream of the bank moves; a 4U character's
+// built-in accessory (frames 23-26) ships as 2x2 though, and a real
+// accessory drawn there needs the room -- the caller then owns fixing
+// every size field the longer packet invalidates.
+export function encodeBank(frames, grow = false) {
+  const out = [frames.length >> 8, frames.length & 0xff];
   for (const f of frames) {
     const body = [f.w, f.h, f.palette.length, 0, 0x01, 0xff];
     for (const c of f.palette) { const v = rgbToBgr565(c); body.push(v >> 8, v & 0xff); }
     const px = f.pixels.slice();
     if (px.length % 2) px.push(0);
     body.push(...packPixels(px, f.palette.length));
-    if (body.length > f.slot_size)
-      throw new Error(`frame data ${body.length} exceeds slot ${f.slot_size} (reduce palette size)`);
+    if (body.length > f.slot_size) {
+      if (!grow) throw new Error(`frame data ${body.length} exceeds slot ${f.slot_size} (reduce palette size)`);
+      f.slot_size = body.length;
+    }
     while (body.length < f.slot_size) body.push(0);
-    putU16(raw, o, f.slot_size);
-    raw.set(body, o + 2);
-    o += 2 + f.slot_size;
+    out.push(f.slot_size >> 8, f.slot_size & 0xff, ...body);
   }
+  return Uint8Array.from(out);
+}
+
+export function writeBank(raw, frames, offset) {
+  raw.set(encodeBank(frames), offset);
 }
 
 // Standalone records inside gm/dlode program blobs: a bank record without
