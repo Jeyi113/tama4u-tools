@@ -345,12 +345,6 @@
         <button class="btn nudge" data-dx="0" data-dy="1" title="아래로 1px">↓</button>
         <button class="btn nudge" data-dx="1" data-dy="0" title="오른쪽으로 1px">→</button>
       </span>
-      <span id="sizeBox" hidden style="display:inline-flex;gap:3px;align-items:center;font-size:12px;color:var(--ink)">
-        크기
-        <input id="frW" type="number" min="1" max="255" style="width:52px;text-align:center"><i style="font-style:normal;color:#8a8172">×</i>
-        <input id="frH" type="number" min="1" max="255" style="width:52px;text-align:center">
-        <button class="btn" id="frResize">적용</button>
-      </span>
       <button class="btn" id="impBtn">BMP 가져오기</button>
       <button class="btn" id="expBtn">BMP 내보내기</button>
       <button class="btn" id="thumbBtn">이 프레임으로 썸네일(JPEG 미리보기) 만들기</button>
@@ -424,18 +418,26 @@
           <input type="checkbox" id="simGridChk" style="width:auto"> 그리드</label>
         <span class="hint" id="simLabel" style="margin:0"></span>
       </div>
-      <div id="accPosCard" hidden style="margin-top:12px">
-        <h2 style="font-size:13px;margin:0 0 6px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px">
-          액세서리 착용 좌표 <span id="accPosInfo" style="font-weight:400;text-transform:none"></span></h2>
-        <div style="font-size:12px;color:#8a8172;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <label style="margin:0;display:flex;align-items:center;gap:4px">
-            <input id="accOnly" type="checkbox" style="width:auto"> 액세서리만</label>
-          <span>체형은 위 선택을 따릅니다</span>
-        </div>
-        <div id="accGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px"></div>
-        <div class="hint">타일을 <b>드래그</b>하거나 아래 X·Y를 고치면 그 포즈의 착용 좌표가 바뀝니다.
-          모든 body type을 채워야 어느 체형에서도 제자리에 붙습니다.</div>
+    </div>
+    <!-- the wear tiles used to live inside the simulation stage; they
+         are the accessory's own view now, so they outlive it -->
+    <div id="accPosCard" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+      <h2 style="font-size:13px;margin:0 0 6px;color:#8a8172;text-transform:uppercase;letter-spacing:.4px">
+        액세서리 착용 좌표 <span id="accPosInfo" style="font-weight:400;text-transform:none"></span></h2>
+      <div style="font-size:12px;color:#8a8172;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <label style="margin:0">체형</label>
+        <select id="accBody" style="width:auto">
+          <option value="0">Body type 1</option>
+          <option value="1">Body type 2</option>
+          <option value="2">Body type 3</option>
+          <option value="3">Body type 4</option>
+        </select>
+        <label style="margin:0;display:flex;align-items:center;gap:4px">
+          <input id="accOnly" type="checkbox" style="width:auto"> 액세서리만</label>
       </div>
+      <div id="accGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px"></div>
+      <div class="hint">타일을 <b>드래그</b>하거나 아래 X·Y를 고치면 그 포즈의 착용 좌표가 바뀝니다.
+        모든 body type을 채워야 어느 체형에서도 제자리에 붙습니다.</div>
     </div>
   </div>
   </div>
@@ -2945,29 +2947,7 @@ function resizableFrame(){
   const e=flat[cur];
   return (e&&RESIZABLE_FRAMES.includes(e.idx+1)&&!e.loose)?e:null;
 }
-function renderSizeBox(){
-  const e=resizableFrame();
-  $('sizeBox').hidden=!e;
-  if(e){$('frW').value=e.frame.w; $('frH').value=e.frame.h}
-}
-$('frResize').onclick=()=>{
-  const e=resizableFrame(); if(!e)return;
-  const w=Math.max(1,Math.min(255,+$('frW').value|0));
-  const h=Math.max(1,Math.min(255,+$('frH').value|0));
-  const f=e.frame;
-  if(w===f.w&&h===f.h)return;
-  // keep what overlaps, pad the rest with the transparent index
-  const px=new Array(w*h).fill(0);
-  for(let y=0;y<Math.min(h,f.h);y++)
-    for(let x=0;x<Math.min(w,f.w);x++)px[y*w+x]=f.pixels[y*f.w+x];
-  f.w=w; f.h=h; f.pixels=px;
-  pk.banks[e.bank].grow=true;     // the slot may have to stretch on save
-  undoStack=[]; renderTabs(); renderFrame();
-  toast(`${e.idx+1}번 프레임을 ${w}×${h}로 바꿨습니다 — 저장하면 슬롯이 늘어납니다`);
-};
-
 function renderFrame(){
-  renderSizeBox();
   const f=curFrame(), sc=scaleFor(f), cv=$('cv');
   cv.width=f.w*sc; cv.height=f.h*sc;
   const g=cv.getContext('2d');
@@ -3249,8 +3229,9 @@ function animAllowed(){
 }
 function drawAnim(){
   const frames=bankFrames();
-  const strip=!!(pk&&pk.banks&&pk.banks.length&&!pk.is_wardrobe
-                 &&['fk','ac'].includes(pk.kind)&&chara);
+  // the body-type strip was the clothes/accessory composite; both now have
+  // their own per-pose views, so it is off
+  const strip=false;
   $('stripRow').hidden=!strip;
   if(strip)drawStrip();
   drawCharAcc();
@@ -3708,10 +3689,14 @@ const SIMS=4, STAGE_W=128, STAGE_H=76, ANCHOR_X=64, ANCHOR_Y=50, FLOOR_Y=68;
 fetch('/api/charasprites').then(r=>r.ok?r.json():null)
   .then(j=>{chara=j;accItemBuiltFor=null;renderAccGrid();drawSim()}).catch(()=>{});
 
+// The composite stage was only ever built for clothes and accessories, and
+// those now carry their own per-pose views instead -- the wear tiles for an
+// accessory, the strip-free frame list for clothes.  Nothing else has a
+// composite to show, so the stage stays off.
+const SIM_KINDS=[];
 function simSupported(){
   if(!pk||!pk.banks||!pk.banks[0]||!chara)return false;
-  return !!((pk.kind==='ac'&&pk.acc_pos)||(pk.kind==='fk'&&!pk.is_wardrobe
-         &&pk.banks[0].frames.length>=PIECES_PER_SET));
+  return SIM_KINDS.includes(pk.kind);
 }
 function clothesXY(cf,cx,cy,f){   // centred horizontally, bottom aligned
   return {x:cx+((cf.w-f.w)>>1), y:cy+cf.h-f.h};
@@ -3905,7 +3890,9 @@ function syncAccItemInputs(){
 }
 function renderAccGrid(){
   const el=$('accGrid');
+  $('accPosCard').hidden=!(pk&&pk.acc_pos);
   if(!pk||!pk.acc_pos){el.innerHTML='';$('accPosInfo').textContent='';accItemBuiltFor=null;return}
+  if($('accBody').value!==String(bodyType))$('accBody').value=bodyType;
   const key=pk.path.join(',')+'/'+bodyType+'/'+(chara?'c':'-');
   if(accItemBuiltFor!==key){buildAccItemTiles();accItemBuiltFor=key}
   accItemTiles.forEach(paintAccItemTile);
@@ -3915,6 +3902,7 @@ function renderAccGrid(){
     : '— 기준 캐릭터 스프라이트가 없어 좌표만 보입니다';
 }
 $('accOnly').onchange=()=>accItemTiles.forEach(paintAccItemTile);
+$('accBody').onchange=()=>{bodyType=+$('accBody').value; renderAccGrid()};
 
 // ---- iD device version / Lovely Melody conversion ----
 // Only the girls' accessory shop and girls' photo-studio costumes are
