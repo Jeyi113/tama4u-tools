@@ -356,8 +356,16 @@
     <div class="hint">좌클릭 그리기 · 우클릭 스포이드 · 팔레트 더블클릭 색 변경 · 팔레트 드래그 순서 변경 · 방향키로 1px 옮기기 · Ctrl/Cmd+Z 되돌리기<br>
       <span id="transHint">팔레트 0번(T)은 투명색.</span> 슬롯 용량 초과 시 저장할 때 알려줍니다.</div>
     <div id="stripRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-      <div style="font-size:12px;color:#8a8172;margin-bottom:6px">
-        체형 합성 <span id="stripInfo"></span></div>
+      <div style="font-size:12px;color:#8a8172;margin-bottom:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span>체형 합성 <span id="stripInfo"></span></span>
+        <label style="margin:0">체형</label>
+        <select id="stripBody" style="width:auto">
+          <option value="0">Body type 1</option>
+          <option value="1">Body type 2</option>
+          <option value="2">Body type 3</option>
+          <option value="3">Body type 4</option>
+        </select>
+      </div>
       <div id="strip" style="display:flex;gap:8px;overflow-x:auto;padding-bottom:4px"></div>
     </div>
     <div id="chAccRow" hidden style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
@@ -3229,11 +3237,17 @@ function animAllowed(){
 }
 function drawAnim(){
   const frames=bankFrames();
-  // the body-type strip was the clothes/accessory composite; both now have
-  // their own per-pose views, so it is off
-  const strip=false;
+  // Clothes keep the body-type strip: a clothes item is seven pieces per
+  // body and the strip is the only place they are seen worn.  Accessories
+  // do not -- their wear tiles show the same thing per pose, with the
+  // coordinates attached.
+  const strip=!!(pk&&pk.banks&&pk.banks.length&&!pk.is_wardrobe
+                 &&pk.kind==='fk'&&chara);
   $('stripRow').hidden=!strip;
-  if(strip)drawStrip();
+  if(strip){
+    if($('stripBody').value!==String(bodyType))$('stripBody').value=bodyType;
+    drawStrip();
+  }
   drawCharAcc();
   $('animRow').style.display=(frames.length&&animAllowed())?'':'none';
   if(!frames.length||!animAllowed()){animStop();return}
@@ -3687,7 +3701,9 @@ let chara=null, simTimer=null, simStep=0, bodyType=0;
 const SIMS=4, STAGE_W=128, STAGE_H=76, ANCHOR_X=64, ANCHOR_Y=50, FLOOR_Y=68;
 
 fetch('/api/charasprites').then(r=>r.ok?r.json():null)
-  .then(j=>{chara=j;accItemBuiltFor=null;renderAccGrid();drawSim()}).catch(()=>{});
+  .then(j=>{chara=j;accItemBuiltFor=null;renderAccGrid();
+            if(pk)drawAnim();   // the strip needs the reference sprites
+            drawSim()}).catch(()=>{});
 
 // The composite stage was only ever built for clothes and accessories, and
 // those now carry their own per-pose views instead -- the wear tiles for an
@@ -3903,6 +3919,7 @@ function renderAccGrid(){
 }
 $('accOnly').onchange=()=>accItemTiles.forEach(paintAccItemTile);
 $('accBody').onchange=()=>{bodyType=+$('accBody').value; renderAccGrid()};
+$('stripBody').onchange=()=>{bodyType=+$('stripBody').value; drawStripIfVisible()};
 
 // ---- iD device version / Lovely Melody conversion ----
 // Only the girls' accessory shop and girls' photo-studio costumes are
