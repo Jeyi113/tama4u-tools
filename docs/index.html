@@ -1444,7 +1444,8 @@ const VDP_ROUTINES = [
   ['rle', [0x02, 0x54, 0x12, 0x54, 0x12, 0x27, 0x92, 0x23]],
 ];
 const VDP_UNPACK_LIMIT = 1 << 20;
-const VDP_CHAR_DEST = '81033300', VDP_ICON_DEST = '81042902';
+const VDP_CHAR_DEST = '81033300';
+const VDP_ICON_DEST = '81042902';
 const VDP_LOADING_DEST = '81010101', VDP_STUB_MAX = 0x200;
 const VDP_CHAR_SIZE = 14664;      // every raisable character is this big
 const VDP_PART_DEST = '81092900', VDP_PART_NAME = 'DecoPierce';
@@ -2283,6 +2284,12 @@ function describe(data, opts = {}) {
     // a VDP character body reads as kind 'fk' but its 28 frames are poses,
     // not wearable pieces -- the body-type composite must not slice them
     info.pose_bank = path.includes('vdp') ? vdpIsCharContent(pkt) : false;
+    // everything on that shelf inside a bundle belongs to one specific
+    // character, body or change dress alike, so composing it onto the
+    // generic reference tamagotchi says nothing
+    info.char_shelf = path.includes('vdp')
+      && Array.from(pkt.raw.slice(OFF_DEST, OFF_DEST + 4))
+           .map(x => x.toString(16).padStart(2, '0')).join('') === VDP_CHAR_DEST;
     if (model === 'iD') { info.version = getVersion(pkt); info.version_presets = VERSION_PRESETS; }
     info.compat = getCompat(pkt);
     const period = getPeriod(pkt);
@@ -3376,11 +3383,12 @@ function drawAnim(){
   // body and the strip is the only place they are seen worn.  Accessories
   // do not -- their wear tiles show the same thing per pose, with the
   // coordinates attached.
-  // a VDP character body is kind 'fk' too, but its 28 frames are poses --
+  // A VDP character body is kind 'fk' too, but its 28 frames are poses --
   // slicing them as 4 sets of 7 clothes pieces is what made the composite
-  // look scrambled
+  // look scrambled.  A change dress on the same shelf is cut for one
+  // character, so composing it on the reference body says nothing either.
   const strip=!!(pk&&pk.banks&&pk.banks.length&&!pk.is_wardrobe
-                 &&pk.kind==='fk'&&!pk.pose_bank&&chara);
+                 &&pk.kind==='fk'&&!pk.pose_bank&&!pk.char_shelf&&chara);
   $('stripRow').hidden=!strip;
   if(strip){
     if($('stripBody').value!==String(bodyType))$('stripBody').value=bodyType;

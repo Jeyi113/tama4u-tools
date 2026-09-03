@@ -162,6 +162,12 @@ def describe(data, partner=None):
         # 'fk', but its 28 frames are poses, not wearable pieces -- the
         # body-type composite would slice them as 4 sets of 7
         info['pose_bank'] = vdp.is_char_content(pkt) if 'vdp' in path else False
+        # everything on that shelf inside a bundle belongs to one specific
+        # character, body or change dress alike, so composing it onto the
+        # generic reference tamagotchi says nothing -- the composite is for
+        # shop clothes, which fit every body
+        info['char_shelf'] = ('vdp' in path and bytes(
+            pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex() == vdp.CHAR_DEST)
         if pkt.model == 'iD':
             info['version'] = items.get_version(pkt)
             info['version_presets'] = items.VERSION_PRESETS

@@ -1085,11 +1085,12 @@ function drawAnim(){
   // body and the strip is the only place they are seen worn.  Accessories
   // do not -- their wear tiles show the same thing per pose, with the
   // coordinates attached.
-  // a VDP character body is kind 'fk' too, but its 28 frames are poses --
+  // A VDP character body is kind 'fk' too, but its 28 frames are poses --
   // slicing them as 4 sets of 7 clothes pieces is what made the composite
-  // look scrambled
+  // look scrambled.  A change dress on the same shelf is cut for one
+  // character, so composing it on the reference body says nothing either.
   const strip=!!(pk&&pk.banks&&pk.banks.length&&!pk.is_wardrobe
-                 &&pk.kind==='fk'&&!pk.pose_bank&&chara);
+                 &&pk.kind==='fk'&&!pk.pose_bank&&!pk.char_shelf&&chara);
   $('stripRow').hidden=!strip;
   if(strip){
     if($('stripBody').value!==String(bodyType))$('stripBody').value=bodyType;

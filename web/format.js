@@ -407,7 +407,8 @@ const VDP_ROUTINES = [
   ['rle', [0x02, 0x54, 0x12, 0x54, 0x12, 0x27, 0x92, 0x23]],
 ];
 const VDP_UNPACK_LIMIT = 1 << 20;
-const VDP_CHAR_DEST = '81033300', VDP_ICON_DEST = '81042902';
+export const VDP_CHAR_DEST = '81033300';
+const VDP_ICON_DEST = '81042902';
 const VDP_LOADING_DEST = '81010101', VDP_STUB_MAX = 0x200;
 const VDP_CHAR_SIZE = 14664;      // every raisable character is this big
 const VDP_PART_DEST = '81092900', VDP_PART_NAME = 'DecoPierce';

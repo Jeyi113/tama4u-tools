@@ -91,6 +91,12 @@ export function describe(data, opts = {}) {
     // a VDP character body reads as kind 'fk' but its 28 frames are poses,
     // not wearable pieces -- the body-type composite must not slice them
     info.pose_bank = path.includes('vdp') ? F.vdpIsCharContent(pkt) : false;
+    // everything on that shelf inside a bundle belongs to one specific
+    // character, body or change dress alike, so composing it onto the
+    // generic reference tamagotchi says nothing
+    info.char_shelf = path.includes('vdp')
+      && Array.from(pkt.raw.slice(F.OFF_DEST, F.OFF_DEST + 4))
+           .map(x => x.toString(16).padStart(2, '0')).join('') === F.VDP_CHAR_DEST;
     if (model === 'iD') { info.version = F.getVersion(pkt); info.version_presets = F.VERSION_PRESETS; }
     info.compat = F.getCompat(pkt);
     const period = F.getPeriod(pkt);
