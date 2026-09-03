@@ -22,8 +22,16 @@ function* iterPackets(packets) {
     yield [path, pkt];
     for (let i = 0; i < pkt.children.length; i++) yield* walk(pkt.children[i], [...path, i]);
     const subs = F.vdpSubPackets(pkt, extraStream);
-    if (subs) for (let i = 0; i < subs[2].length; i++)
-      yield* walk(subs[2][i], [...path, 'vdp', i]);
+    if (subs) {
+      for (let i = 0; i < subs[2].length; i++)
+        yield* walk(subs[2][i], [...path, 'vdp', i]);
+      // older change pierces keep their bodies as bare banks with no header
+      if (!subs[2].some(s => F.vdpIsCharContent(s))) {
+        const bodies = F.vdpBareBodies(subs[0], subs[1], pkt.model);
+        for (let i = 0; i < bodies.length; i++)
+          yield* walk(bodies[i].packet, [...path, 'vdpbody', i]);
+      }
+    }
   }
   for (let i = 0; i < packets.length; i++) yield* walk(packets[i], [i]);
 }
@@ -90,11 +98,12 @@ export function describe(data, opts = {}) {
     };
     // a VDP character body reads as kind 'fk' but its 28 frames are poses,
     // not wearable pieces -- the body-type composite must not slice them
-    info.pose_bank = path.includes('vdp') ? F.vdpIsCharContent(pkt) : false;
+    const inVdp = path.includes('vdp') || path.includes('vdpbody');
+    info.pose_bank = inVdp ? F.vdpIsCharContent(pkt) : false;
     // everything on that shelf inside a bundle belongs to one specific
     // character, body or change dress alike, so composing it onto the
     // generic reference tamagotchi says nothing
-    info.char_shelf = path.includes('vdp')
+    info.char_shelf = inVdp
       && Array.from(pkt.raw.slice(F.OFF_DEST, F.OFF_DEST + 4))
            .map(x => x.toString(16).padStart(2, '0')).join('') === F.VDP_CHAR_DEST;
     if (model === 'iD') { info.version = F.getVersion(pkt); info.version_presets = F.VERSION_PRESETS; }
@@ -301,6 +310,15 @@ export function describe(data, opts = {}) {
           info.vdp[k].char_index = isChar ? n : null;
           if (isChar) n++;
         });
+        // bare change bodies (anniversary) join the list on their own
+        // 'vdpbody' path
+        if (!got[2].some(s => F.vdpIsCharContent(s)))
+          F.vdpBareBodies(got[0], got[1], pkt.model).forEach((body, k) =>
+            info.vdp.push({
+              bare: true, bindex: k, char_index: k, name: body.name,
+              label: '캐릭터 (육성)', model: pkt.model, size: F.VDP_BODY_STRIDE,
+              serial: 0, dest: F.VDP_CHAR_DEST, dest_sig: '', price: 0, sprites: 0,
+            }));
       }
     }
     out.packets.push(info);
@@ -471,7 +489,8 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
   const grew = resizeBanks(packets, edits);
   if (grew) for (const p of packets) p.shiftDeclaredSize(grew);
   for (const edit of edits) {
-    if (!edit.path.includes('vdp') && !edit.path.includes('vdpchar'))
+    if (!edit.path.includes('vdp') && !edit.path.includes('vdpchar')
+        && !edit.path.includes('vdpbody'))
       applyOne(findPacket(packets, edit.path), edit);
   }
   // VDP contents live inside the packed stream: unpack once per bundle,
@@ -479,14 +498,15 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
   // sit in the same payload, so they ride along rather than costing a
   // second unpack-repack.
   const groups = new Map();
+  const bucketOf = { vdp: 0, vdpchar: 1, vdpbody: 3 };
   for (const edit of edits) {
     let placed = false;
-    for (const step of ['vdp', 'vdpchar']) {
+    for (const step of ['vdp', 'vdpchar', 'vdpbody']) {
       const k = edit.path.indexOf(step);
       if (k < 0) continue;
       const key = edit.path.slice(0, k).join(',');
-      if (!groups.has(key)) groups.set(key, [[], [], []]);
-      groups.get(key)[step === 'vdp' ? 0 : 1].push([edit.path[k + 1], edit]);
+      if (!groups.has(key)) groups.set(key, [[], [], [], []]);
+      groups.get(key)[bucketOf[step]].push([edit.path[k + 1], edit]);
       placed = true;
       break;
     }
@@ -494,12 +514,12 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     // has to ride the same unpack even when nothing else changed
     if (!placed && edit.vdp_dest_name != null) {
       const key = edit.path.join(',');
-      if (!groups.has(key)) groups.set(key, [[], [], []]);
+      if (!groups.has(key)) groups.set(key, [[], [], [], []]);
       groups.get(key)[2].push(edit);
     }
   }
-  for (const [key, [jobs, charjobs, namejobs]] of groups) {
-    const pkt = findPacket(packets, key.split(',').map(Number));
+  for (const [key, [jobs, charjobs, namejobs, bodyjobs]] of groups) {
+    let pkt = findPacket(packets, key.split(',').map(Number));
     const got = F.vdpSubPackets(pkt, extra);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
     // repacking a truncated bundle would drop everything in the other part
@@ -524,16 +544,42 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
       F.vdpWriteCharBlock(data, idx, edit, pkt.model);
     for (const edit of namejobs)
       F.vdpWriteDestName(data, edit.vdp_dest_name, pkt.model);
+    // bare change bodies live in the payload prefix; patch the bank in place
+    // and the assemble below carries it across, leaving the blank header
+    if (bodyjobs.length) {
+      const bodies = F.vdpBareBodies(data, base, pkt.model);
+      for (const [bidx, edit] of bodyjobs) {
+        if (bidx >= bodies.length) continue;
+        const body = bodies[bidx];
+        applyOne(body.packet, edit);
+        const bank = body.packet.raw.subarray(F.VDP_BODY_HEADER);
+        data.set(bank, body.off + F.VDP_BODY_HEADER);
+      }
+    }
     const before = pkt.size;
+    const path = key.split(',').map(Number);
+    // Rebuild the Packet objects from the new bytes rather than swapping
+    // pkt.raw in place: a compressed stream can spell TAMAGO by accident,
+    // so pkt may carry a spurious nested child parsed from the old layout,
+    // and buildFile's checksum pass would splice that stale child back at
+    // its old offset -- what broke a two-part edit (easter).
     if (extra) {
-      // split back across the pair: part 1 fills to 32,768 bytes
+      // split back across the parts: each fills to 32,768 bytes
       const blob = F.vdpAssemble(data, base, subs);
       const cuts = F.vdpRepackSplit(pkt, others.map(o => o.packets[0]), blob);
-      pkt.raw = cuts[0];
-      others.forEach((o, i) => { o.packets[0].raw = cuts[i + 1]; });
+      replacePacket(packets, path, cuts[0]);
+      others.forEach((o, i) => {
+        o.packets[0] = new Packet(cuts[i + 1], 0);
+        o.packets[0].children = [];
+      });
     } else {
-      pkt.raw = F.vdpWriteSubs(pkt, data, base, subs);
+      replacePacket(packets, path, F.vdpWriteSubs(pkt, data, base, subs));
     }
+    pkt = findPacket(packets, path);
+    // the compressed stream can spell TAMAGO by chance, so the re-parsed
+    // part may carry a spurious child; drop it so the checksum pass does
+    // not splice stale bytes over the new stream (easter's part 1)
+    pkt.children = [];
     for (const q of packets) q.shiftDeclaredSize(pkt.size - before);
   }
   const out = buildFile(jpeg, packets, trailing);

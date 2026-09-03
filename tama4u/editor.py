@@ -60,6 +60,12 @@ def _iter_packets(packets, extra=b''):
         if subs:
             for i, sub in enumerate(subs[2]):
                 yield from walk(sub, path + ['vdp', i])
+            # older change pierces keep their bodies as bare banks with no
+            # packet header, so the content walk above misses them
+            if not any(vdp.is_char_content(s) for s in subs[2]):
+                for i, body in enumerate(vdp.bare_bodies(subs[0], subs[1],
+                                                         model=pkt.model)):
+                    yield path + ['vdpbody', i], body['packet']
     for i, top in enumerate(packets):
         yield from walk(top, [i])
 
@@ -161,12 +167,13 @@ def describe(data, partner=None):
         # a VDP character body sits on the clothes shelf and reads as kind
         # 'fk', but its 28 frames are poses, not wearable pieces -- the
         # body-type composite would slice them as 4 sets of 7
-        info['pose_bank'] = vdp.is_char_content(pkt) if 'vdp' in path else False
+        in_vdp = 'vdp' in path or 'vdpbody' in path
+        info['pose_bank'] = vdp.is_char_content(pkt) if in_vdp else False
         # everything on that shelf inside a bundle belongs to one specific
         # character, body or change dress alike, so composing it onto the
         # generic reference tamagotchi says nothing -- the composite is for
         # shop clothes, which fit every body
-        info['char_shelf'] = ('vdp' in path and bytes(
+        info['char_shelf'] = (in_vdp and bytes(
             pkt.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex() == vdp.CHAR_DEST)
         if pkt.model == 'iD':
             info['version'] = items.get_version(pkt)
@@ -430,6 +437,19 @@ def describe(data, partner=None):
                 for row, sub in zip(info['vdp'], got[2]):
                     row['char_index'] = n if vdp.is_char_content(sub) else None
                     n += vdp.is_char_content(sub)
+                # bare change bodies (anniversary) join the list too, on
+                # their own 'vdpbody' path so a click reaches the synthetic
+                # packet the walker made for them
+                if not any(vdp.is_char_content(s) for s in got[2]):
+                    for k, body in enumerate(
+                            vdp.bare_bodies(got[0], got[1], model=pkt.model)):
+                        info['vdp'].append({
+                            'bare': True, 'bindex': k, 'char_index': k,
+                            'name': body['name'],
+                            'label': '캐릭터 (육성)', 'model': pkt.model,
+                            'size': vdp.BODY_STRIDE, 'serial': 0,
+                            'dest': vdp.CHAR_DEST, 'dest_sig': '',
+                            'price': 0, 'sprites': 0})
         out['packets'].append(info)
     return out
 
@@ -618,18 +638,18 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
             pkt.shift_declared_size(grew)
     for edit in edits:
         path = list(edit['path'])
-        if 'vdp' in path or 'vdpchar' in path:
+        if 'vdp' in path or 'vdpchar' in path or 'vdpbody' in path:
             continue                # collected below
         _apply_fields(_find(packets, path), edit)
     # VDP contents live inside the packed stream: unpack once per
     # bundle, apply everything, then rebuild the stream once.  The
     # raising conditions sit in the same payload, so they ride along
     # rather than costing a second unpack-repack.
-    groups = collections.defaultdict(lambda: ([], [], []))
+    groups = collections.defaultdict(lambda: ([], [], [], []))
     for edit in edits:
         path = list(edit['path'])
         placed = False
-        for step, bucket in (('vdp', 0), ('vdpchar', 1)):
+        for step, bucket in (('vdp', 0), ('vdpchar', 1), ('vdpbody', 3)):
             if step in path:
                 k = path.index(step)
                 groups[tuple(path[:k])][bucket].append((path[k + 1], edit))
@@ -639,7 +659,7 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
         # it has to ride the same unpack even when nothing else changed
         if not placed and edit.get('vdp_dest_name') is not None:
             groups[tuple(path)][2].append(edit)
-    for top, (jobs, charjobs, namejobs) in groups.items():
+    for top, (jobs, charjobs, namejobs, bodyjobs) in groups.items():
         pkt = _find(packets, list(top))
         got = vdp.sub_packets(pkt, extra)
         if got is None:
@@ -668,17 +688,43 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
             vdp.write_char_block(payload, idx, edit, model=pkt.model)
         for edit in namejobs:
             vdp.write_dest_name(payload, edit['vdp_dest_name'], model=pkt.model)
+        # bare change bodies live in the payload prefix, before the first
+        # content; patch their bank in place and the assemble below carries
+        # it across untouched, leaving the blank header alone
+        if bodyjobs:
+            bodies = vdp.bare_bodies(payload, base, model=pkt.model)
+            for bidx, edit in bodyjobs:
+                if bidx >= len(bodies):
+                    continue
+                body = bodies[bidx]
+                _apply_fields(body['packet'], edit)      # writes into syn.raw
+                bank = body['packet'].raw[vdp.BODY_HEADER:]
+                lo = body['off'] + vdp.BODY_HEADER
+                payload[lo:lo + len(bank)] = bank
         before = pkt.size
+        # Rebuild the Packet objects from the new bytes rather than writing
+        # into pkt.raw in place: a compressed stream can spell TAMAGO by
+        # accident, so pkt may carry a spurious nested child parsed from the
+        # old layout.  Left in place, build_file's checksum pass would then
+        # splice that stale child back at its old offset and corrupt the new
+        # stream -- which is exactly what broke a two-part edit (easter).
         if extra:
-            # split back across the pair: part 1 fills to 32,768 bytes and
-            # the rest goes to the continuation
+            # split back across the parts: each fills to 32,768 bytes and
+            # the rest goes to the next
             blob = vdp.assemble(payload, base, subs)
             cuts = vdp.repack_split(pkt, [o[1][0] for o in others], blob)
-            pkt.raw[:] = bytearray(cuts[0])
+            replace_packet(packets, list(top), bytes(cuts[0]))
             for (_pj, opk, _pt), chunk in zip(others, cuts[1:]):
-                opk[0].raw[:] = bytearray(chunk)
+                opk[0] = container.Packet(bytes(chunk), 0)
+                opk[0].children = []
         else:
-            pkt.raw[:] = bytearray(vdp.write_subs(pkt, payload, base, subs))
+            replace_packet(packets, list(top),
+                           bytes(vdp.write_subs(pkt, payload, base, subs)))
+        pkt = _find(packets, list(top))
+        # the compressed stream can spell TAMAGO by chance, so the re-parsed
+        # part may carry a spurious child; drop it so the checksum pass does
+        # not splice stale bytes over the new stream (easter's part 1)
+        pkt.children = []
         # the whole file's declared size follows the packet's
         for q in packets:
             q.shift_declared_size(pkt.size - before)

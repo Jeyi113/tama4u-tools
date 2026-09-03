@@ -47,7 +47,7 @@ import collections
 import re
 import struct
 
-from . import charset, container, destinations, items, s1c33, sprites
+from . import charset, container, destinations, items, models, s1c33, sprites
 
 VDP_DEST = '94025b02'
 LOADER_PREFIX = 'DecoPierce'
@@ -193,10 +193,22 @@ def pack_rle(data):
     return bytes(out + b'\x00\x00')
 
 
+MATCH_DEPTH = 1024      # candidates examined per position
+MIN_MATCH = 2           # a 2-halfword match is 3 bytes vs 4 as literals
+
+
 def pack_lz(data):
-    """The vdp-009 packer.  Not byte-identical -- a greedy matcher picks
-    different matches than the original did -- but it round-trips and
-    comes out smaller (24,426 bytes against 26,714 on vdp-009)."""
+    """The vdp-009 packer.  Not byte-identical -- a greedy/lazy matcher
+    picks different matches than the original did -- but it round-trips and
+    usually comes out smaller.
+
+    Efficiency matters at the edges: a full bundle like anniversary sits
+    within ~1 KB of the three-file capacity, and a too-loose packer pushes
+    an ordinary edit over it.  Three things buy that back over a plain
+    greedy match -- a deeper candidate search, one-step lazy matching
+    (defer a match when starting one halfword later reaches further), and
+    accepting length-2 matches.  anniversary: 98,081 -> 96,248, under the
+    97,070 cap, every content still round-tripping."""
     hw = [bytes(data[2 * k:2 * k + 2]) for k in range(len(data) // 2)]
     n = len(hw)
     out, lit, index = bytearray(), [], collections.defaultdict(list)
@@ -209,18 +221,10 @@ def pack_lz(data):
             for x in take:
                 out.extend(x)
 
-    i = 0
-    while i < n:
-        v = hw[i]
-        run = 0
-        if v[0] == v[1]:
-            j = i
-            while j < n and hw[j] == v and j - i < MAX_RUN:
-                j += 1
-            run = j - i
+    def match_at(i):
         best_len, best_d = 0, 0
         if i + 1 < n:
-            for s in reversed(index[(hw[i], hw[i + 1])][-64:]):
+            for s in reversed(index[(hw[i], hw[i + 1])][-MATCH_DEPTH:]):
                 d = i - s
                 if not 1 <= d <= WINDOW // 2:
                     continue
@@ -231,24 +235,52 @@ def pack_lz(data):
                     best_len, best_d = L, d
                 if best_len >= MAX_MATCH:
                     break
+        return best_len, best_d
+
+    def run_at(i):
+        v = hw[i]
+        if v[0] != v[1]:
+            return 0
+        j = i
+        while j < n and hw[j] == v and j - i < MAX_RUN:
+            j += 1
+        return j - i
+
+    def add_index(a, b):
+        for k in range(a, b):
+            if k + 1 < n:
+                index[(hw[k], hw[k + 1])].append(k)
+
+    i = 0
+    while i < n:
+        run = run_at(i)
+        best_len, best_d = match_at(i)
+        # lazy: if emitting a literal now lets a longer match start next
+        # halfword, take the literal and reconsider there
+        if (best_len >= MIN_MATCH and run < best_len and i + 1 < n
+                and match_at(i + 1)[0] > best_len):
+            lit.append(hw[i])
+            if len(lit) >= MAX_LIT:
+                flush()
+            add_index(i, i + 1)
+            i += 1
+            continue
         if run >= 3 and run >= best_len:
             flush()
             out.append(run - 1)
-            out.append(v[0])
+            out.append(hw[i][0])
             step = run
-        elif best_len >= 3:
+        elif best_len >= MIN_MATCH:
             flush()
             field = 0x1000 - 2 * best_d
             out.extend((0x00, ((best_len - 1) << 4) | (field >> 8), field & 0xFF))
             step = best_len
         else:
-            lit.append(v)
+            lit.append(hw[i])
             step = 1
             if len(lit) >= MAX_LIT:
                 flush()
-        for k in range(i, i + step):
-            if k + 1 < n:
-                index[(hw[k], hw[k + 1])].append(k)
+        add_index(i, i + step)
         i += step
     flush()
     return bytes(out + b'\x00\x00')
@@ -394,8 +426,12 @@ def split_parts(pkt, parts, stream):
     outs = [bytearray(r1[:head1] + cuts[0] + b'\x00\x00')]
     for part, chunk in zip(parts, cuts[1:]):
         outs.append(bytearray(bytes(part.raw)[:PART_STREAM] + chunk + b'\x00\x00'))
+    # the last two bytes are the packet checksum, not stream data; seal each
+    # part here so a caller that re-parses the bytes (and so cannot tell the
+    # packet changed) still gets a valid file
     for buf in outs:
         struct.pack_into('>H', buf, container.OFF_PACKET_SIZE, len(buf))
+        struct.pack_into('>H', buf, len(buf) - 2, container.sum16(buf[:-2]))
     return [bytes(b) for b in outs]
 
 
@@ -629,6 +665,79 @@ def char_blocks(data, model="P's"):
     return out
 
 
+BODY_HEADER = 0x100         # a bare body is a blank header then its bank
+BODY_STRIDE = 0x39BA        # header + 28-pose bank + padding, per anniversary
+
+
+def bare_bodies(payload, base, model="P's"):
+    """Change bodies stored without a TAMAGO header (older change pierces).
+
+    ciao and the newer bundles ship each transformation body as a full
+    content packet on the clothes shelf, which the content walker already
+    reads.  anniversary (2016) does not: its ten bodies sit between the
+    raising-condition blocks and the first real content as bare 28-pose
+    sprite banks behind a blank 0x100 header, no magic, so the TAMAGO scan
+    skips the lot.  This finds them, one per raising-condition block, and
+    hands back a synthetic packet (a real header written in front of the
+    bank) so they read and edit like any other character body.  On save the
+    caller writes only the bank back, leaving the blank header alone.
+
+    Empty unless the bundle actually uses this layout -- a bundle whose
+    contents already include a character body is left to the walker."""
+    p = bytes(payload)
+    n = p[CHAR_COUNT_AT] if len(p) > CHAR_COUNT_AT else 0
+    if not n:
+        return []
+    block_end = CHAR_BLOCK + n * CHAR_STRIDE
+    # find the first 28-pose bank after the blocks; its header starts 0x100
+    # earlier, and every body follows at a fixed stride
+    off = block_end
+    first = None
+    while off < base - 6:
+        try:
+            frames, _end = sprites.parse_bank(p, off)
+            if frames and len(frames) == 28:
+                first = off
+                break
+        except Exception:
+            pass
+        off += 1
+    if first is None:
+        return []
+    table = charset.load_table(model=model)
+    blocks = char_blocks(payload, model=model)
+    out = []
+    for k in range(n):
+        bank = first + k * BODY_STRIDE
+        rec = bank - BODY_HEADER
+        if bank + 4 > len(p):
+            break
+        try:
+            frames, _e = sprites.parse_bank(p, bank)
+        except Exception:
+            break
+        if not frames or len(frames) != 28:
+            break
+        name = blocks[k]['name'] if k < len(blocks) else ''
+        syn = bytearray(p[rec:rec + BODY_STRIDE])
+        syn[0:6] = container.MAGIC
+        struct.pack_into('>H', syn, container.OFF_PACKET_SIZE, len(syn))
+        sig = next((s for s, mm in models.SIGNATURES.items() if mm == model), 0x8DC0)
+        struct.pack_into('>H', syn, container.OFF_TYPE_SIG, sig)
+        syn[items.OFF_DEST:items.OFF_DEST + 4] = bytes.fromhex(CHAR_DEST)
+        codes = charset.encode(name[:pkt_name_slots(model)], table)
+        lay = models.layout(model)
+        for j, c in enumerate(codes):
+            syn[lay['name'] + j] = c & 0xFF
+        out.append({'off': rec, 'bank_off': BODY_HEADER,
+                    'packet': container.Packet(bytes(syn), 0), 'name': name})
+    return out
+
+
+def pkt_name_slots(model):
+    return models.layout(model)['slots']
+
+
 def write_char_block(data, k, fields, model="P's"):
     """Edit one raising condition in place; the block never changes length."""
     b = CHAR_BLOCK + k * CHAR_STRIDE
@@ -790,6 +899,8 @@ def write_subs(pkt, data, base, packets):
     out = assemble(data, base, packets)
     blob = bytearray(repack(pkt, out))
     struct.pack_into('>H', blob, container.OFF_PACKET_SIZE, len(blob))
+    # seal the checksum here too, for a caller that re-parses these bytes
+    struct.pack_into('>H', blob, len(blob) - 2, container.sum16(blob[:-2]))
     return bytes(blob)
 
 

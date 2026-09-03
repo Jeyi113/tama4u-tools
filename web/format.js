@@ -10,6 +10,14 @@ import {
 import { CHARSET } from './charset-data.js';
 
 // ---- charset --------------------------------------------------------
+// 0x61 is a heart; the harvested table spells it '▽' because that was the
+// nearest character to pin it to.  Show it as a heart and take one as input
+// (see tama4u/charset.py).
+const GLYPH_FIX = { '▽': '♥' };
+const GLYPH_ALIAS = { '▽': '♥', '♡': '♥', '❤': '♥', '❥': '♥' };
+for (const table of Object.values(CHARSET))
+  for (const code of Object.keys(table))
+    if (GLYPH_FIX[table[code]]) table[code] = GLYPH_FIX[table[code]];
 const REV = {};
 for (const [model, table] of Object.entries(CHARSET)) {
   REV[model] = {};
@@ -31,7 +39,7 @@ export function encode(text, model) {
   const out = [];
   for (const ch of text) {
     const up = ch.toUpperCase();
-    const cands = [ch, fullwidth(ch), up, fullwidth(up)];
+    const cands = [ch, GLYPH_ALIAS[ch], fullwidth(ch), up, fullwidth(up)];
     const hit = cands.find(c => c != null && rev[c] !== undefined);
     if (hit === undefined) throw new Error(
       `'${ch}' 은(는) 기기 문자표에 없습니다 (쓸 수 있는 것: A-Z, 0-9, 가나, `
@@ -444,6 +452,9 @@ export function vdpSplitParts(p, parts, stream) {
     const out = new Uint8Array(head.length + body.length + 2);
     out.set(head, 0); out.set(body, head.length);
     putU16(out, OFF_PACKET_SIZE, out.length);
+    // last two bytes are the checksum, sealed here for a caller that
+    // re-parses the bytes and so cannot tell the packet changed
+    putU16(out, out.length - 2, sum16(out.subarray(0, -2)));
     return out;
   };
   const cuts = []; let at = 0;
@@ -600,6 +611,11 @@ export function vdpPackRle(data) {
 }
 
 // vdp-009 packer -- greedy, so not byte-identical, but smaller and exact
+// Match search depth and minimum length -- see tama4u/vdp.py.  A deeper
+// search, one-step lazy matching and length-2 matches buy back the ~1 KB
+// that keeps a full bundle (anniversary) within the three-file capacity.
+const VDP_MATCH_DEPTH = 1024, VDP_MIN_MATCH = 2;
+
 export function vdpPackLz(data) {
   const n = data.length >> 1, out = [], lit = [], index = new Map();
   const same = (a, b) => data[2 * a] === data[2 * b] && data[2 * a + 1] === data[2 * b + 1];
@@ -610,21 +626,12 @@ export function vdpPackLz(data) {
       for (const k of take) out.push(data[2 * k], data[2 * k + 1]);
     }
   };
-  let i = 0;
-  while (i < n) {
-    const lo = data[2 * i], hi = data[2 * i + 1];
-    let run = 0;
-    if (lo === hi) {
-      let j = i;
-      while (j < n && data[2 * j] === lo && data[2 * j + 1] === hi
-             && j - i < VDP_MAX_RUN) j++;
-      run = j - i;
-    }
+  const matchAt = i => {
     let bestLen = 0, bestD = 0;
     if (i + 1 < n) {
-      const key = hwAt(data, i) * 65536 + hwAt(data, i + 1);
-      const cand = index.get(key);
-      if (cand) for (let c = cand.length - 1, seen = 0; c >= 0 && seen < 64; c--, seen++) {
+      const cand = index.get(hwAt(data, i) * 65536 + hwAt(data, i + 1));
+      if (cand) for (let c = cand.length - 1, seen = 0;
+                      c >= 0 && seen < VDP_MATCH_DEPTH; c--, seen++) {
         const s = cand[c], d = i - s;
         if (d < 1 || d > VDP_WINDOW / 2) continue;
         let L = 0;
@@ -633,9 +640,40 @@ export function vdpPackLz(data) {
         if (bestLen >= VDP_MAX_MATCH) break;
       }
     }
+    return [bestLen, bestD];
+  };
+  const runAt = i => {
+    const lo = data[2 * i], hi = data[2 * i + 1];
+    if (lo !== hi) return 0;
+    let j = i;
+    while (j < n && data[2 * j] === lo && data[2 * j + 1] === hi
+           && j - i < VDP_MAX_RUN) j++;
+    return j - i;
+  };
+  const addIndex = (a, b) => {
+    for (let k = a; k < b; k++) {
+      if (k + 1 >= n) break;
+      const key = hwAt(data, k) * 65536 + hwAt(data, k + 1);
+      if (!index.has(key)) index.set(key, []);
+      index.get(key).push(k);
+    }
+  };
+  let i = 0;
+  while (i < n) {
+    const run = runAt(i);
+    const [bestLen, bestD] = matchAt(i);
+    // lazy: defer a match when starting one halfword later reaches further
+    if (bestLen >= VDP_MIN_MATCH && run < bestLen && i + 1 < n
+        && matchAt(i + 1)[0] > bestLen) {
+      lit.push(i);
+      if (lit.length >= VDP_MAX_LIT) flush();
+      addIndex(i, i + 1);
+      i += 1;
+      continue;
+    }
     let step;
-    if (run >= 3 && run >= bestLen) { flush(); out.push(run - 1, lo); step = run; }
-    else if (bestLen >= 3) {
+    if (run >= 3 && run >= bestLen) { flush(); out.push(run - 1, data[2 * i]); step = run; }
+    else if (bestLen >= VDP_MIN_MATCH) {
       flush();
       const field = 0x1000 - 2 * bestD;
       out.push(0x00, ((bestLen - 1) << 4) | (field >> 8), field & 0xff);
@@ -644,12 +682,7 @@ export function vdpPackLz(data) {
       lit.push(i); step = 1;
       if (lit.length >= VDP_MAX_LIT) flush();
     }
-    for (let k = i; k < i + step; k++) {
-      if (k + 1 >= n) break;
-      const key = hwAt(data, k) * 65536 + hwAt(data, k + 1);
-      if (!index.has(key)) index.set(key, []);
-      index.get(key).push(k);
-    }
+    addIndex(i, i + step);
     i += step;
   }
   flush();
@@ -721,6 +754,42 @@ export function vdpCharBlocks(data, model = "P's") {
       pair_b: [u16le(data, b + VC_PAIR_B), u16le(data, b + VC_PAIR_B + 2)],
       name: text(b + VC_NAME, VC_NAME_LEN), lines,
     });
+  }
+  return out;
+}
+
+// Change bodies stored without a TAMAGO header (anniversary) -- see
+// tama4u/vdp.py.  Returns synthetic packets (a real header written in
+// front of each bare 28-pose bank) tied 1:1 to the raising blocks.
+export const VDP_BODY_HEADER = 0x100, VDP_BODY_STRIDE = 0x39ba;
+export function vdpBareBodies(payload, base, model = "P's") {
+  const n = payload.length > VDP_CHAR_COUNT_AT ? payload[VDP_CHAR_COUNT_AT] : 0;
+  if (!n) return [];
+  const blockEnd = VDP_CHAR_BLOCK + n * VDP_CHAR_STRIDE;
+  let first = null;
+  for (let o = blockEnd; o < base - 6; o++) {
+    try { const { frames } = parseBank(payload, o); if (frames.length === 28) { first = o; break; } }
+    catch (e) { /* not a bank here */ }
+  }
+  if (first === null) return [];
+  const blocks = vdpCharBlocks(payload, model);
+  const lay = LAYOUTS[model] || LAYOUTS["P's"];
+  const sig = +Object.keys(SIGNATURES).find(s => SIGNATURES[s] === model) || 0x8dc0;
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const bank = first + k * VDP_BODY_STRIDE, rec = bank - VDP_BODY_HEADER;
+    if (bank + 4 > payload.length) break;
+    try { const { frames } = parseBank(payload, bank); if (frames.length !== 28) break; }
+    catch (e) { break; }
+    const name = k < blocks.length ? blocks[k].name : '';
+    const syn = payload.slice(rec, rec + VDP_BODY_STRIDE);
+    syn.set(MAGIC, 0);
+    putU16(syn, OFF_PACKET_SIZE, syn.length);
+    putU16(syn, OFF_TYPE_SIG, sig);
+    for (let j = 0; j < 4; j++) syn[OFF_DEST + j] = parseInt(VDP_CHAR_DEST.substr(j * 2, 2), 16);
+    const codes = encode(name.slice(0, lay.slots), model);
+    for (let j = 0; j < codes.length; j++) syn[lay.name + j] = codes[j] & 0xFF;
+    out.push({ off: rec, bank_off: VDP_BODY_HEADER, packet: new Packet(syn, 0), name });
   }
   return out;
 }
@@ -885,6 +954,7 @@ export function vdpWriteSubs(p, data, base, packets) {
   let at = 0; for (const q of parts) { buf.set(q, at); at += q.length; }
   const out = vdpRepack(p, buf);
   putU16(out, OFF_PACKET_SIZE, out.length);
+  putU16(out, out.length - 2, sum16(out.subarray(0, -2)));
   return out;
 }
 // ---- character stats ------------------------------------------------

@@ -149,11 +149,26 @@ def canonical_bytes():
     return _CANON
 
 
+# The device font draws a couple of codes as a glyph the correlation table
+# picked a plainer stand-in for.  0x61 is a heart -- the download names spell
+# it '▽' only because that is the nearest character the harvester could pin
+# it to -- so the table shows it as one and the editor accepts it as one.
+GLYPH_FIX = {'▽': '♥'}
+# input aliases folded to the canonical glyph before lookup, so typing any
+# of these reaches the same code
+GLYPH_ALIAS = {'▽': '♥', '♡': '♥', '❤': '♥', '❥': '♥'}
+
+
+def _fix_glyphs(table):
+    return {c: GLYPH_FIX.get(v, v) for c, v in table.items()}
+
+
 def load_table(path=None, model='4U'):
     if path is not None:
-        return {int(k, 16): v for k, v in json.load(open(path)).items()}
+        return _fix_glyphs({int(k, 16): v
+                            for k, v in json.load(open(path)).items()})
     page = 0x0400 if model == '4U' else 0
-    return {page + c: v for c, v in canonical_bytes().items()}
+    return _fix_glyphs({page + c: v for c, v in canonical_bytes().items()})
 
 
 def decode(codes, table=None):
@@ -262,7 +277,8 @@ def encode(text, table=None):
     rev = {v: k for k, v in table.items()}
     out = []
     for ch in text:
-        for cand in (ch, _fullwidth(ch), ch.upper(),
+        alias = GLYPH_ALIAS.get(ch)
+        for cand in (ch, alias, _fullwidth(ch), ch.upper(),
                      _fullwidth(ch.upper()) if ch.isalpha() else None):
             if cand is not None and cand in rev:
                 out.append(rev[cand])
