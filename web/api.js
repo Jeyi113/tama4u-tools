@@ -38,12 +38,16 @@ const b64 = u8 => {
 const frameOut = f => ({ slot: f.slot_size, w: f.w, h: f.h, palette: f.palette, pixels: f.pixels });
 
 export function describe(data, opts = {}) {
-  // opts.partner is the other half of a VDP+; its stream is appended so the
-  // bundle unpacks whole
+  // opts.partner is the rest of a VDP+ -- one continuation or a list; their
+  // streams are appended so the bundle unpacks whole
   let extra = null;
-  if (opts.partner) {
-    const { packets: ppk } = parseFile(opts.partner);
-    if (F.isVdpPart(ppk[0])) extra = F.vdpPartStream(ppk[0]);
+  const others = partnerPackets(opts.partner);
+  if (others.length) {
+    const chunks = others.map(o => F.vdpPartStream(o.packets[0]));
+    const n = chunks.reduce((a, c) => a + c.length, 0);
+    extra = new Uint8Array(n);
+    let at = 0;
+    for (const c of chunks) { extra.set(c, at); at += c.length; }
   }
   const { jpeg, packets } = parseFile(data);
   const out = { jpeg_b64: opts.jpeg === false ? null : b64(jpeg), packets: [] };
@@ -84,6 +88,9 @@ export function describe(data, opts = {}) {
       is_item: !isChar && !F.isProgram(pkt)
         && (F.BANK_OFFSETS[F.effectiveKind(pkt)] !== undefined || model !== '4U'),
     };
+    // a VDP character body reads as kind 'fk' but its 28 frames are poses,
+    // not wearable pieces -- the body-type composite must not slice them
+    info.pose_bank = path.includes('vdp') ? F.vdpIsCharContent(pkt) : false;
     if (model === 'iD') { info.version = F.getVersion(pkt); info.version_presets = F.VERSION_PRESETS; }
     info.compat = F.getCompat(pkt);
     const period = F.getPeriod(pkt);
@@ -258,6 +265,10 @@ export function describe(data, opts = {}) {
       const got = F.vdpSubPackets(pkt, extra);
       info.vdp_truncated = !!(got && got[2].length && !got[2][got[2].length - 1].checksumOk());
       info.vdp_merged = !!(extra && extra.length);
+      info.vdp_part_gap = partGap(others);
+      // a VDP+ part 1 is a bundle whose item name ends in a digit -- true
+      // of all 20 VDP+ releases and none of the 50 plain pierces
+      info.vdp_multipart = F.vdpPartIndex(pkt) !== null;
       info.vdp = !got ? [] : got[2].map((sub, k) => ({
         index: k,
         name: F.decode(Array.from(sub.itemNameCodes), F.tableFor(sub.model))
@@ -272,6 +283,7 @@ export function describe(data, opts = {}) {
       if (got) {
         // the raising conditions, from the payload's 4 KB prefix
         const where = new Map(got[2].map((sub, k) => [sub.serial, k]));
+        info.vdp_dest_name = F.vdpDestName(got[0], pkt.model);
         info.vdp_chars = F.vdpCharBlocks(got[0], pkt.model).map(c => ({
           ...c, item_index: where.has(c.item_serial) ? where.get(c.item_serial) : null,
         }));
@@ -343,14 +355,44 @@ function resizeBanks(packets, edits) {
   return delta;
 }
 
-// `partner` is a VDP+ continuation; with it, edits reach the whole bundle
+// A VDP+ ships in two or three files and the stream is one run split across
+// them, so it only unpacks when they are concatenated in part order.  Files
+// handed over in any order are sorted here.
+// True when the continuations skip a number.  Part 1 is the file being
+// edited, so the rest should be 2, 3, ...  A hole is worth naming because
+// the truncation check can miss it: Ciao read as 1+3 stops at 12 contents
+// but the last one's checksum happens to be good.
+function partGap(others) {
+  const idx = others.map(o => o.idx).sort((a, b) => a - b);
+  return idx.some((v, i) => v !== i + 2);
+}
+
+function partnerPackets(partner) {
+  if (!partner) return [];
+  const list = Array.isArray(partner) ? partner : [partner];
+  const out = [];
+  for (const raw of list) {
+    const parsed = parseFile(raw);
+    if (F.isVdpPart(parsed.packets[0]))
+      out.push({ ...parsed, idx: F.vdpPartIndex(parsed.packets[0]) ?? 99 });
+  }
+  out.sort((a, b) => a.idx - b.idx);
+  return out;
+}
+
+// `partner` is a VDP+'s continuations -- one file or a list; with them,
+// edits reach the whole bundle
 // and the result comes back as [part 1, part 2].
 export function applyEdits(data, edits, newJpeg = null, partner = null) {
+  const others = partnerPackets(partner);
   let { jpeg, packets, trailing } = parseFile(data);
-  let pj = null, ppk = null, ptr = null, extra = null;
-  if (partner) {
-    ({ jpeg: pj, packets: ppk, trailing: ptr } = parseFile(partner));
-    if (F.isVdpPart(ppk[0])) extra = F.vdpPartStream(ppk[0]);
+  let extra = null;
+  if (others.length) {
+    const chunks = others.map(o => F.vdpPartStream(o.packets[0]));
+    const n = chunks.reduce((a, c) => a + c.length, 0);
+    extra = new Uint8Array(n);
+    let at = 0;
+    for (const c of chunks) { extra.set(c, at); at += c.length; }
   }
   const swaps = edits.filter(e => (e.replace_bytes || e.convert)
                                  && !e.path.includes('vdp'));
@@ -432,16 +474,25 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
   // second unpack-repack.
   const groups = new Map();
   for (const edit of edits) {
+    let placed = false;
     for (const step of ['vdp', 'vdpchar']) {
       const k = edit.path.indexOf(step);
       if (k < 0) continue;
       const key = edit.path.slice(0, k).join(',');
-      if (!groups.has(key)) groups.set(key, [[], []]);
+      if (!groups.has(key)) groups.set(key, [[], [], []]);
       groups.get(key)[step === 'vdp' ? 0 : 1].push([edit.path[k + 1], edit]);
+      placed = true;
       break;
     }
+    // the destination name lives in the payload, not in the packet, so it
+    // has to ride the same unpack even when nothing else changed
+    if (!placed && edit.vdp_dest_name != null) {
+      const key = edit.path.join(',');
+      if (!groups.has(key)) groups.set(key, [[], [], []]);
+      groups.get(key)[2].push(edit);
+    }
   }
-  for (const [key, [jobs, charjobs]] of groups) {
+  for (const [key, [jobs, charjobs, namejobs]] of groups) {
     const pkt = findPacket(packets, key.split(',').map(Number));
     const got = F.vdpSubPackets(pkt, extra);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
@@ -465,17 +516,22 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     }
     for (const [idx, edit] of charjobs)
       F.vdpWriteCharBlock(data, idx, edit, pkt.model);
+    for (const edit of namejobs)
+      F.vdpWriteDestName(data, edit.vdp_dest_name, pkt.model);
     const before = pkt.size;
     if (extra) {
       // split back across the pair: part 1 fills to 32,768 bytes
       const blob = F.vdpAssemble(data, base, subs);
-      const [a, b] = F.vdpRepackSplit(pkt, ppk[0], blob);
-      pkt.raw = a; ppk[0].raw = b;
+      const cuts = F.vdpRepackSplit(pkt, others.map(o => o.packets[0]), blob);
+      pkt.raw = cuts[0];
+      others.forEach((o, i) => { o.packets[0].raw = cuts[i + 1]; });
     } else {
       pkt.raw = F.vdpWriteSubs(pkt, data, base, subs);
     }
     for (const q of packets) q.shiftDeclaredSize(pkt.size - before);
   }
   const out = buildFile(jpeg, packets, trailing);
-  return partner ? [out, buildFile(pj, ppk, ptr)] : out;
+  return others.length
+    ? [out, ...others.map(o => buildFile(o.jpeg, o.packets, o.trailing))]
+    : out;
 }

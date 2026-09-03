@@ -263,8 +263,13 @@
       <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
       <div id="vdpPartRow" hidden style="margin-bottom:8px;padding:8px;border:1px dashed var(--accent);border-radius:6px;background:#fff4ee">
         <div style="font-size:12px;margin-bottom:6px" id="vdpPartNote"></div>
-        <button class="btn" id="vdpPartBtn">짝 파일(.jpg) 불러오기</button>
-        <input type="file" id="vdpPartInput" accept=".jpg,.jpeg" hidden>
+        <button class="btn" id="vdpPartBtn">나머지 파일(.jpg) 불러오기</button>
+        <input type="file" id="vdpPartInput" accept=".jpg,.jpeg" multiple hidden>
+        <span class="hint" id="vdpPartHave" style="margin-left:8px"></span>
+      </div>
+      <div id="vdpDestRow" hidden style="margin-bottom:10px">
+        <label>변신장(외출장소) 이름 <span class="flag">압축 페이로드 0x0A · 최대 8자</span></label>
+        <input id="fVdpDest" maxlength="8" style="max-width:220px">
       </div>
       <table class="vdp"><tbody id="vdpRows"></tbody></table>
       <div class="hint">
@@ -459,7 +464,7 @@ const CHARS=['Mametchi','Rightchi','Knightchi','Takutotchi','Nandetchi','Kuchipa
 'Shirimotchi','Charatchi','Monakatchi','Mogumogutchi','Spacytchi','Karakutchi','Atchitchi','Yumemitchi',
 'Kiraritchi','Himespetchi','Warutsutchi','Amiamitchi','Memetchi','Chokomakatchi','Yukinkotchi','Hoshigalutchi',
 'Chouchoutchi','Harputchi','Patitchi','Kiramotchi','Furifuritchi','Amakutchi','Julietchi','Pekopekotchi'];
-let fileB64=null, partnerB64=null, doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
+let fileB64=null, partnerB64=[], doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
 
 const $=id=>document.getElementById(id);
 const toast=m=>{const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)};
@@ -483,16 +488,24 @@ $('fileInput').onchange=e=>{if(e.target.files[0])load(e.target.files[0])};
 function arrayToB64(u8){let s='';const CH=32768;for(let i=0;i<u8.length;i+=CH)s+=String.fromCharCode.apply(null,u8.subarray(i,i+CH));return btoa(s)}
 // re-parse with the VDP+ partner attached, keeping the current selection
 async function reparse(){
+  // merging parts re-unpacks the whole bundle; say so rather than looking
+  // frozen while it runs
+  const btn=$('vdpPartBtn'), was=btn.textContent;
+  btn.textContent='합치는 중…'; btn.disabled=true;
+  try{ return await reparseNow(); }
+  finally{ btn.textContent=was; btn.disabled=false; }
+}
+async function reparseNow(){
   const r=await fetch('/api/parse',{method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({file_b64:fileB64,partner_b64:partnerB64})});
+    body:JSON.stringify({file_b64:fileB64,partners_b64:partnerB64})});
   const j=await r.json();
   if(j.error){toast('파싱 실패: '+j.error);return}
   doc=j; showPackets(j);
 }
 async function load(f){
   const buf=await f.arrayBuffer();
-  partnerB64=null;
+  partnerB64=[];
   const r=await fetch('/api/parse',{method:'POST',body:buf});
   const j=await r.json();
   if(j.error){toast('파싱 실패: '+j.error);return}
@@ -940,14 +953,27 @@ function renderVdp(){
   renderVdpChars();
   $('vdpCard').hidden=!rows.length;
   if(!rows.length)return;
+  $('vdpDestRow').hidden=(pk.vdp_dest_name==null);
+  if(pk.vdp_dest_name!=null)$('fVdpDest').value=pk.vdp_dest_name;
   $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`
     +(pk.vdp_merged?' · 짝 파일 합쳐서 읽음 (저장하면 두 파일)':'');
   // one download caps at 32,768 bytes, so a big bundle ships as a VDP+ in
   // parts; without the other part the stream runs out mid-content
-  $('vdpPartRow').hidden=!pk.vdp_truncated;
-  $('vdpPartNote').innerHTML=pk.vdp_truncated
-    ? '이 VDP는 <b>뒷부분이 잘려 있습니다</b> — VDP+ 멀티파트라 나머지가 다른 파일에 있습니다.'
-      +'<br>짝 파일을 불러오면 전체 내용물을 읽고 편집할 수 있습니다. 저장하면 두 파일로 나옵니다.'
+  // Offered for every VDP+ part 1, not just ones that read short: a
+  // bundle cut mid-stream can still end on a content whose checksum
+  // happens to be good, and then the loader never appeared.
+  $('vdpPartRow').hidden=!(pk.vdp_multipart||pk.vdp_truncated||partnerB64.length);
+  $('vdpPartNote').innerHTML=(pk.vdp_multipart||pk.vdp_truncated)
+    ? (pk.vdp_truncated
+        ? '이 VDP는 <b>뒷부분이 잘려 있습니다</b> — 나머지가 다른 파일에 있습니다.'
+        : '이 VDP는 <b>멀티파트(VDP+)</b>입니다.')
+      +'<br>2분할이면 파일 하나, 3분할이면 <b>둘 다</b> 불러오세요 (한 번에 여러 개 고를 수 있고, '
+      +'순서는 상관없습니다). 저장하면 파트 수만큼 파일이 나옵니다.'
+    : '';
+  $('vdpPartHave').innerHTML=partnerB64.length
+    ? `${partnerB64.length}개 불러옴`
+      +(pk.vdp_part_gap
+        ? ' · <b style="color:var(--accent)">중간 파트가 빠졌습니다</b>' : '')
     : '';
   $('vdpRows').innerHTML=rows.map(r=>`<tr class="pick" data-i="${r.index}">`
     +`<td class="nm">${r.name||'<span class="vdp-guess">(이름 없음)</span>'}</td>`
@@ -1059,8 +1085,11 @@ function drawAnim(){
   // body and the strip is the only place they are seen worn.  Accessories
   // do not -- their wear tiles show the same thing per pose, with the
   // coordinates attached.
+  // a VDP character body is kind 'fk' too, but its 28 frames are poses --
+  // slicing them as 4 sets of 7 clothes pieces is what made the composite
+  // look scrambled
   const strip=!!(pk&&pk.banks&&pk.banks.length&&!pk.is_wardrobe
-                 &&pk.kind==='fk'&&chara);
+                 &&pk.kind==='fk'&&!pk.pose_bank&&chara);
   $('stripRow').hidden=!strip;
   if(strip){
     if($('stripBody').value!==String(bodyType))$('stripBody').value=bodyType;
@@ -2010,10 +2039,18 @@ function renderCharStats(){
 // ---- packet swap: drop another .jpg's packet into this slot ----
 $('vdpPartBtn').onclick=()=>$('vdpPartInput').click();
 $('vdpPartInput').onchange=async e=>{
-  const f=e.target.files[0]; e.target.value=''; if(!f)return;
-  partnerB64=arrayToB64(new Uint8Array(await f.arrayBuffer()));
+  const files=[...e.target.files]; e.target.value=''; if(!files.length)return;
+  // parts may arrive in any order and one at a time; they are kept and the
+  // backend sorts them by the digit their name ends in
+  for(const f of files)
+    partnerB64.push(arrayToB64(new Uint8Array(await f.arrayBuffer())));
   await reparse();
-  toast(pk&&pk.vdp_merged?'짝 파일을 합쳐 읽었습니다':'짝 파일이 아닌 것 같습니다');
+  toast(!(pk&&pk.vdp_merged) ? 'VDP+ 파트가 아닌 것 같습니다'
+    : pk.vdp_part_gap
+      ? `${partnerB64.length}개 합쳤지만 중간 파트가 빠졌습니다 — 번호가 이어져야 합니다`
+    : pk.vdp_truncated
+      ? `${partnerB64.length}개 합쳤지만 아직 모자랍니다 — 나머지도 불러오세요`
+    : `나머지 ${partnerB64.length}개를 합쳐 전체를 읽었습니다`);
 };
 $('swapBtn').onclick=()=>$('swapInput').click();
 ['dragover','dragleave','drop'].forEach(ev=>$('swapRow').addEventListener(ev,e=>{
@@ -2199,6 +2236,10 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_stats)edit.char_stats=pk.char_stats;
   if(pk.version)edit.version=pk.version;
   const edits=[edit];
+  // the destination name lives in the packed payload, so it is addressed on
+  // the bundle rather than on any content
+  if(pk.vdp_dest_name!=null&&$('fVdpDest').value.trim()!==pk.vdp_dest_name)
+    edit.vdp_dest_name=$('fVdpDest').value.trim();
   // the ANSI number is one number living in two packets -- see charBodyNote
   if(pk.char_body){
     const body={path:pk.char_body.path, name:$('fBodyName').value.trim()};
@@ -2223,20 +2264,23 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_extra&&pk.char_extra.acc_pos)edit.char_acc_pos=pk.char_extra.acc_pos;
   const payload={file_b64:fileB64,edits};
   if(newJpegB64)payload.jpeg_b64=newJpegB64;
-  if(partnerB64)payload.partner_b64=partnerB64;
+  if(partnerB64.length)payload.partners_b64=partnerB64;
   const r=await fetch('/api/build',{method:'POST',body:JSON.stringify(payload)});
   if(!r.ok){const j=await r.json();toast('저장 실패: '+j.error);return}
-  // a VDP+ is one bundle across two files, so it saves as a pair
-  if(partnerB64){
+  // a VDP+ is one bundle across two or three files, so it saves as a set
+  if(partnerB64.length){
     const j=await r.json();
-    const stem=downloadStem()||'custom';
-    [[j.part1_b64,'-1-2'],[j.part2_b64,'-2-2']].forEach(([b,suf])=>{
+    // the name already ends in this file's part number (CIAO...1), and the
+    // suffix adds its own, so drop it rather than saving CIAO...1-1-3
+    const stem=(downloadStem()||'custom').replace(/\d$/,'')||'custom';
+    const n=j.parts_b64.length;
+    j.parts_b64.forEach((b,i)=>{
       const u8=Uint8Array.from(atob(b),c=>c.charCodeAt(0));
       const a=document.createElement('a');
       a.href=URL.createObjectURL(new Blob([u8]));
-      a.download=stem+suf+'_custom.jpg'; a.click();
+      a.download=`${stem}-${i+1}-${n}_custom.jpg`; a.click();
     });
-    toast('VDP+ 두 파일로 저장했습니다 — 기기에는 둘 다 넣어야 합니다');
+    toast(`VDP+ ${n}개 파일로 저장했습니다 — 기기에는 전부 넣어야 합니다`);
     return;
   }
   const blob=await r.blob();

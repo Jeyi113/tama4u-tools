@@ -263,8 +263,13 @@
       <h2>VDP 내용물 <span id="vdpInfo" style="font-weight:400;text-transform:none"></span></h2>
       <div id="vdpPartRow" hidden style="margin-bottom:8px;padding:8px;border:1px dashed var(--accent);border-radius:6px;background:#fff4ee">
         <div style="font-size:12px;margin-bottom:6px" id="vdpPartNote"></div>
-        <button class="btn" id="vdpPartBtn">짝 파일(.jpg) 불러오기</button>
-        <input type="file" id="vdpPartInput" accept=".jpg,.jpeg" hidden>
+        <button class="btn" id="vdpPartBtn">나머지 파일(.jpg) 불러오기</button>
+        <input type="file" id="vdpPartInput" accept=".jpg,.jpeg" multiple hidden>
+        <span class="hint" id="vdpPartHave" style="margin-left:8px"></span>
+      </div>
+      <div id="vdpDestRow" hidden style="margin-bottom:10px">
+        <label>변신장(외출장소) 이름 <span class="flag">압축 페이로드 0x0A · 최대 8자</span></label>
+        <input id="fVdpDest" maxlength="8" style="max-width:220px">
       </div>
       <table class="vdp"><tbody id="vdpRows"></tbody></table>
       <div class="hint">
@@ -1461,28 +1466,42 @@ function vdpPartStream(p) {
   return p.raw.slice(VDP_PART_STREAM, p.raw.length - 2);
 }
 
-// Part 1 is always exactly 32,768 bytes, so it takes as much stream as fits
-// and the rest goes to part 2.
-function vdpSplitParts(p, part2, stream) {
+// Every part but the last is filled to 32,768 bytes -- the cap on one
+// download -- and the remainder goes to the one after it.  `parts` is the
+// continuations in order (see vdpPartIndex).
+function vdpSplitParts(p, parts, stream) {
   const head1 = vdpStreamStart(p.raw)[1];
-  const cap1 = VDP_PART1_SIZE - head1 - 2;
-  const cap2 = VDP_PART1_SIZE - VDP_PART_STREAM - 2;
-  if (stream.length > cap1 + cap2)
-    throw new Error(`스트림이 두 파일에 안 들어갑니다 (${stream.length}B > ${cap1 + cap2}B)`);
+  const caps = [VDP_PART1_SIZE - head1 - 2];
+  for (let i = 0; i < parts.length; i++) caps.push(VDP_PART1_SIZE - VDP_PART_STREAM - 2);
+  const total = caps.reduce((a, b) => a + b, 0);
+  if (stream.length > total)
+    throw new Error(`스트림이 ${caps.length}개 파일에 안 들어갑니다 (${stream.length}B > ${total}B)`);
   const mk = (head, body) => {
     const out = new Uint8Array(head.length + body.length + 2);
     out.set(head, 0); out.set(body, head.length);
     putU16(out, OFF_PACKET_SIZE, out.length);
     return out;
   };
-  return [mk(p.raw.slice(0, head1), stream.slice(0, cap1)),
-          mk(part2.raw.slice(0, VDP_PART_STREAM), stream.slice(cap1))];
+  const cuts = []; let at = 0;
+  for (const cap of caps) { cuts.push(stream.slice(at, at + cap)); at += cap; }
+  const outs = [mk(p.raw.slice(0, head1), cuts[0])];
+  parts.forEach((q, i) => outs.push(mk(q.raw.slice(0, VDP_PART_STREAM), cuts[i + 1])));
+  return outs;
 }
 
-function vdpRepackSplit(p, part2, data) {
+// Which part this is, from the digit its item name ends in -- all 21
+// bundles we have end the name that way, and the streams only concatenate
+// in that order.
+function vdpPartIndex(p) {
+  const name = decode(p.itemNameCodes, tableFor(p.model)).replace(/[　\s]+$/, '');
+  const last = name.slice(-1);
+  return /[0-9]/.test(last) ? +last : null;
+}
+
+function vdpRepackSplit(p, parts, data) {
   const kind = vdpStreamStart(p.raw)[0];
   const stream = (kind === 'lz' ? vdpPackLz : vdpPackRle)(data);
-  return vdpSplitParts(p, part2, stream);
+  return vdpSplitParts(p, parts, stream);
 }
 const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
 const isVdp = p =>
@@ -1694,6 +1713,17 @@ function vdpRepack(p, data) {
 // packet, and the raising conditions live there -- one block per raisable
 // character, 0x180 apart, starting at 0x20.  See tama4u/vdp.py for the
 // field map and how each one was pinned.
+// The name the bundle shows as its download destination -- CIAO, EASTER,
+// DISNEY, CAVEMAN -- eight one-byte codes at the front of the payload.
+const VDP_DEST_NAME = 0x0a, VDP_DEST_NAME_LEN = 8;
+function vdpDestName(data, model = "P's") {
+  return decode(Array.from(data.slice(VDP_DEST_NAME, VDP_DEST_NAME + VDP_DEST_NAME_LEN)),
+                tableFor(model)).replace(/[　\s]+$/, '');
+}
+function vdpWriteDestName(data, text, model = "P's") {
+  writeText(data, VDP_DEST_NAME, VDP_DEST_NAME_LEN, text, model, 1);
+}
+
 const VDP_CHAR_BLOCK = 0x20, VDP_CHAR_STRIDE = 0x180, VDP_CHAR_COUNT_AT = 0x1B;
 const VC_ID = 0x00, VC_GENDER = 0x02, VC_MONTH = 0x18, VC_DAY = 0x19;
 const VC_ITEM = 0x28, VC_LINES = 0x2A, VC_NAME = 0xBA;
@@ -1788,15 +1818,40 @@ function outingCast(p) {
            paired: best[1] % 2 === 0 };
 }
 
+// A character body, as opposed to a dress on the same shelf.  The sprite
+// bank tells them apart: a body is 28 poses (up to 44x52) while a dress is
+// 28 wearable pieces, none taller than 24.  Size used to be the test at a
+// flat 14,664, which came from the two-part bundles alone -- the three-part
+// ones carry 12,856-byte change bodies that were read as dresses.
+const VDP_POSE_MIN_HEIGHT = 30;
 function vdpIsCharContent(sub) {
-  return hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_CHAR_DEST
-    && sub.size === VDP_CHAR_SIZE;
+  if (hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) !== VDP_CHAR_DEST) return false;
+  try {
+    const { frames } = parseBank(sub.raw, bankOffset(sub));
+    return frames.length > 0
+      && Math.max(...frames.map(f => f.h)) > VDP_POSE_MIN_HEIGHT;
+  } catch (e) {
+    return sub.size === VDP_CHAR_SIZE;      // unreadable bank: fall back
+  }
+}
+
+// The transformation destination ships as four contents whose names end in
+// H1..H4: H1 the character who appears there, H2 the outside view, H3 the
+// inside, H4 the frames the transformation animates through.
+const VDP_OUTING_PARTS = { 1: '변신장 · 등장 캐릭터', 2: '변신장 · 바깥',
+                           3: '변신장 · 내부', 4: '변신장 · 변신 애니메이션' };
+function vdpOutingPart(sub) {
+  const name = decode(sub.itemNameCodes, tableFor(sub.model)).replace(/[　\s]+$/, '');
+  const m = /H([1-4])$/.exec(name);
+  return m ? VDP_OUTING_PARTS[+m[1]] : null;
 }
 
 function vdpContentLabel(sub, plain) {
   const dest = hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4));
   if (dest === VDP_CHAR_DEST)
     return vdpIsCharContent(sub) ? '캐릭터 (육성)' : '타마모리 · 옷 (변신)';
+  const part = vdpOutingPart(sub);
+  if (part) return part;
   if (dest === VDP_ICON_DEST) return '메뉴 아이콘 세트';
   if (dest === VDP_LOADING_DEST) return '로딩 아이콘';
   if (sub.size <= VDP_STUB_MAX) return `빈 슬롯 (${plain})`;
@@ -2175,12 +2230,16 @@ const b64 = u8 => {
 const frameOut = f => ({ slot: f.slot_size, w: f.w, h: f.h, palette: f.palette, pixels: f.pixels });
 
 function describe(data, opts = {}) {
-  // opts.partner is the other half of a VDP+; its stream is appended so the
-  // bundle unpacks whole
+  // opts.partner is the rest of a VDP+ -- one continuation or a list; their
+  // streams are appended so the bundle unpacks whole
   let extra = null;
-  if (opts.partner) {
-    const { packets: ppk } = parseFile(opts.partner);
-    if (isVdpPart(ppk[0])) extra = vdpPartStream(ppk[0]);
+  const others = partnerPackets(opts.partner);
+  if (others.length) {
+    const chunks = others.map(o => vdpPartStream(o.packets[0]));
+    const n = chunks.reduce((a, c) => a + c.length, 0);
+    extra = new Uint8Array(n);
+    let at = 0;
+    for (const c of chunks) { extra.set(c, at); at += c.length; }
   }
   const { jpeg, packets } = parseFile(data);
   const out = { jpeg_b64: opts.jpeg === false ? null : b64(jpeg), packets: [] };
@@ -2221,6 +2280,9 @@ function describe(data, opts = {}) {
       is_item: !isChar && !isProgram(pkt)
         && (BANK_OFFSETS[effectiveKind(pkt)] !== undefined || model !== '4U'),
     };
+    // a VDP character body reads as kind 'fk' but its 28 frames are poses,
+    // not wearable pieces -- the body-type composite must not slice them
+    info.pose_bank = path.includes('vdp') ? vdpIsCharContent(pkt) : false;
     if (model === 'iD') { info.version = getVersion(pkt); info.version_presets = VERSION_PRESETS; }
     info.compat = getCompat(pkt);
     const period = getPeriod(pkt);
@@ -2395,6 +2457,10 @@ function describe(data, opts = {}) {
       const got = vdpSubPackets(pkt, extra);
       info.vdp_truncated = !!(got && got[2].length && !got[2][got[2].length - 1].checksumOk());
       info.vdp_merged = !!(extra && extra.length);
+      info.vdp_part_gap = partGap(others);
+      // a VDP+ part 1 is a bundle whose item name ends in a digit -- true
+      // of all 20 VDP+ releases and none of the 50 plain pierces
+      info.vdp_multipart = vdpPartIndex(pkt) !== null;
       info.vdp = !got ? [] : got[2].map((sub, k) => ({
         index: k,
         name: decode(Array.from(sub.itemNameCodes), tableFor(sub.model))
@@ -2409,6 +2475,7 @@ function describe(data, opts = {}) {
       if (got) {
         // the raising conditions, from the payload's 4 KB prefix
         const where = new Map(got[2].map((sub, k) => [sub.serial, k]));
+        info.vdp_dest_name = vdpDestName(got[0], pkt.model);
         info.vdp_chars = vdpCharBlocks(got[0], pkt.model).map(c => ({
           ...c, item_index: where.has(c.item_serial) ? where.get(c.item_serial) : null,
         }));
@@ -2480,14 +2547,44 @@ function resizeBanks(packets, edits) {
   return delta;
 }
 
-// `partner` is a VDP+ continuation; with it, edits reach the whole bundle
+// A VDP+ ships in two or three files and the stream is one run split across
+// them, so it only unpacks when they are concatenated in part order.  Files
+// handed over in any order are sorted here.
+// True when the continuations skip a number.  Part 1 is the file being
+// edited, so the rest should be 2, 3, ...  A hole is worth naming because
+// the truncation check can miss it: Ciao read as 1+3 stops at 12 contents
+// but the last one's checksum happens to be good.
+function partGap(others) {
+  const idx = others.map(o => o.idx).sort((a, b) => a - b);
+  return idx.some((v, i) => v !== i + 2);
+}
+
+function partnerPackets(partner) {
+  if (!partner) return [];
+  const list = Array.isArray(partner) ? partner : [partner];
+  const out = [];
+  for (const raw of list) {
+    const parsed = parseFile(raw);
+    if (isVdpPart(parsed.packets[0]))
+      out.push({ ...parsed, idx: vdpPartIndex(parsed.packets[0]) ?? 99 });
+  }
+  out.sort((a, b) => a.idx - b.idx);
+  return out;
+}
+
+// `partner` is a VDP+'s continuations -- one file or a list; with them,
+// edits reach the whole bundle
 // and the result comes back as [part 1, part 2].
 function applyEdits(data, edits, newJpeg = null, partner = null) {
+  const others = partnerPackets(partner);
   let { jpeg, packets, trailing } = parseFile(data);
-  let pj = null, ppk = null, ptr = null, extra = null;
-  if (partner) {
-    ({ jpeg: pj, packets: ppk, trailing: ptr } = parseFile(partner));
-    if (isVdpPart(ppk[0])) extra = vdpPartStream(ppk[0]);
+  let extra = null;
+  if (others.length) {
+    const chunks = others.map(o => vdpPartStream(o.packets[0]));
+    const n = chunks.reduce((a, c) => a + c.length, 0);
+    extra = new Uint8Array(n);
+    let at = 0;
+    for (const c of chunks) { extra.set(c, at); at += c.length; }
   }
   const swaps = edits.filter(e => (e.replace_bytes || e.convert)
                                  && !e.path.includes('vdp'));
@@ -2569,16 +2666,25 @@ function applyEdits(data, edits, newJpeg = null, partner = null) {
   // second unpack-repack.
   const groups = new Map();
   for (const edit of edits) {
+    let placed = false;
     for (const step of ['vdp', 'vdpchar']) {
       const k = edit.path.indexOf(step);
       if (k < 0) continue;
       const key = edit.path.slice(0, k).join(',');
-      if (!groups.has(key)) groups.set(key, [[], []]);
+      if (!groups.has(key)) groups.set(key, [[], [], []]);
       groups.get(key)[step === 'vdp' ? 0 : 1].push([edit.path[k + 1], edit]);
+      placed = true;
       break;
     }
+    // the destination name lives in the payload, not in the packet, so it
+    // has to ride the same unpack even when nothing else changed
+    if (!placed && edit.vdp_dest_name != null) {
+      const key = edit.path.join(',');
+      if (!groups.has(key)) groups.set(key, [[], [], []]);
+      groups.get(key)[2].push(edit);
+    }
   }
-  for (const [key, [jobs, charjobs]] of groups) {
+  for (const [key, [jobs, charjobs, namejobs]] of groups) {
     const pkt = findPacket(packets, key.split(',').map(Number));
     const got = vdpSubPackets(pkt, extra);
     if (!got) throw new Error('이 VDP는 아직 압축을 풀 수 없습니다');
@@ -2602,19 +2708,24 @@ function applyEdits(data, edits, newJpeg = null, partner = null) {
     }
     for (const [idx, edit] of charjobs)
       vdpWriteCharBlock(data, idx, edit, pkt.model);
+    for (const edit of namejobs)
+      vdpWriteDestName(data, edit.vdp_dest_name, pkt.model);
     const before = pkt.size;
     if (extra) {
       // split back across the pair: part 1 fills to 32,768 bytes
       const blob = vdpAssemble(data, base, subs);
-      const [a, b] = vdpRepackSplit(pkt, ppk[0], blob);
-      pkt.raw = a; ppk[0].raw = b;
+      const cuts = vdpRepackSplit(pkt, others.map(o => o.packets[0]), blob);
+      pkt.raw = cuts[0];
+      others.forEach((o, i) => { o.packets[0].raw = cuts[i + 1]; });
     } else {
       pkt.raw = vdpWriteSubs(pkt, data, base, subs);
     }
     for (const q of packets) q.shiftDeclaredSize(pkt.size - before);
   }
   const out = buildFile(jpeg, packets, trailing);
-  return partner ? [out, buildFile(pj, ppk, ptr)] : out;
+  return others.length
+    ? [out, ...others.map(o => buildFile(o.jpeg, o.packets, o.trailing))]
+    : out;
 }
 
 window.TAMA = { describe, applyEdits, parseFile, buildFile };
@@ -2629,7 +2740,8 @@ const arrToB64 = u8 => { let s = ''; const C = 0x8000;
   for (let i = 0; i < u8.length; i += C) s += String.fromCharCode.apply(null, u8.subarray(i, i + C));
   return btoa(s); };
 async function apiParse(buf, partner) {
-  try { return TAMA.describe(new Uint8Array(buf), partner ? { partner } : {}); }
+  try { return TAMA.describe(new Uint8Array(buf),
+    (partner && partner.length) ? { partner } : {}); }
   catch (e) { return { error: String(e.message || e) }; }
 }
 async function apiBuild(payload) {
@@ -2637,7 +2749,8 @@ async function apiBuild(payload) {
   const edits = (payload.edits || []).map(e =>
     e.replace_b64 ? { ...e, replace_bytes: b64ToArray(e.replace_b64) } : e);
   const jpeg = payload.jpeg_b64 ? b64ToArray(payload.jpeg_b64) : null;
-  const partner = payload.partner_b64 ? b64ToArray(payload.partner_b64) : null;
+  const partner = payload.partners_b64 ? payload.partners_b64.map(b64ToArray)
+    : (payload.partner_b64 ? b64ToArray(payload.partner_b64) : null);
   return TAMA.applyEdits(data, edits, jpeg, partner);   // throws on bad input
 }
 </script>
@@ -2646,7 +2759,7 @@ const CHARS=['Mametchi','Rightchi','Knightchi','Takutotchi','Nandetchi','Kuchipa
 'Shirimotchi','Charatchi','Monakatchi','Mogumogutchi','Spacytchi','Karakutchi','Atchitchi','Yumemitchi',
 'Kiraritchi','Himespetchi','Warutsutchi','Amiamitchi','Memetchi','Chokomakatchi','Yukinkotchi','Hoshigalutchi',
 'Chouchoutchi','Harputchi','Patitchi','Kiramotchi','Furifuritchi','Amakutchi','Julietchi','Pekopekotchi'];
-let fileB64=null, partnerB64=null, doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
+let fileB64=null, partnerB64=[], doc=null, pk=null, flat=[], cur=0, palIdx=1, undoStack=[], drawing=false;
 
 const $=id=>document.getElementById(id);
 const toast=m=>{const t=$('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)};
@@ -2670,14 +2783,21 @@ $('fileInput').onchange=e=>{if(e.target.files[0])load(e.target.files[0])};
 function arrayToB64(u8){let s='';const CH=32768;for(let i=0;i<u8.length;i+=CH)s+=String.fromCharCode.apply(null,u8.subarray(i,i+CH));return btoa(s)}
 // re-parse with the VDP+ partner attached, keeping the current selection
 async function reparse(){
-  const j=await apiParse(b64ToArray(fileB64),
-    partnerB64?b64ToArray(partnerB64):null);
+  // merging parts re-unpacks the whole bundle; say so rather than looking
+  // frozen while it runs
+  const btn=$('vdpPartBtn'), was=btn.textContent;
+  btn.textContent='합치는 중…'; btn.disabled=true;
+  try{ return await reparseNow(); }
+  finally{ btn.textContent=was; btn.disabled=false; }
+}
+async function reparseNow(){
+  const j=await apiParse(b64ToArray(fileB64), partnerB64.map(b64ToArray));
   if(j.error){toast('파싱 실패: '+j.error);return}
   doc=j; showPackets(j);
 }
 async function load(f){
   const buf=await f.arrayBuffer();
-  partnerB64=null;
+  partnerB64=[];
   const j=await apiParse(buf);
   if(j.error){toast('파싱 실패: '+j.error);return}
   fileB64=arrayToB64(new Uint8Array(buf));
@@ -3124,14 +3244,27 @@ function renderVdp(){
   renderVdpChars();
   $('vdpCard').hidden=!rows.length;
   if(!rows.length)return;
+  $('vdpDestRow').hidden=(pk.vdp_dest_name==null);
+  if(pk.vdp_dest_name!=null)$('fVdpDest').value=pk.vdp_dest_name;
   $('vdpInfo').textContent=`— ${rows.length}개 (각각 편집 가능)`
     +(pk.vdp_merged?' · 짝 파일 합쳐서 읽음 (저장하면 두 파일)':'');
   // one download caps at 32,768 bytes, so a big bundle ships as a VDP+ in
   // parts; without the other part the stream runs out mid-content
-  $('vdpPartRow').hidden=!pk.vdp_truncated;
-  $('vdpPartNote').innerHTML=pk.vdp_truncated
-    ? '이 VDP는 <b>뒷부분이 잘려 있습니다</b> — VDP+ 멀티파트라 나머지가 다른 파일에 있습니다.'
-      +'<br>짝 파일을 불러오면 전체 내용물을 읽고 편집할 수 있습니다. 저장하면 두 파일로 나옵니다.'
+  // Offered for every VDP+ part 1, not just ones that read short: a
+  // bundle cut mid-stream can still end on a content whose checksum
+  // happens to be good, and then the loader never appeared.
+  $('vdpPartRow').hidden=!(pk.vdp_multipart||pk.vdp_truncated||partnerB64.length);
+  $('vdpPartNote').innerHTML=(pk.vdp_multipart||pk.vdp_truncated)
+    ? (pk.vdp_truncated
+        ? '이 VDP는 <b>뒷부분이 잘려 있습니다</b> — 나머지가 다른 파일에 있습니다.'
+        : '이 VDP는 <b>멀티파트(VDP+)</b>입니다.')
+      +'<br>2분할이면 파일 하나, 3분할이면 <b>둘 다</b> 불러오세요 (한 번에 여러 개 고를 수 있고, '
+      +'순서는 상관없습니다). 저장하면 파트 수만큼 파일이 나옵니다.'
+    : '';
+  $('vdpPartHave').innerHTML=partnerB64.length
+    ? `${partnerB64.length}개 불러옴`
+      +(pk.vdp_part_gap
+        ? ' · <b style="color:var(--accent)">중간 파트가 빠졌습니다</b>' : '')
     : '';
   $('vdpRows').innerHTML=rows.map(r=>`<tr class="pick" data-i="${r.index}">`
     +`<td class="nm">${r.name||'<span class="vdp-guess">(이름 없음)</span>'}</td>`
@@ -3243,8 +3376,11 @@ function drawAnim(){
   // body and the strip is the only place they are seen worn.  Accessories
   // do not -- their wear tiles show the same thing per pose, with the
   // coordinates attached.
+  // a VDP character body is kind 'fk' too, but its 28 frames are poses --
+  // slicing them as 4 sets of 7 clothes pieces is what made the composite
+  // look scrambled
   const strip=!!(pk&&pk.banks&&pk.banks.length&&!pk.is_wardrobe
-                 &&pk.kind==='fk'&&chara);
+                 &&pk.kind==='fk'&&!pk.pose_bank&&chara);
   $('stripRow').hidden=!strip;
   if(strip){
     if($('stripBody').value!==String(bodyType))$('stripBody').value=bodyType;
@@ -4193,10 +4329,18 @@ function renderCharStats(){
 // ---- packet swap: drop another .jpg's packet into this slot ----
 $('vdpPartBtn').onclick=()=>$('vdpPartInput').click();
 $('vdpPartInput').onchange=async e=>{
-  const f=e.target.files[0]; e.target.value=''; if(!f)return;
-  partnerB64=arrayToB64(new Uint8Array(await f.arrayBuffer()));
+  const files=[...e.target.files]; e.target.value=''; if(!files.length)return;
+  // parts may arrive in any order and one at a time; they are kept and the
+  // backend sorts them by the digit their name ends in
+  for(const f of files)
+    partnerB64.push(arrayToB64(new Uint8Array(await f.arrayBuffer())));
   await reparse();
-  toast(pk&&pk.vdp_merged?'짝 파일을 합쳐 읽었습니다':'짝 파일이 아닌 것 같습니다');
+  toast(!(pk&&pk.vdp_merged) ? 'VDP+ 파트가 아닌 것 같습니다'
+    : pk.vdp_part_gap
+      ? `${partnerB64.length}개 합쳤지만 중간 파트가 빠졌습니다 — 번호가 이어져야 합니다`
+    : pk.vdp_truncated
+      ? `${partnerB64.length}개 합쳤지만 아직 모자랍니다 — 나머지도 불러오세요`
+    : `나머지 ${partnerB64.length}개를 합쳐 전체를 읽었습니다`);
 };
 $('swapBtn').onclick=()=>$('swapInput').click();
 ['dragover','dragleave','drop'].forEach(ev=>$('swapRow').addEventListener(ev,e=>{
@@ -4381,6 +4525,10 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_stats)edit.char_stats=pk.char_stats;
   if(pk.version)edit.version=pk.version;
   const edits=[edit];
+  // the destination name lives in the packed payload, so it is addressed on
+  // the bundle rather than on any content
+  if(pk.vdp_dest_name!=null&&$('fVdpDest').value.trim()!==pk.vdp_dest_name)
+    edit.vdp_dest_name=$('fVdpDest').value.trim();
   // the ANSI number is one number living in two packets -- see charBodyNote
   if(pk.char_body){
     const body={path:pk.char_body.path, name:$('fBodyName').value.trim()};
@@ -4405,21 +4553,24 @@ $('saveBtn').onclick=async()=>{
   if(pk.char_extra&&pk.char_extra.acc_pos)edit.char_acc_pos=pk.char_extra.acc_pos;
   const payload={file_b64:fileB64,edits};
   if(newJpegB64)payload.jpeg_b64=newJpegB64;
-  if(partnerB64)payload.partner_b64=partnerB64;
+  if(partnerB64.length)payload.partners_b64=partnerB64;
   let built;
   try { built=await apiBuild(payload); }
   catch(err){ toast('저장 실패: '+err.message); return }
-  // a VDP+ is one bundle across two files, so it saves as a pair
-  if(partnerB64){
-    const j={part1_b64:arrayToB64(built[0]),part2_b64:arrayToB64(built[1])};
-    const stem=downloadStem()||'custom';
-    [[j.part1_b64,'-1-2'],[j.part2_b64,'-2-2']].forEach(([b,suf])=>{
+  // a VDP+ is one bundle across two or three files, so it saves as a set
+  if(partnerB64.length){
+    const j={parts_b64:built.map(arrToB64)};
+    // the name already ends in this file's part number (CIAO...1), and the
+    // suffix adds its own, so drop it rather than saving CIAO...1-1-3
+    const stem=(downloadStem()||'custom').replace(/\d$/,'')||'custom';
+    const n=j.parts_b64.length;
+    j.parts_b64.forEach((b,i)=>{
       const u8=Uint8Array.from(atob(b),c=>c.charCodeAt(0));
       const a=document.createElement('a');
       a.href=URL.createObjectURL(new Blob([u8]));
-      a.download=stem+suf+'_custom.jpg'; a.click();
+      a.download=`${stem}-${i+1}-${n}_custom.jpg`; a.click();
     });
-    toast('VDP+ 두 파일로 저장했습니다 — 기기에는 둘 다 넣어야 합니다');
+    toast(`VDP+ ${n}개 파일로 저장했습니다 — 기기에는 전부 넣어야 합니다`);
     return;
   }
   const blob=new Blob([built]);

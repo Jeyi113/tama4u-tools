@@ -254,11 +254,11 @@ def pack_lz(data):
     return bytes(out + b'\x00\x00')
 
 
-def repack_split(pkt, part2, data):
-    """Recompress an edited payload and cut it back across the two files."""
+def repack_split(pkt, parts, data):
+    """Recompress an edited payload and cut it back across the files."""
     kind = stream_start(bytes(pkt.raw))[0]
     stream = (pack_lz if kind == 'lz' else pack_rle)(data)
-    return split_parts(pkt, part2, stream)
+    return split_parts(pkt, parts, stream)
 
 
 def repack(pkt, data):
@@ -366,28 +366,50 @@ def stream_bytes(pkt):
     return raw[found[1]:len(raw) - 2]
 
 
-def split_parts(pkt, part2, stream):
-    """Cut a rebuilt stream back across the two files.
+def split_parts(pkt, parts, stream):
+    """Cut a rebuilt stream back across part 1 and its continuations.
 
-    Part 1 is always exactly 32,768 bytes -- the cap on one download -- so
-    it takes as much stream as fits and the rest goes to part 2.  Verified
-    on Easter, Fairytale and Farmer: with the checksums excluded and part 2
-    read from 0x108, all three come apart and back together with every
-    content checksum intact."""
-    r1, r2 = bytes(pkt.raw), bytes(part2.raw)
+    Every part but the last is filled to 32,768 bytes -- the cap on one
+    download -- and the remainder goes to the one after it.  Verified on
+    Easter, Fairytale and Farmer (two parts) and on the twelve three-part
+    bundles: with the checksums excluded and each continuation read from
+    0x108, they all come apart and back together with every content
+    checksum intact.
+
+    `parts` is the continuations in order, which is the order their names
+    end in (see `part_index`)."""
+    r1 = bytes(pkt.raw)
     head1 = stream_start(r1)[1]
-    cap1 = PART1_SIZE - head1 - 2
-    cap2 = PART1_SIZE - PART_STREAM - 2
-    if len(stream) > cap1 + cap2:
+    caps = [PART1_SIZE - head1 - 2]
+    caps += [PART1_SIZE - PART_STREAM - 2] * len(parts)
+    if len(stream) > sum(caps):
         raise ValueError(
-            f'스트림이 두 파일에 안 들어갑니다 ({len(stream)}B > {cap1 + cap2}B). '
-            '내용물을 줄이거나 3파트가 필요합니다.')
-    a, b = stream[:cap1], stream[cap1:]
-    out1 = bytearray(r1[:head1] + a + b'\x00\x00')
-    out2 = bytearray(r2[:PART_STREAM] + b + b'\x00\x00')
-    for buf in (out1, out2):
+            f'스트림이 {len(caps)}개 파일에 안 들어갑니다 '
+            f'({len(stream)}B > {sum(caps)}B). 내용물을 줄이거나 '
+            f'파트를 하나 더 만들어야 합니다.')
+    cuts, at = [], 0
+    for cap in caps:
+        cuts.append(stream[at:at + cap])
+        at += cap
+    outs = [bytearray(r1[:head1] + cuts[0] + b'\x00\x00')]
+    for part, chunk in zip(parts, cuts[1:]):
+        outs.append(bytearray(bytes(part.raw)[:PART_STREAM] + chunk + b'\x00\x00'))
+    for buf in outs:
         struct.pack_into('>H', buf, container.OFF_PACKET_SIZE, len(buf))
-    return bytes(out1), bytes(out2)
+    return [bytes(b) for b in outs]
+
+
+def part_index(pkt):
+    """Which part this is, from the digit its item name ends in.
+
+    All 21 bundles we have -- nine two-part and twelve three-part -- end
+    the name that way (`CIAO...1`, `CIAO...2`, `CIAO...3`), and the parts
+    have to be concatenated in that order: Ciao read 1+2+3 unpacks to 23
+    contents with every checksum good, while 1+3+2 gives 12."""
+    from . import charset
+    table = charset.load_table(model=pkt.model)
+    name = charset.decode(pkt.item_name_codes, table).rstrip('\u3000')
+    return int(name[-1]) if name and name[-1].isdigit() else None
 
 
 def _known_dests(model):
@@ -522,6 +544,8 @@ LOADING_DEST = '81010101'
 PART_DEST = '81092900'      # a VDP+ continuation rides the recipe shelf
 PART_NAME = 'DecoPierce'
 PART_STREAM = 0x108         # its header is loader boilerplate; data follows
+# a wearable clothes piece never exceeds 24 rows; the shortest pose is 36
+POSE_MIN_HEIGHT = 30
 PART1_SIZE = 32768          # a download caps here, and part 1 always fills it
 STUB_MAX = 0x200            # a slot this small holds nothing but a 2x2 dummy
 
@@ -543,6 +567,12 @@ STUB_MAX = 0x200            # a slot this small holds nothing but a 2x2 dummy
 #
 # The count itself ('three times') reads the same in every release, so
 # nothing in the block can be pinned to it yet.
+# The name the bundle shows as its download destination -- CIAO, EASTER,
+# DISNEY, CAVEMAN... -- eight one-byte codes at the very front of the
+# unpacked payload, right before the character blocks.  Checked against the
+# pierce it belongs to on every bundle that unpacks.
+DEST_NAME, DEST_NAME_LEN = 0x0A, 8
+
 CHAR_BLOCK, CHAR_STRIDE = 0x20, 0x180
 CHAR_COUNT_AT = 0x1B
 CH_ID, CH_GENDER, CH_MONTH, CH_DAY = 0x00, 0x02, 0x18, 0x19
@@ -556,6 +586,18 @@ CH_ITEM, CH_LINES, CH_NAME = 0x28, 0x2A, 0xBA
 CH_PAIR_A, CH_PAIR_B = 0x1C, 0x20
 CH_LINE_LEN, CH_LINES_N, CH_NAME_LEN = 0x18, 6, 14
 GENDER = {0: 'Boy', 1: 'Girl'}
+
+
+def dest_name(data, model="P's"):
+    """The destination name at the front of the unpacked payload."""
+    table = charset.load_table(model=model)
+    codes = list(data[DEST_NAME:DEST_NAME + DEST_NAME_LEN])
+    return charset.decode(codes, table).rstrip('\u3000')
+
+
+def write_dest_name(data, text, model="P's"):
+    charset.write_text(data, DEST_NAME, DEST_NAME_LEN, text,
+                       charset.load_table(model=model), 1)
 
 
 def char_blocks(data, model="P's"):
@@ -624,16 +666,47 @@ def _put_text(data, off, slots, text, table):
 
 
 def is_char_content(sub):
-    """A raisable character, as opposed to a dress on the same shelf.
+    """A character body, as opposed to a dress on the same shelf.
 
-    Size is the test, not the code: the Easter bundle puts an 8,824-byte
-    change dress on the clothes shelf, priced 1,200, while every raisable
-    character in every bundle is exactly 14,664 bytes.  The character
-    contents also come in the same order as the header's blocks -- checked
-    by name across all 14 bundles -- which is what ties one to the other.
-    """
+    Both sit on the clothes destination, and the sprite bank tells them
+    apart: a body is 28 *poses* (30x36 up to 44x52) while a dress is 28
+    wearable *pieces*, none taller than 24.  The Easter bundle carries one
+    of each -- three 14,664-byte bodies with frames up to 52, and an
+    8,824-byte change dress topping out at 24, priced 1,200 against their 0.
+
+    Size used to be the test, at a flat 14,664.  That came from surveying
+    the two-part bundles only, because the twelve three-part ones could not
+    be opened yet; their change bodies are 12,856 and were being read as
+    dresses, which put 28 tall poses through the clothes composite.
+
+    Either way the contents come in the same order as the header's blocks,
+    which is what ties one to the other -- Ciao's ten blocks line up with
+    its ten change bodies by name."""
     dest = bytes(sub.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex()
-    return dest == CHAR_DEST and sub.size == CHAR_SIZE
+    if dest != CHAR_DEST:
+        return False
+    try:
+        frames, _end = sprites.parse_bank(sub.raw, items.bank_offset(sub))
+    except Exception:
+        return sub.size == CHAR_SIZE        # unreadable bank: fall back
+    return bool(frames) and max(f.height for f in frames) > POSE_MIN_HEIGHT
+
+
+# The transformation destination ships as four contents whose names end in
+# H1..H4, each on a shop code that means something else.  UJ named them:
+# H1 the character who appears there (two poses), H2 the outside view, H3
+# the inside, H4 the frames the transformation animates through.  Ciao also
+# carries an S1/S2 pair on the same shape.
+OUTING_PARTS = {'1': '변신장 · 등장 캐릭터', '2': '변신장 · 바깥',
+                '3': '변신장 · 내부', '4': '변신장 · 변신 애니메이션'}
+
+
+def _outing_part(sub):
+    """'변신장 · ...' when this content is one of the H1-H4 set."""
+    name = charset.decode(sub.item_name_codes,
+                          charset.load_table(model=sub.model)).rstrip('\u3000')
+    m = re.search(r'H([1-4])$', name)
+    return OUTING_PARTS.get(m.group(1)) if m else None
 
 
 def content_label(sub, plain):
@@ -654,6 +727,9 @@ def content_label(sub, plain):
     dest = bytes(sub.raw[items.OFF_DEST:items.OFF_DEST + 4]).hex()
     if dest == CHAR_DEST:
         return '캐릭터 (육성)' if is_char_content(sub) else '타마모리 · 옷 (변신)'
+    part = _outing_part(sub)
+    if part:
+        return part
     if dest == ICON_DEST:
         return '메뉴 아이콘 세트'
     if dest == LOADING_DEST:

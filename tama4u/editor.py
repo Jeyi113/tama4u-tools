@@ -73,15 +73,47 @@ def _find(packets, path):
     return pkt
 
 
+def _partner_packets(partners):
+    """Continuations in the order their names end in, and their streams.
+
+    A VDP+ ships in two or three files; the stream is one run split across
+    them, so it only unpacks when they are concatenated in part order --
+    Ciao read 1+2+3 gives 23 contents with every checksum good, 1+3+2 gives
+    12.  Files handed over in any order are sorted here."""
+    parsed = []
+    for raw in partners or []:
+        pj, ppk, pt = container.parse_file(raw)
+        if vdp.is_part(ppk[0]):
+            parsed.append((vdp.part_index(ppk[0]) or 99, pj, ppk, pt))
+    parsed.sort(key=lambda x: x[0])
+    return [(pj, ppk, pt) for _i, pj, ppk, pt in parsed]
+
+
+def _part_gap(others):
+    """True when the continuations skip a number.
+
+    `others` is what _partner_packets already returned -- reparsing them
+    here would double the work on every keystroke-driven reparse.
+
+    Part 1 is the file being edited, so the rest should be 2, 3, ...  A
+    hole is worth naming because the truncation check can miss it: Ciao
+    read as 1+3 stops at 12 contents but the last one's checksum happens to
+    be good, so nothing else says the bundle is incomplete."""
+    idx = sorted(vdp.part_index(ppk[0]) or 0 for _pj, ppk, _pt in others)
+    return idx != list(range(2, 2 + len(idx)))
+
+
 def describe(data, partner=None):
-    """`partner` is the other half of a VDP+ -- its stream is appended so the
-    bundle unpacks whole."""
+    """`partner` is the rest of a VDP+ -- one continuation or a list of
+    them.  Their streams are appended so the bundle unpacks whole."""
     jpeg, packets, trailing = container.parse_file(data)
     extra = b''
-    if partner:
-        _, ppk, _ = container.parse_file(partner)
-        if vdp.is_part(ppk[0]):
-            extra = vdp.part_stream(ppk[0])
+    if partner is not None and not isinstance(partner, (list, tuple)):
+        partner = [partner]
+    others = _partner_packets(partner)
+    for _pj, ppk, _pt in others:
+        extra += vdp.part_stream(ppk[0])
+    part_gap = _part_gap(others)
     out = {'jpeg_b64': base64.b64encode(jpeg).decode(), 'packets': []}
     for path, pkt in _iter_packets(packets, extra):
         table = charset.load_table(model=pkt.model)
@@ -126,6 +158,10 @@ def describe(data, partner=None):
                         and (items.effective_kind(pkt) in items.BANK_OFFSETS
                              or pkt.model != '4U')),
         }
+        # a VDP character body sits on the clothes shelf and reads as kind
+        # 'fk', but its 28 frames are poses, not wearable pieces -- the
+        # body-type composite would slice them as 4 sets of 7
+        info['pose_bank'] = vdp.is_char_content(pkt) if 'vdp' in path else False
         if pkt.model == 'iD':
             info['version'] = items.get_version(pkt)
             info['version_presets'] = items.VERSION_PRESETS
@@ -354,6 +390,13 @@ def describe(data, partner=None):
             got = vdp.sub_packets(pkt, extra)
             info['vdp_truncated'] = vdp.truncated(pkt, extra)
             info['vdp_merged'] = bool(extra)
+            info['vdp_part_gap'] = part_gap
+            # A VDP+ part 1 is a bundle whose item name ends in a digit --
+            # true of all 20 VDP+ releases and of none of the 50 plain
+            # pierces (VDP*NNN*).  The truncation check alone is not enough
+            # to offer the loader: a bundle read short can still end on a
+            # content whose checksum happens to be good.
+            info['vdp_multipart'] = vdp.part_index(pkt) is not None
             info['vdp'] = [] if got is None else [
                 {'index': k,
                  'name': charset.decode(sub.item_name_codes,
@@ -370,6 +413,7 @@ def describe(data, partner=None):
             if got is not None:
                 # the raising conditions, from the payload's 4 KB prefix
                 where = {sub.serial: k for k, sub in enumerate(got[2])}
+                info['vdp_dest_name'] = vdp.dest_name(got[0], model=pkt.model)
                 info['vdp_chars'] = [
                     dict(c, item_index=where.get(c['item_serial']))
                     for c in vdp.char_blocks(got[0], model=pkt.model)]
@@ -522,15 +566,14 @@ def _resize_banks(packets, edits):
     return delta
 
 def apply_edits(data, edits, new_jpeg=None, partner=None):
-    """`partner` is a VDP+ continuation; with it, edits reach the whole
-    bundle and the result comes back as (part 1, part 2)."""
+    """`partner` is a VDP+'s continuations -- one file or a list.  With
+    them, edits reach the whole bundle and the result comes back as a list
+    of files, part 1 first."""
     jpeg, packets, trailing = container.parse_file(data)
-    pjpeg = ppk = ptrail = None
-    extra = b''
-    if partner:
-        pjpeg, ppk, ptrail = container.parse_file(partner)
-        if vdp.is_part(ppk[0]):
-            extra = vdp.part_stream(ppk[0])
+    if partner is not None and not isinstance(partner, (list, tuple)):
+        partner = [partner]
+    others = _partner_packets(partner)
+    extra = b''.join(vdp.part_stream(ppk[0]) for _pj, ppk, _pt in others)
     # packet swaps first: they rebuild Packet objects the later edits use
     swaps = [e for e in edits
              if (e.get('replace_b64') or e.get('convert'))
@@ -576,15 +619,21 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
     # bundle, apply everything, then rebuild the stream once.  The
     # raising conditions sit in the same payload, so they ride along
     # rather than costing a second unpack-repack.
-    groups = collections.defaultdict(lambda: ([], []))
+    groups = collections.defaultdict(lambda: ([], [], []))
     for edit in edits:
         path = list(edit['path'])
+        placed = False
         for step, bucket in (('vdp', 0), ('vdpchar', 1)):
             if step in path:
                 k = path.index(step)
                 groups[tuple(path[:k])][bucket].append((path[k + 1], edit))
+                placed = True
                 break
-    for top, (jobs, charjobs) in groups.items():
+        # the destination name lives in the payload, not in the packet, so
+        # it has to ride the same unpack even when nothing else changed
+        if not placed and edit.get('vdp_dest_name') is not None:
+            groups[tuple(path)][2].append(edit)
+    for top, (jobs, charjobs, namejobs) in groups.items():
         pkt = _find(packets, list(top))
         got = vdp.sub_packets(pkt, extra)
         if got is None:
@@ -611,23 +660,36 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
             _apply_fields(subs[idx], edit)
         for idx, edit in charjobs:
             vdp.write_char_block(payload, idx, edit, model=pkt.model)
+        for edit in namejobs:
+            vdp.write_dest_name(payload, edit['vdp_dest_name'], model=pkt.model)
         before = pkt.size
         if extra:
             # split back across the pair: part 1 fills to 32,768 bytes and
             # the rest goes to the continuation
             blob = vdp.assemble(payload, base, subs)
-            a, b = vdp.repack_split(pkt, ppk[0], blob)
-            pkt.raw[:] = bytearray(a)
-            ppk[0].raw[:] = bytearray(b)
+            cuts = vdp.repack_split(pkt, [o[1][0] for o in others], blob)
+            pkt.raw[:] = bytearray(cuts[0])
+            for (_pj, opk, _pt), chunk in zip(others, cuts[1:]):
+                opk[0].raw[:] = bytearray(chunk)
         else:
             pkt.raw[:] = bytearray(vdp.write_subs(pkt, payload, base, subs))
         # the whole file's declared size follows the packet's
         for q in packets:
             q.shift_declared_size(pkt.size - before)
     out = container.build_file(jpeg, packets, trailing)
-    if partner:
-        return out, container.build_file(pjpeg, ppk, ptrail)
+    if others:
+        return [out] + [container.build_file(pj, opk, pt)
+                        for pj, opk, pt in others]
     return out
+
+
+def _partners_from(req):
+    """`partner_b64` (one) or `partners_b64` (several), decoded."""
+    many = req.get('partners_b64')
+    if many:
+        return [base64.b64decode(b) for b in many]
+    one = req.get('partner_b64')
+    return [base64.b64decode(one)] if one else None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -707,8 +769,7 @@ class Handler(BaseHTTPRequestHandler):
                 if body[:1] == b'{':
                     req = json.loads(body)
                     data = base64.b64decode(req['file_b64'])
-                    pb = req.get('partner_b64')
-                    out = describe(data, base64.b64decode(pb) if pb else None)
+                    out = describe(data, _partners_from(req))
                 else:
                     out = describe(body)
                 self._send(200, json.dumps(out).encode())
@@ -748,16 +809,14 @@ class Handler(BaseHTTPRequestHandler):
                 req = json.loads(body)
                 data = base64.b64decode(req['file_b64'])
                 nj = req.get('jpeg_b64')
-                pb = req.get('partner_b64')
+                parts_in = _partners_from(req)
                 built = apply_edits(data, req['edits'],
                                     base64.b64decode(nj) if nj else None,
-                                    base64.b64decode(pb) if pb else None)
-                if pb:
-                    # a VDP+ comes back as a pair
-                    built, second = built
-                    self._send(200, json.dumps({
-                        'part1_b64': base64.b64encode(built).decode(),
-                        'part2_b64': base64.b64encode(second).decode()}).encode())
+                                    parts_in)
+                if isinstance(built, list):
+                    # a VDP+ comes back as the whole set, part 1 first
+                    self._send(200, json.dumps({'parts_b64': [
+                        base64.b64encode(b).decode() for b in built]}).encode())
                     return
                 # sanity: no packet may come out worse than it went in.
                 # A few retail files ship a stale nested checksum, so

@@ -429,28 +429,42 @@ export function vdpPartStream(p) {
   return p.raw.slice(VDP_PART_STREAM, p.raw.length - 2);
 }
 
-// Part 1 is always exactly 32,768 bytes, so it takes as much stream as fits
-// and the rest goes to part 2.
-export function vdpSplitParts(p, part2, stream) {
+// Every part but the last is filled to 32,768 bytes -- the cap on one
+// download -- and the remainder goes to the one after it.  `parts` is the
+// continuations in order (see vdpPartIndex).
+export function vdpSplitParts(p, parts, stream) {
   const head1 = vdpStreamStart(p.raw)[1];
-  const cap1 = VDP_PART1_SIZE - head1 - 2;
-  const cap2 = VDP_PART1_SIZE - VDP_PART_STREAM - 2;
-  if (stream.length > cap1 + cap2)
-    throw new Error(`스트림이 두 파일에 안 들어갑니다 (${stream.length}B > ${cap1 + cap2}B)`);
+  const caps = [VDP_PART1_SIZE - head1 - 2];
+  for (let i = 0; i < parts.length; i++) caps.push(VDP_PART1_SIZE - VDP_PART_STREAM - 2);
+  const total = caps.reduce((a, b) => a + b, 0);
+  if (stream.length > total)
+    throw new Error(`스트림이 ${caps.length}개 파일에 안 들어갑니다 (${stream.length}B > ${total}B)`);
   const mk = (head, body) => {
     const out = new Uint8Array(head.length + body.length + 2);
     out.set(head, 0); out.set(body, head.length);
     putU16(out, OFF_PACKET_SIZE, out.length);
     return out;
   };
-  return [mk(p.raw.slice(0, head1), stream.slice(0, cap1)),
-          mk(part2.raw.slice(0, VDP_PART_STREAM), stream.slice(cap1))];
+  const cuts = []; let at = 0;
+  for (const cap of caps) { cuts.push(stream.slice(at, at + cap)); at += cap; }
+  const outs = [mk(p.raw.slice(0, head1), cuts[0])];
+  parts.forEach((q, i) => outs.push(mk(q.raw.slice(0, VDP_PART_STREAM), cuts[i + 1])));
+  return outs;
 }
 
-export function vdpRepackSplit(p, part2, data) {
+// Which part this is, from the digit its item name ends in -- all 21
+// bundles we have end the name that way, and the streams only concatenate
+// in that order.
+export function vdpPartIndex(p) {
+  const name = decode(p.itemNameCodes, tableFor(p.model)).replace(/[　\s]+$/, '');
+  const last = name.slice(-1);
+  return /[0-9]/.test(last) ? +last : null;
+}
+
+export function vdpRepackSplit(p, parts, data) {
   const kind = vdpStreamStart(p.raw)[0];
   const stream = (kind === 'lz' ? vdpPackLz : vdpPackRle)(data);
-  return vdpSplitParts(p, part2, stream);
+  return vdpSplitParts(p, parts, stream);
 }
 const hex4 = b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
 export const isVdp = p =>
@@ -662,6 +676,17 @@ export function vdpRepack(p, data) {
 // packet, and the raising conditions live there -- one block per raisable
 // character, 0x180 apart, starting at 0x20.  See tama4u/vdp.py for the
 // field map and how each one was pinned.
+// The name the bundle shows as its download destination -- CIAO, EASTER,
+// DISNEY, CAVEMAN -- eight one-byte codes at the front of the payload.
+const VDP_DEST_NAME = 0x0a, VDP_DEST_NAME_LEN = 8;
+export function vdpDestName(data, model = "P's") {
+  return decode(Array.from(data.slice(VDP_DEST_NAME, VDP_DEST_NAME + VDP_DEST_NAME_LEN)),
+                tableFor(model)).replace(/[　\s]+$/, '');
+}
+export function vdpWriteDestName(data, text, model = "P's") {
+  writeText(data, VDP_DEST_NAME, VDP_DEST_NAME_LEN, text, model, 1);
+}
+
 const VDP_CHAR_BLOCK = 0x20, VDP_CHAR_STRIDE = 0x180, VDP_CHAR_COUNT_AT = 0x1B;
 const VC_ID = 0x00, VC_GENDER = 0x02, VC_MONTH = 0x18, VC_DAY = 0x19;
 const VC_ITEM = 0x28, VC_LINES = 0x2A, VC_NAME = 0xBA;
@@ -756,15 +781,40 @@ export function outingCast(p) {
            paired: best[1] % 2 === 0 };
 }
 
+// A character body, as opposed to a dress on the same shelf.  The sprite
+// bank tells them apart: a body is 28 poses (up to 44x52) while a dress is
+// 28 wearable pieces, none taller than 24.  Size used to be the test at a
+// flat 14,664, which came from the two-part bundles alone -- the three-part
+// ones carry 12,856-byte change bodies that were read as dresses.
+const VDP_POSE_MIN_HEIGHT = 30;
 export function vdpIsCharContent(sub) {
-  return hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) === VDP_CHAR_DEST
-    && sub.size === VDP_CHAR_SIZE;
+  if (hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4)) !== VDP_CHAR_DEST) return false;
+  try {
+    const { frames } = parseBank(sub.raw, bankOffset(sub));
+    return frames.length > 0
+      && Math.max(...frames.map(f => f.h)) > VDP_POSE_MIN_HEIGHT;
+  } catch (e) {
+    return sub.size === VDP_CHAR_SIZE;      // unreadable bank: fall back
+  }
+}
+
+// The transformation destination ships as four contents whose names end in
+// H1..H4: H1 the character who appears there, H2 the outside view, H3 the
+// inside, H4 the frames the transformation animates through.
+const VDP_OUTING_PARTS = { 1: '변신장 · 등장 캐릭터', 2: '변신장 · 바깥',
+                           3: '변신장 · 내부', 4: '변신장 · 변신 애니메이션' };
+function vdpOutingPart(sub) {
+  const name = decode(sub.itemNameCodes, tableFor(sub.model)).replace(/[　\s]+$/, '');
+  const m = /H([1-4])$/.exec(name);
+  return m ? VDP_OUTING_PARTS[+m[1]] : null;
 }
 
 export function vdpContentLabel(sub, plain) {
   const dest = hex4(sub.raw.slice(OFF_DEST, OFF_DEST + 4));
   if (dest === VDP_CHAR_DEST)
     return vdpIsCharContent(sub) ? '캐릭터 (육성)' : '타마모리 · 옷 (변신)';
+  const part = vdpOutingPart(sub);
+  if (part) return part;
   if (dest === VDP_ICON_DEST) return '메뉴 아이콘 세트';
   if (dest === VDP_LOADING_DEST) return '로딩 아이콘';
   if (sub.size <= VDP_STUB_MAX) return `빈 슬롯 (${plain})`;
