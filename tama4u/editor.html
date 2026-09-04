@@ -355,6 +355,17 @@
     <div style="margin:-4px 0 10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
       <label style="margin:0;display:flex;gap:4px;align-items:center;font-size:12px;color:var(--ink)">
         <input type="checkbox" id="gridChk" style="width:auto" checked> 그리드</label>
+      <span class="seg" id="toolSeg" style="display:inline-flex;width:auto">
+        <button type="button" class="on" data-tool="draw" title="그리기">✎ 그리기</button>
+        <button type="button" data-tool="select" title="사각형 드래그로 선택(여러 번 드래그하면 합쳐짐)">▦ 선택</button>
+        <button type="button" data-tool="move" title="선택 영역을 드래그로 옮기기">✥ 이동</button>
+      </span>
+      <span id="selTools" hidden style="display:inline-flex;gap:2px;align-items:center">
+        <button class="btn" id="selCopy" title="복사 (Ctrl+C)">복사</button>
+        <button class="btn" id="selCut" title="잘라내기 (Ctrl+X)">잘라내기</button>
+        <button class="btn" id="selClear" title="선택 해제">선택 해제</button>
+      </span>
+      <button class="btn" id="selPaste" hidden title="붙여넣기 (Ctrl+V)">붙여넣기</button>
       <span style="display:inline-flex;gap:2px;align-items:center;font-size:12px;color:var(--ink)">
         옮기기
         <button class="btn nudge" data-dx="-1" data-dy="0" title="왼쪽으로 1px">←</button>
@@ -763,6 +774,7 @@ function selectPacket(path){
   $('transHint').textContent=isOpaque()?'배경(방)은 불투명 — 팔레트 0번도 일반 색.':'팔레트 0번(T)은 투명색.';
   $('canvasWrap').classList.toggle('opaque',isOpaque());
   $('bankInfo').textContent=(pk.banks&&pk.banks.length>1)?`— 뱅크 ${pk.banks.length}개 발견 (프로그램 내장 스프라이트 포함)`:'';
+  selMask=null;selRectPreview=null;refreshSelTools();
   if(flat.length){cur=0;animIdx=0;undoStack=[];renderTabs();renderFrame();animStart()}
   else {animStop();$('stripRow').hidden=true;$('animRow').style.display='none'}
   simStep=0; renderAccGrid();
@@ -781,7 +793,8 @@ function renderTabs(){
     const b=document.createElement('button');
     b.textContent=`${e.idx+1} (${e.frame.w}×${e.frame.h})`;
     b.className=i===cur?'on':'';
-    b.onclick=()=>{cur=i;undoStack=[];renderTabs();renderFrame()};
+    b.onclick=()=>{cur=i;undoStack=[];selMask=null;selRectPreview=null;
+      renderTabs();renderFrame();refreshSelTools()};
     el.appendChild(b);
   });
 }
@@ -817,7 +830,38 @@ function renderFrame(){
     for(let x=0;x<=f.w;x++){g.beginPath();g.moveTo(x*sc+.5,0);g.lineTo(x*sc+.5,f.h*sc);g.stroke()}
     for(let y=0;y<=f.h;y++){g.beginPath();g.moveTo(0,y*sc+.5);g.lineTo(f.w*sc,y*sc+.5);g.stroke()}
   }
+  drawSelection(g, f, sc);
+  drawMarquee(g, sc);
   renderPal();
+}
+// the selection lives per frame; drop it when the frame's size no longer
+// matches so it never leaks onto a differently-shaped one
+function selValid(f){return selMask&&f&&selMask.length===f.w*f.h}
+function drawSelection(g, f, sc){
+  if(!selValid(f))return;
+  g.fillStyle='rgba(232,86,74,.28)';
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++)
+    if(selMask[y*f.w+x])g.fillRect(x*sc,y*sc,sc,sc);
+  // a dashed hull around every selected cell's outer edges
+  g.strokeStyle='#e8564a'; g.lineWidth=1; g.setLineDash([3,2]);
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+    if(!selMask[y*f.w+x])continue;
+    const at=(xx,yy)=>xx<0||yy<0||xx>=f.w||yy>=f.h?0:selMask[yy*f.w+xx];
+    if(!at(x,y-1)){g.beginPath();g.moveTo(x*sc,y*sc+.5);g.lineTo((x+1)*sc,y*sc+.5);g.stroke()}
+    if(!at(x,y+1)){g.beginPath();g.moveTo(x*sc,(y+1)*sc-.5);g.lineTo((x+1)*sc,(y+1)*sc-.5);g.stroke()}
+    if(!at(x-1,y)){g.beginPath();g.moveTo(x*sc+.5,y*sc);g.lineTo(x*sc+.5,(y+1)*sc);g.stroke()}
+    if(!at(x+1,y)){g.beginPath();g.moveTo((x+1)*sc-.5,y*sc);g.lineTo((x+1)*sc-.5,(y+1)*sc);g.stroke()}
+  }
+  g.setLineDash([]);
+}
+function drawMarquee(g, sc){
+  if(!selRectPreview)return;
+  const [a,b]=selRectPreview;
+  const x0=Math.min(a.x,b.x), y0=Math.min(a.y,b.y);
+  const w=Math.abs(a.x-b.x)+1, h=Math.abs(a.y-b.y)+1;
+  g.strokeStyle='#e8564a'; g.lineWidth=1; g.setLineDash([4,3]);
+  g.strokeRect(x0*sc+.5, y0*sc+.5, w*sc-1, h*sc-1);
+  g.setLineDash([]);
 }
 function paletteUse(f){                 // how many pixels use each index
   const n=new Array(f.palette.length).fill(0);
@@ -901,16 +945,123 @@ function pixAt(e){
   const x=Math.floor((e.clientX-r.left)/sc), y=Math.floor((e.clientY-r.top)/sc);
   return (x>=0&&y>=0&&x<f.w&&y<f.h)?{x,y,f}:null;
 }
+// ---- selection / move / clipboard ----
+let frameTool='draw', selMask=null, clip=null, selRectPreview=null;
+function setTool(t){
+  frameTool=t;
+  [...$('toolSeg').children].forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
+  $('cv').style.cursor = t==='draw'?'crosshair' : t==='move'?'move':'cell';
+}
+[...$('toolSeg').children].forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+function refreshSelTools(){
+  const has=selValid(curFrame());
+  $('selTools').hidden=!has;
+  $('selPaste').hidden=!clip;
+}
+function clearSel(){selMask=null;renderFrame();refreshSelTools()}
+// which pixel the pointer is over, clamped so a drag off-canvas still ends
+function pixClamp(e){
+  const f=curFrame(), sc=scaleFor(f), r=$('cv').getBoundingClientRect();
+  return {f, x:Math.max(0,Math.min(f.w-1,Math.floor((e.clientX-r.left)/sc))),
+             y:Math.max(0,Math.min(f.h-1,Math.floor((e.clientY-r.top)/sc)))};
+}
+function snapshot(){const f=curFrame();
+  undoStack.push(f.pixels.slice());if(undoStack.length>50)undoStack.shift();}
+
 $('cv').addEventListener('contextmenu',e=>{
   e.preventDefault();const p=pixAt(e);if(p){palIdx=p.f.pixels[p.y*p.f.w+p.x];renderPal()}
 });
 $('cv').addEventListener('mousedown',e=>{
-  if(e.button!==0)return;const p=pixAt(e);if(!p)return;
-  undoStack.push(p.f.pixels.slice());if(undoStack.length>50)undoStack.shift();
-  drawing=true;paint(e);
+  if(e.button!==0)return;
+  const f=curFrame(); if(!f)return;
+  if(frameTool==='draw'){
+    const p=pixAt(e); if(!p)return;
+    snapshot(); drawing=true; paint(e); return;
+  }
+  if(frameTool==='select'){                 // drag a rectangle, union it in
+    const a=pixClamp(e);
+    const move=ev=>{selRectPreview=[a,pixClamp(ev)];renderFrame()};
+    const up=ev=>{
+      const b=pixClamp(ev);
+      if(!selValid(f))selMask=new Uint8Array(f.w*f.h);
+      const [x0,x1]=[Math.min(a.x,b.x),Math.max(a.x,b.x)];
+      const [y0,y1]=[Math.min(a.y,b.y),Math.max(a.y,b.y)];
+      for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)selMask[y*f.w+x]=1;
+      selRectPreview=null; renderFrame(); refreshSelTools();
+      window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up);
+    };
+    window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+    return;
+  }
+  if(frameTool==='move'){                    // drag the selected pixels
+    if(!selValid(f))return;
+    const start=pixClamp(e);
+    const base=f.pixels.slice(), mask0=selMask.slice();
+    snapshot();
+    const move=ev=>{
+      const c=pixClamp(ev), dx=c.x-start.x, dy=c.y-start.y;
+      const out=f.pixels.slice(), nm=new Uint8Array(f.w*f.h);
+      // clear the moved cells at their origin (to index 0)
+      for(let i=0;i<mask0.length;i++)if(mask0[i])out[i]=0;
+      for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
+        if(!mask0[y*f.w+x])continue;
+        const nx=x+dx, ny=y+dy; if(nx<0||ny<0||nx>=f.w||ny>=f.h)continue;
+        out[ny*f.w+nx]=base[y*f.w+x]; nm[ny*f.w+nx]=1;
+      }
+      f.pixels=out; selMask=nm; renderFrame();
+    };
+    const up=()=>{drawSim();if(!animTimer)drawAnim();
+      window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up)};
+    window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+    return;
+  }
 });
 window.addEventListener('mouseup',()=>drawing=false);
-$('cv').addEventListener('mousemove',e=>{if(drawing)paint(e)});
+$('cv').addEventListener('mousemove',e=>{if(drawing&&frameTool==='draw')paint(e)});
+
+// copy stores colours (RGB), not indices, so a paste survives a different
+// palette on the target frame
+function selCopy(){
+  const f=curFrame(); if(!selValid(f))return false;
+  let x0=1e9,y0=1e9,x1=-1,y1=-1;
+  for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++)if(selMask[y*f.w+x]){
+    x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y);}
+  if(x1<0)return false;
+  const cells=[];
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++)if(selMask[y*f.w+x]){
+    const v=f.pixels[y*f.w+x];
+    cells.push({dx:x-x0, dy:y-y0, rgb:f.palette[v]||[0,0,0], t:v===0&&!frOpaque(f)});
+  }
+  clip={w:x1-x0+1, h:y1-y0+1, cells};
+  refreshSelTools(); return true;
+}
+function colorIndex(f, rgb){                 // nearest existing, else add
+  let best=0, bd=1e9;
+  f.palette.forEach((c,i)=>{const d=(c[0]-rgb[0])**2+(c[1]-rgb[1])**2+(c[2]-rgb[2])**2;
+    if(d<bd){bd=d;best=i}});
+  if(bd===0||f.palette.length>=16||flat[cur].loose)return best;
+  f.palette.push(snap565(rgb)); return f.palette.length-1;
+}
+function selPaste(){
+  const f=curFrame(); if(!clip)return;
+  snapshot();
+  // drop it a few px in from the top-left, then leave it selected so 이동
+  // can reposition it right away
+  const ox=2, oy=2, nm=new Uint8Array(f.w*f.h);
+  clip.cells.forEach(c=>{
+    if(c.t)return;                           // transparent cells don't stamp
+    const x=ox+c.dx, y=oy+c.dy; if(x<0||y<0||x>=f.w||y>=f.h)return;
+    f.pixels[y*f.w+x]=colorIndex(f, c.rgb); nm[y*f.w+x]=1;
+  });
+  selMask=nm; setTool('move'); renderFrame(); refreshSelTools();
+  toast('붙여넣었습니다 — 이동 도구로 옮기세요');
+}
+$('selCopy').onclick=()=>{if(selCopy())toast('복사했습니다')};
+$('selCut').onclick=()=>{if(!selCopy())return; snapshot();
+  const f=curFrame(); for(let i=0;i<selMask.length;i++)if(selMask[i])f.pixels[i]=0;
+  clearSel(); drawSim(); if(!animTimer)drawAnim(); toast('잘라냈습니다')};
+$('selClear').onclick=clearSel;
+$('selPaste').onclick=selPaste;
 function paint(e){
   const p=pixAt(e);if(!p)return;
   p.f.pixels[p.y*p.f.w+p.x]=palIdx;
@@ -947,11 +1098,19 @@ document.querySelectorAll('.nudge').forEach(b=>{
 });
 const ARROWS={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
 window.addEventListener('keydown',e=>{
+  const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
   if((e.metaKey||e.ctrlKey)&&e.key==='z'&&undoStack.length){
-    e.preventDefault();curFrame().pixels=undoStack.pop();renderFrame();drawSim();return;
+    e.preventDefault();curFrame().pixels=undoStack.pop();selMask=null;
+    renderFrame();drawSim();refreshSelTools();return;
   }
-  if(ARROWS[e.key]&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&curFrame()
-     &&!/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)){
+  if((e.metaKey||e.ctrlKey)&&!typing&&curFrame()){
+    const k=e.key.toLowerCase();
+    if(k==='c'&&selValid(curFrame())){e.preventDefault();if(selCopy())toast('복사했습니다');return}
+    if(k==='x'&&selValid(curFrame())){e.preventDefault();$('selCut').onclick();return}
+    if(k==='v'&&clip){e.preventDefault();selPaste();return}
+  }
+  if(e.key==='Escape'&&selValid(curFrame())){clearSel();return}
+  if(ARROWS[e.key]&&!e.metaKey&&!e.ctrlKey&&!e.altKey&&curFrame()&&!typing){
     e.preventDefault(); nudge(...ARROWS[e.key]);
   }
 });

@@ -13,8 +13,9 @@ import { CHARSET } from './charset-data.js';
 // 0x61 is a heart; the harvested table spells it '▽' because that was the
 // nearest character to pin it to.  Show it as a heart and take one as input
 // (see tama4u/charset.py).
-const GLYPH_FIX = { '▽': '♥' };
-const GLYPH_ALIAS = { '▽': '♥', '♡': '♥', '❤': '♥', '❥': '♥' };
+const GLYPH_FIX = { '▽': '♥', '◎': '☀' };
+const GLYPH_ALIAS = { '▽': '♥', '♡': '♥', '❤': '♥', '❥': '♥',
+                      '◎': '☀', '☼': '☀' };
 for (const table of Object.values(CHARSET))
   for (const code of Object.keys(table))
     if (GLYPH_FIX[table[code]]) table[code] = GLYPH_FIX[table[code]];

@@ -153,10 +153,11 @@ def canonical_bytes():
 # picked a plainer stand-in for.  0x61 is a heart -- the download names spell
 # it '▽' only because that is the nearest character the harvester could pin
 # it to -- so the table shows it as one and the editor accepts it as one.
-GLYPH_FIX = {'▽': '♥'}
+GLYPH_FIX = {'▽': '♥', '◎': '☀'}
 # input aliases folded to the canonical glyph before lookup, so typing any
 # of these reaches the same code
-GLYPH_ALIAS = {'▽': '♥', '♡': '♥', '❤': '♥', '❥': '♥'}
+GLYPH_ALIAS = {'▽': '♥', '♡': '♥', '❤': '♥', '❥': '♥',
+               '◎': '☀', '☼': '☀'}
 
 
 def _fix_glyphs(table):
