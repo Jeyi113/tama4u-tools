@@ -3189,7 +3189,7 @@ function selectPacket(path){
   $('transHint').textContent=isOpaque()?'배경(방)은 불투명 — 팔레트 0번도 일반 색.':'팔레트 0번(T)은 투명색.';
   $('canvasWrap').classList.toggle('opaque',isOpaque());
   $('bankInfo').textContent=(pk.banks&&pk.banks.length>1)?`— 뱅크 ${pk.banks.length}개 발견 (프로그램 내장 스프라이트 포함)`:'';
-  selMask=null;selRectPreview=null;refreshSelTools();
+  flt=null;selMask=null;selRectPreview=null;refreshSelTools();
   if(flat.length){cur=0;animIdx=0;undoStack=[];renderTabs();renderFrame();animStart()}
   else {animStop();$('stripRow').hidden=true;$('animRow').style.display='none'}
   simStep=0; renderAccGrid();
@@ -3208,7 +3208,7 @@ function renderTabs(){
     const b=document.createElement('button');
     b.textContent=`${e.idx+1} (${e.frame.w}×${e.frame.h})`;
     b.className=i===cur?'on':'';
-    b.onclick=()=>{cur=i;undoStack=[];selMask=null;selRectPreview=null;
+    b.onclick=()=>{cur=i;undoStack=[];flt=null;selMask=null;selRectPreview=null;
       renderTabs();renderFrame();refreshSelTools()};
     el.appendChild(b);
   });
@@ -3361,8 +3361,26 @@ function pixAt(e){
   return (x>=0&&y>=0&&x<f.w&&y<f.h)?{x,y,f}:null;
 }
 // ---- selection / move / clipboard ----
-let frameTool='draw', selMask=null, clip=null, selRectPreview=null;
+// A move or a paste lifts pixels into a floating layer -- `flt` -- that sits
+// over a clean copy of the frame (`base`).  Every drag step recomposites
+// from base, so nothing the float passed over is lost and no trail is left
+// behind.  Committing just drops `flt`; base+float is already in f.pixels.
+let frameTool='draw', selMask=null, clip=null, selRectPreview=null, flt=null;
+function fltComposite(){
+  const f=curFrame(); const px=flt.base.slice(), nm=new Uint8Array(f.w*f.h);
+  const opaque=frOpaque(f);
+  for(const c of flt.cells){
+    const x=flt.ox+c.dx, y=flt.oy+c.dy;
+    if(x<0||y<0||x>=f.w||y>=f.h)continue;
+    nm[y*f.w+x]=1;                         // footprint (grab area + outline)
+    if(c.v===0&&!opaque)continue;          // transparent: let base show through
+    px[y*f.w+x]=c.v;
+  }
+  f.pixels=px; selMask=nm;
+}
+function fltCommit(){flt=null;}            // f.pixels already holds the result
 function setTool(t){
+  fltCommit();
   frameTool=t;
   [...$('toolSeg').children].forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   $('cv').style.cursor = t==='draw'?'crosshair' : t==='move'?'move':'cell';
@@ -3373,7 +3391,7 @@ function refreshSelTools(){
   $('selTools').hidden=!has;
   $('selPaste').hidden=!clip;
 }
-function clearSel(){selMask=null;renderFrame();refreshSelTools()}
+function clearSel(){flt=null;selMask=null;renderFrame();refreshSelTools()}
 // which pixel the pointer is over, clamped so a drag off-canvas still ends
 function pixClamp(e){
   const f=curFrame(), sc=scaleFor(f), r=$('cv').getBoundingClientRect();
@@ -3408,23 +3426,27 @@ $('cv').addEventListener('mousedown',e=>{
     window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
     return;
   }
-  if(frameTool==='move'){                    // drag the selected pixels
+  if(frameTool==='move'){
     if(!selValid(f))return;
-    const start=pixClamp(e);
-    const base=f.pixels.slice(), mask0=selMask.slice();
-    snapshot();
-    const move=ev=>{
-      const c=pixClamp(ev), dx=c.x-start.x, dy=c.y-start.y;
-      const out=f.pixels.slice(), nm=new Uint8Array(f.w*f.h);
-      // clear the moved cells at their origin (to index 0)
-      for(let i=0;i<mask0.length;i++)if(mask0[i])out[i]=0;
-      for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++){
-        if(!mask0[y*f.w+x])continue;
-        const nx=x+dx, ny=y+dy; if(nx<0||ny<0||nx>=f.w||ny>=f.h)continue;
-        out[ny*f.w+nx]=base[y*f.w+x]; nm[ny*f.w+nx]=1;
+    const at=pixClamp(e);
+    // clicking off the selection commits any float and deselects
+    if(!selMask[at.y*f.w+at.x]){fltCommit();clearSel();return}
+    // first grab of a plain selection lifts it into a float: base is the
+    // frame with the selected cells cleared, cells carry their colours
+    if(!flt){
+      snapshot();
+      let x0=1e9,y0=1e9;
+      for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++)if(selMask[y*f.w+x]){x0=Math.min(x0,x);y0=Math.min(y0,y);}
+      const base=f.pixels.slice(), cells=[];
+      for(let y=0;y<f.h;y++)for(let x=0;x<f.w;x++)if(selMask[y*f.w+x]){
+        cells.push({dx:x-x0,dy:y-y0,v:f.pixels[y*f.w+x]}); base[y*f.w+x]=0;
       }
-      f.pixels=out; selMask=nm; renderFrame();
-    };
+      flt={base, cells, ox:x0, oy:y0};
+    }
+    const start=at, ox0=flt.ox, oy0=flt.oy;
+    const move=ev=>{const c=pixClamp(ev);
+      flt.ox=ox0+(c.x-start.x); flt.oy=oy0+(c.y-start.y);
+      fltComposite(); renderFrame();};
     const up=()=>{drawSim();if(!animTimer)drawAnim();
       window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up)};
     window.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
@@ -3459,23 +3481,27 @@ function colorIndex(f, rgb){                 // nearest existing, else add
 }
 function selPaste(){
   const f=curFrame(); if(!clip)return;
-  snapshot();
-  // drop it a few px in from the top-left, then leave it selected so 이동
-  // can reposition it right away
-  const ox=2, oy=2, nm=new Uint8Array(f.w*f.h);
-  clip.cells.forEach(c=>{
-    if(c.t)return;                           // transparent cells don't stamp
-    const x=ox+c.dx, y=oy+c.dy; if(x<0||y<0||x>=f.w||y>=f.h)return;
-    f.pixels[y*f.w+x]=colorIndex(f, c.rgb); nm[y*f.w+x]=1;
-  });
-  selMask=nm; setTool('move'); renderFrame(); refreshSelTools();
-  toast('붙여넣었습니다 — 이동 도구로 옮기세요');
+  fltCommit(); snapshot();
+  // the paste floats over the *untouched* frame, so dragging it never eats
+  // what it covers; base is a clean copy, cells are resolved to this frame's
+  // palette (transparent ones kept so the grab box is the whole clip)
+  const cells=clip.cells.map(c=>({dx:c.dx, dy:c.dy,
+    v:c.t?0:colorIndex(f, c.rgb)}));
+  flt={base:f.pixels.slice(), cells, ox:2, oy:2};
+  setToolNoCommit('move'); fltComposite(); renderFrame(); refreshSelTools();
+  toast('붙여넣었습니다 — 이동 도구로 끌어 옮기세요');
 }
-$('selCopy').onclick=()=>{if(selCopy())toast('복사했습니다')};
-$('selCut').onclick=()=>{if(!selCopy())return; snapshot();
+// paste needs to enter move mode without committing the float it just made
+function setToolNoCommit(t){
+  frameTool=t;
+  [...$('toolSeg').children].forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
+  $('cv').style.cursor = t==='draw'?'crosshair' : t==='move'?'move':'cell';
+}
+$('selCopy').onclick=()=>{fltCommit();if(selCopy())toast('복사했습니다')};
+$('selCut').onclick=()=>{fltCommit();if(!selCopy())return; snapshot();
   const f=curFrame(); for(let i=0;i<selMask.length;i++)if(selMask[i])f.pixels[i]=0;
   clearSel(); drawSim(); if(!animTimer)drawAnim(); toast('잘라냈습니다')};
-$('selClear').onclick=clearSel;
+$('selClear').onclick=()=>{fltCommit();clearSel()};
 $('selPaste').onclick=selPaste;
 function paint(e){
   const p=pixAt(e);if(!p)return;
@@ -3515,7 +3541,7 @@ const ARROWS={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]};
 window.addEventListener('keydown',e=>{
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
   if((e.metaKey||e.ctrlKey)&&e.key==='z'&&undoStack.length){
-    e.preventDefault();curFrame().pixels=undoStack.pop();selMask=null;
+    e.preventDefault();curFrame().pixels=undoStack.pop();flt=null;selMask=null;
     renderFrame();drawSim();refreshSelTools();return;
   }
   if((e.metaKey||e.ctrlKey)&&!typing&&curFrame()){
