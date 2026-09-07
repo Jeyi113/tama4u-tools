@@ -2403,6 +2403,13 @@ async function swapWith(file){
 function downloadStem(){
   const top=doc&&doc.packets.find(q=>q.path.length===1);
   if(!top)return $('fName').value.trim();
+  // the top packet's name may have just been renamed on screen; the live
+  // field is the truth then, while top.unicode_name is the stale parse.  So
+  // when the packet on screen IS the top one, name the download after it.
+  if(pk&&pk.path.length===1){
+    const v=$('fName').value.trim();
+    if(v)return v;
+  }
   const u=top.unicode_name||'';
   if(u.startsWith('DL_')&&u.indexOf('_',3)>0){
     const tail=u.slice(u.indexOf('_',3)+1);
