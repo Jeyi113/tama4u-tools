@@ -94,10 +94,15 @@ export function groupRuns(runs, width = 2, maxGap = 8) {
   return groups;
 }
 
-export function writeText(raw, offset, charCount, text, model, width = 2) {
+// `pad` fills the unused tail: full-width space for a dialogue box (default),
+// but 0 for a name field read until a terminator -- the character block's
+// Name 2 sits right after the transform-item name, so a space-padded tail
+// runs the two names together.  See tama4u/charset.py.
+export function writeText(raw, offset, charCount, text, model, width = 2, pad = null) {
   const codes = encode(text, model);
   if (codes.length > charCount) throw new Error(`text too long: ${codes.length} > ${charCount} chars`);
-  while (codes.length < charCount) codes.push(spaceCode(model));
+  const fill = pad === null ? spaceCode(model) : pad;
+  while (codes.length < charCount) codes.push(fill);
   for (let i = 0; i < codes.length; i++) {
     if (width === 1) raw[offset + i] = codes[i] & 0xff;
     else putU16(raw, offset + 2 * i, codes[i]);

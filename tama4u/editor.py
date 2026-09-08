@@ -503,13 +503,15 @@ def _apply_fields(pkt, edit):
     if 'char_stats' in edit:
         character.set_stats(pkt, edit['char_stats'])
     if 'transform_name' in edit:
+        # null-pad: the field is read until a terminator and Name 2 sits
+        # right after it, so a space-padded tail runs the two names together
         charset.write_text(pkt.raw, character.OFF_TRANSFORM_NAME, 10,
-                           edit['transform_name'], table, 2)
+                           edit['transform_name'], table, 2, pad=0)
     if 'char_acc_pos' in edit:
         character.set_acc_positions(pkt, edit['char_acc_pos'])
     if 'name2' in edit:
         charset.write_text(pkt.raw, character.OFF_NAME2,
-                           pkt.layout['slots'], edit['name2'], table, 2)
+                           pkt.layout['slots'], edit['name2'], table, 2, pad=0)
     if 'version' in edit:
         v = edit['version']
         items.set_version(pkt, v.get('version'), v.get('compat'),

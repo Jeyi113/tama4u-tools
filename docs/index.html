@@ -1154,10 +1154,15 @@ function groupRuns(runs, width = 2, maxGap = 8) {
   return groups;
 }
 
-function writeText(raw, offset, charCount, text, model, width = 2) {
+// `pad` fills the unused tail: full-width space for a dialogue box (default),
+// but 0 for a name field read until a terminator -- the character block's
+// Name 2 sits right after the transform-item name, so a space-padded tail
+// runs the two names together.  See tama4u/charset.py.
+function writeText(raw, offset, charCount, text, model, width = 2, pad = null) {
   const codes = encode(text, model);
   if (codes.length > charCount) throw new Error(`text too long: ${codes.length} > ${charCount} chars`);
-  while (codes.length < charCount) codes.push(spaceCode(model));
+  const fill = pad === null ? spaceCode(model) : pad;
+  while (codes.length < charCount) codes.push(fill);
   for (let i = 0; i < codes.length; i++) {
     if (width === 1) raw[offset + i] = codes[i] & 0xff;
     else putU16(raw, offset + 2 * i, codes[i]);
@@ -2747,9 +2752,9 @@ function applyEdits(data, edits, newJpeg = null, partner = null) {
     if ('stats' in edit) setStats(pkt, edit.stats);
     if ('acc_pos' in edit) setAccPositions(pkt, edit.acc_pos);
     if ('char_stats' in edit) setCharStats(pkt, edit.char_stats);
-    if ('transform_name' in edit) writeText(pkt.raw, CH.TRANSFORM_NAME, 10, edit.transform_name, model, 2);
+    if ('transform_name' in edit) writeText(pkt.raw, CH.TRANSFORM_NAME, 10, edit.transform_name, model, 2, 0);
     if ('char_acc_pos' in edit) setCharAccPositions(pkt, edit.char_acc_pos);
-    if ('name2' in edit) writeText(pkt.raw, CH.NAME2, pkt.layout.slots, edit.name2, model, 2);
+    if ('name2' in edit) writeText(pkt.raw, CH.NAME2, pkt.layout.slots, edit.name2, model, 2, 0);
     if ('version' in edit) setVersion(pkt, edit.version.version, edit.version.compat, edit.version.index);
     if ('compat' in edit) setCompat(pkt, edit.compat);
     if ('anim_a' in edit) setAnim(pkt, edit.anim_a, edit.anim_b ?? edit.anim_a);

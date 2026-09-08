@@ -241,15 +241,22 @@ def space_code(table):
     return rev.get('\u3000', rev.get(' ', 0))
 
 
-def write_text(packet_raw, offset, char_count, text, table=None, width=2):
-    """Replace a text run in place; shorter text is padded with the
-    full-width space."""
+def write_text(packet_raw, offset, char_count, text, table=None, width=2,
+               pad=None):
+    """Replace a text run in place; shorter text is padded out.
+
+    `pad` is the fill code for the unused tail.  The default is the
+    full-width space, right for a dialogue box.  A name field read until a
+    terminator (the character block's Name 2 and transform-item name sit
+    back to back) must instead pad with 0 the way retail does -- otherwise
+    the device runs one name straight into the next.  Pass pad=0 there."""
     import struct
     table = table or load_table()
     codes = encode(text, table)
     if len(codes) > char_count:
         raise ValueError(f'text too long: {len(codes)} > {char_count} chars')
-    codes += [space_code(table)] * (char_count - len(codes))
+    fill = space_code(table) if pad is None else pad
+    codes += [fill] * (char_count - len(codes))
     for i, c in enumerate(codes):
         if width == 1:
             packet_raw[offset + i] = c & 0xFF

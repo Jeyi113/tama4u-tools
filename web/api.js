@@ -460,9 +460,9 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     if ('stats' in edit) F.setStats(pkt, edit.stats);
     if ('acc_pos' in edit) F.setAccPositions(pkt, edit.acc_pos);
     if ('char_stats' in edit) F.setCharStats(pkt, edit.char_stats);
-    if ('transform_name' in edit) F.writeText(pkt.raw, F.CH.TRANSFORM_NAME, 10, edit.transform_name, model, 2);
+    if ('transform_name' in edit) F.writeText(pkt.raw, F.CH.TRANSFORM_NAME, 10, edit.transform_name, model, 2, 0);
     if ('char_acc_pos' in edit) F.setCharAccPositions(pkt, edit.char_acc_pos);
-    if ('name2' in edit) F.writeText(pkt.raw, F.CH.NAME2, pkt.layout.slots, edit.name2, model, 2);
+    if ('name2' in edit) F.writeText(pkt.raw, F.CH.NAME2, pkt.layout.slots, edit.name2, model, 2, 0);
     if ('version' in edit) F.setVersion(pkt, edit.version.version, edit.version.compat, edit.version.index);
     if ('compat' in edit) F.setCompat(pkt, edit.compat);
     if ('anim_a' in edit) F.setAnim(pkt, edit.anim_a, edit.anim_b ?? edit.anim_a);
