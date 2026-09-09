@@ -822,6 +822,20 @@ function resizeIsOuting(){
   const e=flat[cur];
   return !!(pk&&pk.outing&&e&&e.loose);
 }
+// Resizing an outing record -- a bigger sprite OR a palette with a
+// different number of colours -- shifts every record after it, so the
+// device may draw a later sprite in the wrong place.  Ask once per file;
+// both the BMP-resize and the palette-size paths share this consent.
+let outingShiftOK=false;
+function confirmOutingShift(){
+  if(outingShiftOK)return true;
+  if(confirm('외출지는 프로그램이라 스프라이트 크기(팔레트 색 수 포함)를 바꾸면 '
+      +'뒤 스프라이트들이 밀려 기기 화면상의 위치가 틀어질 수 있습니다.\n\n'
+      +'파일 구조(체크섬)는 맞춰져 정상 저장됩니다. 계속할까요?')){
+    outingShiftOK=true; return true;
+  }
+  return false;
+}
 function renderFrame(){
   const f=curFrame(), sc=scaleFor(f), cv=$('cv');
   cv.width=f.w*sc; cv.height=f.h*sc;
@@ -937,6 +951,13 @@ function renderPal(){
       e.preventDefault();
       if(used){toast(`인덱스 ${i}은 ${used}픽셀에서 사용 중이라 삭제할 수 없습니다`);return}
       if(f.palette.length<=1)return;
+      // loose records (games/outings) carry their colour count in the header,
+      // so removing a colour changes the record length -- only an outing can
+      // absorb that shift on save, and it asks first
+      if(flat[cur].loose){
+        if(!resizeIsOuting()){toast('이 스프라이트는 팔레트 크기를 바꿀 수 없습니다');return}
+        if(!confirmOutingShift())return;
+      }
       f.palette.splice(i,1);
       f.pixels=f.pixels.map(v=>v>i?v-1:v);
       if(palIdx>=f.palette.length)palIdx=f.palette.length-1;
@@ -944,10 +965,13 @@ function renderPal(){
     };
     el.appendChild(d);
   });
-  if(f.palette.length<16&&!flat[cur].loose){
+  if(f.palette.length<16&&(!flat[cur].loose||resizeIsOuting())){
     const add=document.createElement('div');add.className='sw';add.textContent='+';
     add.style.cssText='display:grid;place-items:center;color:#999';
-    add.onclick=()=>{f.palette.push([0,0,0]);palIdx=f.palette.length-1;renderFrame()};
+    add.onclick=()=>{
+      if(flat[cur].loose&&!confirmOutingShift())return;
+      f.palette.push([0,0,0]);palIdx=f.palette.length-1;renderFrame();
+    };
     el.appendChild(add);
   }
 }
@@ -1831,11 +1855,7 @@ $('bmpInput').onchange=async e=>{
       // an outing sprite lives in a program; a resized record shifts the
       // ones after it, so a sprite the code addresses by position could
       // land wrong -- let the user decide before committing
-      if(resizeIsOuting()&&!confirm(
-          `외출지 스프라이트를 ${f.w}×${f.h} → ${src.w}×${src.h}로 바꿉니다.\n\n`
-          +'외출지는 프로그램이라 크기를 바꾸면 뒤 스프라이트들이 밀립니다. '
-          +'파일 구조(체크섬 등)는 맞춰지지만, 기기에서 위치가 틀어질 수 있으니 '
-          +'실기에서 확인하세요.\n\n계속할까요?'))return;
+      if(resizeIsOuting()&&!confirmOutingShift())return;
       resized=` · ${f.w}×${f.h} → ${src.w}×${src.h}로 맞췄습니다`;
       f.w=src.w; f.h=src.h;
       pk.banks[e2.bank].grow=true;      // the slot may have to grow on save
@@ -2553,7 +2573,17 @@ $('saveBtn').onclick=async()=>{
     if(F.includes('anim')){edit.anim_a=+$('fAnimA').value;edit.anim_b=+$('fAnimB').value}
   }
   if(pk.acc_pos)edit.acc_pos=pk.acc_pos;
-  if(pk.banks)edit.banks=pk.banks;
+  if(pk.banks){
+    // a loose record stores its colour count in its header, so a palette
+    // that grew or shrank makes the record a different length -- route it
+    // through the grow path (rebuild + shift the tail) instead of the
+    // in-place rewrite that insists the size stay put.  loose[3] is the
+    // record's original ncol.
+    const palShift=pk.banks.some(b=>b.loose&&b.frames[0].palette.length!==b.loose[3]);
+    if(palShift&&!confirmOutingShift())return;
+    pk.banks.forEach(b=>{if(b.loose&&b.frames[0].palette.length!==b.loose[3])b.grow=true});
+    edit.banks=pk.banks;
+  }
   if(pk.texts)edit.texts=pk.texts;   // parts[] carries the run layout
   if(pk.char_stats)edit.char_stats=pk.char_stats;
   if(pk.version)edit.version=pk.version;
