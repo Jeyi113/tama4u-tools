@@ -94,6 +94,7 @@
   .pal{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0}
   .sw{width:26px;height:26px;border-radius:6px;border:2px solid var(--line);cursor:pointer;position:relative}
   .sw.on{border-color:var(--ink);box-shadow:0 0 0 2px #fff inset}
+  .sw.t{background:repeating-conic-gradient(#ddd 0 25%,#fff 0 50%) 0 0/12px 12px!important}
   .sw.t::after{content:'T';position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:#666}
   .sw.drop{border-color:var(--accent);border-style:dashed}
   .hint{font-size:12px;color:#8a8172;margin-top:6px}
@@ -1004,6 +1005,16 @@ function writeLoose(raw, rec, palette, pixelLists) {
   for (let i = 0; i < palette.length; i++) putU16(raw, palOff + 2 * i, rgbToBgr565(palette[i]));
   const px = [].concat(...pixelLists);
   raw.set(packPixels(px, ncol).slice(0, avail), palOff + 2 * ncol);
+}
+
+// A whole loose record from scratch -- see tama4u/sprites.encode_loose.  Used
+// to replace a record with a differently-sized one; returns the bytes.
+function encodeLoose(w, h, palette, pixelLists) {
+  const nf = pixelLists.length, ncol = palette.length;
+  const out = [w, h, ncol, 0, nf, 0xff];
+  for (const c of palette) { const v = rgbToBgr565(c); out.push(v >> 8, v & 0xff); }
+  const px = [].concat(...pixelLists);
+  return Uint8Array.from([...out, ...packPixels(px, ncol)]);
 }
 
 // ---- indexed BMP: 4bpp like Tama Image Editor, 8bpp for >16 colours ---
@@ -2643,27 +2654,50 @@ function resizeBanks(packets, edits) {
   for (const edit of edits) {
     if (edit.path.includes('vdp') || edit.path.includes('vdpchar')) continue;
     for (const bank of edit.banks || []) {
-      if (bank.loose || !bank.grow) continue;
+      if (!bank.grow) continue;
       const pkt = findPacket(packets, edit.path);
       const off = bank.offset;
-      const oldEnd = parseBank(pkt.raw, off).end;
-      const frames = bank.frames.map(f => ({ slot_size: f.slot, w: f.w, h: f.h,
-                                             palette: f.palette, pixels: f.pixels }));
-      const blob = encodeBank(frames, true);
-      bank.frames.forEach((f, i) => { f.slot = frames[i].slot_size; });
-      if (off + blob.length === oldEnd) continue;   // fits; in-place path has it
-      const raw = new Uint8Array(pkt.size - (oldEnd - off) + blob.length);
-      raw.set(pkt.raw.subarray(0, off), 0);
-      raw.set(blob, off);
-      raw.set(pkt.raw.subarray(oldEnd), off + blob.length);
+      let raw, oldSpan;
+      if (bank.loose) {
+        // a loose record sits in a program's sprite tail; rebuild at any
+        // size and splice, moving every record after it (see api warning)
+        const rec = bank.loose;
+        oldSpan = 6 + 2 * rec[3] + rec[5];
+        const fr = bank.frames;
+        const blob = encodeLoose(fr[0].w, fr[0].h, fr[0].palette, fr.map(f => f.pixels));
+        if (blob.length === oldSpan) continue;        // same size; in-place has it
+        raw = new Uint8Array(pkt.size - oldSpan + blob.length);
+        raw.set(pkt.raw.subarray(0, off), 0);
+        raw.set(blob, off);
+        raw.set(pkt.raw.subarray(off + oldSpan), off + blob.length);
+      } else {
+        const oldEnd = parseBank(pkt.raw, off).end;
+        const frames = bank.frames.map(f => ({ slot_size: f.slot, w: f.w, h: f.h,
+                                               palette: f.palette, pixels: f.pixels }));
+        const blob = encodeBank(frames, true);
+        bank.frames.forEach((f, i) => { f.slot = frames[i].slot_size; });
+        if (off + blob.length === parseBank(pkt.raw, off).end) continue; // fits
+        raw = new Uint8Array(pkt.size - (oldEnd - off) + blob.length);
+        raw.set(pkt.raw.subarray(0, off), 0);
+        raw.set(blob, off);
+        raw.set(pkt.raw.subarray(oldEnd), off + blob.length);
+      }
       putU16(raw, OFF_PACKET_SIZE, raw.length);
       // replacePacket re-parses from these bytes, so the new Packet would
       // consider itself untouched and keep the checksum that belonged to
       // the shorter body.  Seal it here; parents then reseal themselves.
       putU16(raw, raw.length - 2, sum16(raw.subarray(0, raw.length - 2)));
-      delta += raw.length - pkt.size;
+      const grew = raw.length - pkt.size;
+      delta += grew;
       replacePacket(packets, edit.path, raw);
       bank.done = true;
+      // shift the offsets of later banks (the outing's other loose records,
+      // still sent for their unchanged in-place rewrite) by the same amount
+      for (const other of edit.banks || []) {
+        if (other === bank || (other.offset ?? 0) <= off) continue;
+        other.offset += grew;
+        if (other.loose) other.loose = [other.loose[0] + grew, ...other.loose.slice(1)];
+      }
     }
   }
   for (const edit of edits)
@@ -3227,9 +3261,19 @@ $('gridChk').onchange=()=>{showGrid=$('gridChk').checked;renderFrame()};
 // which is why this is offered on those four frames only.
 const RESIZABLE_FRAMES=[23,24,25,26];
 function resizableFrame(){
-  if(!pk||!pk.is_wardrobe||pk.model!=='4U')return null;
+  if(!pk||pk.model!=='4U')return null;
+  const e=flat[cur]; if(!e)return null;
+  // a character's built-in accessory (wardrobe frames 23-26) grows in its
+  // count-bank slot
+  if(pk.is_wardrobe&&!e.loose&&RESIZABLE_FRAMES.includes(e.idx+1))return e;
+  // an outing's sprites are loose records in the program's data tail; a
+  // resized import rebuilds the record and shifts the rest -- see the warning
+  if(pk.outing&&e.loose)return e;
+  return null;
+}
+function resizeIsOuting(){
   const e=flat[cur];
-  return (e&&RESIZABLE_FRAMES.includes(e.idx+1)&&!e.loose)?e:null;
+  return !!(pk&&pk.outing&&e&&e.loose);
 }
 function renderFrame(){
   const f=curFrame(), sc=scaleFor(f), cv=$('cv');
@@ -4234,26 +4278,33 @@ $('bmpInput').onchange=async e=>{
       const e2=resizableFrame();
       if(!e2){
         toast(`크기가 다릅니다: ${src.w}×${src.h} → ${f.w}×${f.h} 필요`
-          +' (크기를 바꿀 수 있는 것은 캐릭터 23~26번 프레임뿐입니다)');
+          +' (크기를 바꿀 수 있는 것은 캐릭터 23~26번 프레임과 외출지 스프라이트뿐입니다)');
         return;
       }
+      // an outing sprite lives in a program; a resized record shifts the
+      // ones after it, so a sprite the code addresses by position could
+      // land wrong -- let the user decide before committing
+      if(resizeIsOuting()&&!confirm(
+          `외출지 스프라이트를 ${f.w}×${f.h} → ${src.w}×${src.h}로 바꿉니다.\n\n`
+          +'외출지는 프로그램이라 크기를 바꾸면 뒤 스프라이트들이 밀립니다. '
+          +'파일 구조(체크섬 등)는 맞춰지지만, 기기에서 위치가 틀어질 수 있으니 '
+          +'실기에서 확인하세요.\n\n계속할까요?'))return;
       resized=` · ${f.w}×${f.h} → ${src.w}×${src.h}로 맞췄습니다`;
       f.w=src.w; f.h=src.h;
       pk.banks[e2.bank].grow=true;      // the slot may have to grow on save
     }
-    // 투명 여부는 크기가 아니라 이 프레임의 0번 색이 정한다. 원래 투명이던
-    // 자리에 외부 BMP(보통 0번이 검정)를 넣으면 투명이어야 할 픽셀이 검게
-    // 찍히므로, 그때만 0번을 투명 마커로 맞춘다. 원래 0번이 실제 색이던
-    // 프레임(방 배경 등)은 가져온 색을 그대로 둔다.
+    // Bring the BMP's own palette in unchanged -- do not force index 0 to
+    // green.  The transparency marker is whatever the imported index 0 is
+    // (G=255 -> transparent), so the user's colour stands; if the sprite
+    // should be transparent they set index 0 to the transparent green
+    // themselves (the swatch shows it as a checkerboard).
     const wasTransparent=!frOpaque(f);
     undoStack.push(f.pixels.slice());
     f.pixels=src.pixels;
     f.palette=src.palette.slice(0,Math.max(...src.pixels)+1).map(snap565);
     let note='';
-    if(wasTransparent&&!transGreen(f)){
-      f.palette[0]=TRANSPARENT;
-      note=' · 0번을 투명색으로 맞췄습니다';
-    }
+    if(wasTransparent&&frOpaque(f))
+      note=' · 0번이 투명색이 아니라 이 스프라이트는 불투명이 됩니다 (투명하게 하려면 0번을 초록으로)';
     if(resized){undoStack=[]; renderTabs()}   // the tab label carries the size
     renderFrame(); drawSim();
     toast('BMP 가져오기 완료'+resized+note);

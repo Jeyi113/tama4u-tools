@@ -94,6 +94,7 @@
   .pal{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0}
   .sw{width:26px;height:26px;border-radius:6px;border:2px solid var(--line);cursor:pointer;position:relative}
   .sw.on{border-color:var(--ink);box-shadow:0 0 0 2px #fff inset}
+  .sw.t{background:repeating-conic-gradient(#ddd 0 25%,#fff 0 50%) 0 0/12px 12px!important}
   .sw.t::after{content:'T';position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:#666}
   .sw.drop{border-color:var(--accent);border-style:dashed}
   .hint{font-size:12px;color:#8a8172;margin-top:6px}
@@ -807,9 +808,19 @@ $('gridChk').onchange=()=>{showGrid=$('gridChk').checked;renderFrame()};
 // which is why this is offered on those four frames only.
 const RESIZABLE_FRAMES=[23,24,25,26];
 function resizableFrame(){
-  if(!pk||!pk.is_wardrobe||pk.model!=='4U')return null;
+  if(!pk||pk.model!=='4U')return null;
+  const e=flat[cur]; if(!e)return null;
+  // a character's built-in accessory (wardrobe frames 23-26) grows in its
+  // count-bank slot
+  if(pk.is_wardrobe&&!e.loose&&RESIZABLE_FRAMES.includes(e.idx+1))return e;
+  // an outing's sprites are loose records in the program's data tail; a
+  // resized import rebuilds the record and shifts the rest -- see the warning
+  if(pk.outing&&e.loose)return e;
+  return null;
+}
+function resizeIsOuting(){
   const e=flat[cur];
-  return (e&&RESIZABLE_FRAMES.includes(e.idx+1)&&!e.loose)?e:null;
+  return !!(pk&&pk.outing&&e&&e.loose);
 }
 function renderFrame(){
   const f=curFrame(), sc=scaleFor(f), cv=$('cv');
@@ -1814,26 +1825,33 @@ $('bmpInput').onchange=async e=>{
       const e2=resizableFrame();
       if(!e2){
         toast(`크기가 다릅니다: ${src.w}×${src.h} → ${f.w}×${f.h} 필요`
-          +' (크기를 바꿀 수 있는 것은 캐릭터 23~26번 프레임뿐입니다)');
+          +' (크기를 바꿀 수 있는 것은 캐릭터 23~26번 프레임과 외출지 스프라이트뿐입니다)');
         return;
       }
+      // an outing sprite lives in a program; a resized record shifts the
+      // ones after it, so a sprite the code addresses by position could
+      // land wrong -- let the user decide before committing
+      if(resizeIsOuting()&&!confirm(
+          `외출지 스프라이트를 ${f.w}×${f.h} → ${src.w}×${src.h}로 바꿉니다.\n\n`
+          +'외출지는 프로그램이라 크기를 바꾸면 뒤 스프라이트들이 밀립니다. '
+          +'파일 구조(체크섬 등)는 맞춰지지만, 기기에서 위치가 틀어질 수 있으니 '
+          +'실기에서 확인하세요.\n\n계속할까요?'))return;
       resized=` · ${f.w}×${f.h} → ${src.w}×${src.h}로 맞췄습니다`;
       f.w=src.w; f.h=src.h;
       pk.banks[e2.bank].grow=true;      // the slot may have to grow on save
     }
-    // 투명 여부는 크기가 아니라 이 프레임의 0번 색이 정한다. 원래 투명이던
-    // 자리에 외부 BMP(보통 0번이 검정)를 넣으면 투명이어야 할 픽셀이 검게
-    // 찍히므로, 그때만 0번을 투명 마커로 맞춘다. 원래 0번이 실제 색이던
-    // 프레임(방 배경 등)은 가져온 색을 그대로 둔다.
+    // Bring the BMP's own palette in unchanged -- do not force index 0 to
+    // green.  The transparency marker is whatever the imported index 0 is
+    // (G=255 -> transparent), so the user's colour stands; if the sprite
+    // should be transparent they set index 0 to the transparent green
+    // themselves (the swatch shows it as a checkerboard).
     const wasTransparent=!frOpaque(f);
     undoStack.push(f.pixels.slice());
     f.pixels=src.pixels;
     f.palette=src.palette.slice(0,Math.max(...src.pixels)+1).map(snap565);
     let note='';
-    if(wasTransparent&&!transGreen(f)){
-      f.palette[0]=TRANSPARENT;
-      note=' · 0번을 투명색으로 맞췄습니다';
-    }
+    if(wasTransparent&&frOpaque(f))
+      note=' · 0번이 투명색이 아니라 이 스프라이트는 불투명이 됩니다 (투명하게 하려면 0번을 초록으로)';
     if(resized){undoStack=[]; renderTabs()}   // the tab label carries the size
     renderFrame(); drawSim();
     toast('BMP 가져오기 완료'+resized+note);

@@ -567,16 +567,34 @@ def _resize_banks(packets, edits):
         if 'vdp' in path or 'vdpchar' in path:
             continue            # packed stream; repacked wholesale instead
         for bank in edit.get('banks', []):
-            if bank.get('loose') or not bank.get('grow'):
+            if not bank.get('grow'):
                 continue
             pkt = _find(packets, path)
             off = bank['offset']
-            old_end = sprites.parse_bank(pkt.raw, off)[1]
-            blob = sprites.encode_bank(_bank_frames(bank), grow=True)
-            if off + len(blob) == old_end:
-                continue                      # fits; the in-place path has it
-            raw = bytearray(pkt.raw)
-            raw[off:old_end] = blob
+            if bank.get('loose'):
+                # a loose record has no slot prefix and sits in a program's
+                # sprite tail; rebuild it at whatever size and splice, moving
+                # every record after it.  Only its own header carries the
+                # dimensions, so a sequential reader follows along -- but code
+                # that points at a later record by address will not, which is
+                # why the UI warns before offering this on an outing.
+                rec = tuple(bank['loose'])
+                old_len = sprites.loose_span(rec)
+                fr = bank['frames']
+                blob = sprites.encode_loose(fr[0]['w'], fr[0]['h'],
+                                            [tuple(c) for c in fr[0]['palette']],
+                                            [f['pixels'] for f in fr])
+                if len(blob) == old_len:
+                    continue                  # same size; in-place path has it
+                raw = bytearray(pkt.raw)
+                raw[off:off + old_len] = blob
+            else:
+                old_end = sprites.parse_bank(pkt.raw, off)[1]
+                blob = sprites.encode_bank(_bank_frames(bank), grow=True)
+                if off + len(blob) == old_end:
+                    continue                  # fits; the in-place path has it
+                raw = bytearray(pkt.raw)
+                raw[off:old_end] = blob
             struct.pack_into('>H', raw, container.OFF_PACKET_SIZE, len(raw))
             # replace_packet re-parses from these bytes, so the new Packet
             # would consider itself untouched and keep the checksum that
@@ -584,10 +602,20 @@ def _resize_banks(packets, edits):
             # change then ripples out and the parents reseal themselves.
             struct.pack_into('>H', raw, len(raw) - 2,
                              container.sum16(raw[:-2]))
-            delta += len(raw) - len(pkt.raw)
+            grew = len(raw) - len(pkt.raw)
+            delta += grew
             replace_packet(packets, path, bytes(raw))
             # the slots just moved, so the in-place write must not re-run
             bank['done'] = True
+            # every later bank on this packet -- the outing's other loose
+            # records, still sent for their unchanged in-place rewrite --
+            # now sits `grew` bytes further along, so move its offset with it
+            for other in edit.get('banks', []):
+                if other is bank or other.get('offset', 0) <= off:
+                    continue
+                other['offset'] += grew
+                if other.get('loose'):
+                    other['loose'] = [other['loose'][0] + grew, *other['loose'][1:]]
     for edit in edits:
         if 'banks' in edit:
             edit['banks'] = [b for b in edit['banks'] if not b.get('done')]

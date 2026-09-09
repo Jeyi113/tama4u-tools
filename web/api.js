@@ -3,7 +3,7 @@
 // unchanged; web/selftest.js diffs the two implementations file by file.
 import {
   parseFile, buildFile, Packet, u16, putU16, OFF_PACKET_SIZE,
-  parseBank, writeBank, encodeBank, sum16, scanBanks, scanLoose, readLoose, writeLoose,
+  parseBank, writeBank, encodeBank, encodeLoose, sum16, scanBanks, scanLoose, readLoose, writeLoose,
   destOptions,
   OFF_TYPE_SIG,
 } from './core.js';
@@ -351,27 +351,50 @@ function resizeBanks(packets, edits) {
   for (const edit of edits) {
     if (edit.path.includes('vdp') || edit.path.includes('vdpchar')) continue;
     for (const bank of edit.banks || []) {
-      if (bank.loose || !bank.grow) continue;
+      if (!bank.grow) continue;
       const pkt = findPacket(packets, edit.path);
       const off = bank.offset;
-      const oldEnd = parseBank(pkt.raw, off).end;
-      const frames = bank.frames.map(f => ({ slot_size: f.slot, w: f.w, h: f.h,
-                                             palette: f.palette, pixels: f.pixels }));
-      const blob = encodeBank(frames, true);
-      bank.frames.forEach((f, i) => { f.slot = frames[i].slot_size; });
-      if (off + blob.length === oldEnd) continue;   // fits; in-place path has it
-      const raw = new Uint8Array(pkt.size - (oldEnd - off) + blob.length);
-      raw.set(pkt.raw.subarray(0, off), 0);
-      raw.set(blob, off);
-      raw.set(pkt.raw.subarray(oldEnd), off + blob.length);
+      let raw, oldSpan;
+      if (bank.loose) {
+        // a loose record sits in a program's sprite tail; rebuild at any
+        // size and splice, moving every record after it (see api warning)
+        const rec = bank.loose;
+        oldSpan = 6 + 2 * rec[3] + rec[5];
+        const fr = bank.frames;
+        const blob = encodeLoose(fr[0].w, fr[0].h, fr[0].palette, fr.map(f => f.pixels));
+        if (blob.length === oldSpan) continue;        // same size; in-place has it
+        raw = new Uint8Array(pkt.size - oldSpan + blob.length);
+        raw.set(pkt.raw.subarray(0, off), 0);
+        raw.set(blob, off);
+        raw.set(pkt.raw.subarray(off + oldSpan), off + blob.length);
+      } else {
+        const oldEnd = parseBank(pkt.raw, off).end;
+        const frames = bank.frames.map(f => ({ slot_size: f.slot, w: f.w, h: f.h,
+                                               palette: f.palette, pixels: f.pixels }));
+        const blob = encodeBank(frames, true);
+        bank.frames.forEach((f, i) => { f.slot = frames[i].slot_size; });
+        if (off + blob.length === parseBank(pkt.raw, off).end) continue; // fits
+        raw = new Uint8Array(pkt.size - (oldEnd - off) + blob.length);
+        raw.set(pkt.raw.subarray(0, off), 0);
+        raw.set(blob, off);
+        raw.set(pkt.raw.subarray(oldEnd), off + blob.length);
+      }
       putU16(raw, OFF_PACKET_SIZE, raw.length);
       // replacePacket re-parses from these bytes, so the new Packet would
       // consider itself untouched and keep the checksum that belonged to
       // the shorter body.  Seal it here; parents then reseal themselves.
       putU16(raw, raw.length - 2, sum16(raw.subarray(0, raw.length - 2)));
-      delta += raw.length - pkt.size;
+      const grew = raw.length - pkt.size;
+      delta += grew;
       replacePacket(packets, edit.path, raw);
       bank.done = true;
+      // shift the offsets of later banks (the outing's other loose records,
+      // still sent for their unchanged in-place rewrite) by the same amount
+      for (const other of edit.banks || []) {
+        if (other === bank || (other.offset ?? 0) <= off) continue;
+        other.offset += grew;
+        if (other.loose) other.loose = [other.loose[0] + grew, ...other.loose.slice(1)];
+      }
     }
   }
   for (const edit of edits)

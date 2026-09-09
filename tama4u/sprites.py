@@ -197,6 +197,25 @@ def write_loose(packet_raw, rec, palette, pixel_lists):
     packet_raw[pal_off + 2 * ncol: pal_off + 2 * ncol + len(packed)] = packed
 
 
+def encode_loose(w, h, palette, pixel_lists):
+    """A whole loose record from scratch: [w][h][ncol][00][nf][FF][pal][px].
+
+    Unlike write_loose this is not in place -- it returns the bytes for a
+    record of whatever size, so a differently-sized import can replace the
+    old one.  nframes is len(pixel_lists), one shared palette."""
+    nf, ncol = len(pixel_lists), len(palette)
+    out = bytes((w, h, ncol, 0, nf, 0xFF))
+    out += b''.join(struct.pack('>H', rgb_to_bgr565(c)) for c in palette)
+    px = [v for pixels in pixel_lists for v in pixels]
+    return out + pack_pixels(px, ncol)
+
+
+def loose_span(rec):
+    """Byte length of a loose record as it sits now (header+palette+pixels)."""
+    _start, _w, _h, ncol, _nf, avail = rec
+    return 6 + 2 * ncol + avail
+
+
 def encode_bank(frames, grow=False):
     return struct.pack('>H', len(frames)) + b''.join(f.encode(grow) for f in frames)
 

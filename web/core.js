@@ -514,6 +514,16 @@ export function writeLoose(raw, rec, palette, pixelLists) {
   raw.set(packPixels(px, ncol).slice(0, avail), palOff + 2 * ncol);
 }
 
+// A whole loose record from scratch -- see tama4u/sprites.encode_loose.  Used
+// to replace a record with a differently-sized one; returns the bytes.
+export function encodeLoose(w, h, palette, pixelLists) {
+  const nf = pixelLists.length, ncol = palette.length;
+  const out = [w, h, ncol, 0, nf, 0xff];
+  for (const c of palette) { const v = rgbToBgr565(c); out.push(v >> 8, v & 0xff); }
+  const px = [].concat(...pixelLists);
+  return Uint8Array.from([...out, ...packPixels(px, ncol)]);
+}
+
 // ---- indexed BMP: 4bpp like Tama Image Editor, 8bpp for >16 colours ---
 export function frameToBmp(f) {
   const ncol = Math.max(f.palette.length, 1);
