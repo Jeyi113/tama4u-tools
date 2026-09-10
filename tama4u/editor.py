@@ -573,19 +573,24 @@ def _resize_banks(packets, edits):
             off = bank['offset']
             if bank.get('loose'):
                 # a loose record has no slot prefix and sits in a program's
-                # sprite tail; rebuild it at whatever size and splice, moving
-                # every record after it.  Only its own header carries the
-                # dimensions, so a sequential reader follows along -- but code
-                # that points at a later record by address will not, which is
-                # why the UI warns before offering this on an outing.
+                # sprite tail.  The device finds each record by walking from the
+                # previous one -- read header, take 6 + 2*ncol + pixel_bytes,
+                # round up to 4, land on the next -- so encode_loose 4-byte-pads
+                # the rebuilt record and loose_span returns that same 4-aligned
+                # stride.  As long as every record stays on its 4-byte boundary
+                # the walk still reaches all of them (and the dialogue text /
+                # dispatch table / nested packet that follow just shift with it);
+                # an unaligned record desyncs the walk and later sprites draw
+                # from the wrong bytes -- flicker / missing sprites.
                 rec = tuple(bank['loose'])
                 old_len = sprites.loose_span(rec)
                 fr = bank['frames']
                 blob = sprites.encode_loose(fr[0]['w'], fr[0]['h'],
                                             [tuple(c) for c in fr[0]['palette']],
                                             [f['pixels'] for f in fr])
-                if len(blob) == old_len:
-                    continue                  # same size; in-place path has it
+                # splice even when the aligned length is unchanged (a colour
+                # added while the record was short of its boundary): the in-place
+                # writer would reject the changed colour count.  grew is then 0.
                 raw = bytearray(pkt.raw)
                 raw[off:off + old_len] = blob
             else:

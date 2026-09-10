@@ -197,23 +197,40 @@ def write_loose(packet_raw, rec, palette, pixel_lists):
     packet_raw[pal_off + 2 * ncol: pal_off + 2 * ncol + len(packed)] = packed
 
 
+LOOSE_ALIGN = 4         # records sit on 4-byte boundaries (see loose_span)
+
+
 def encode_loose(w, h, palette, pixel_lists):
     """A whole loose record from scratch: [w][h][ncol][00][nf][FF][pal][px].
 
     Unlike write_loose this is not in place -- it returns the bytes for a
     record of whatever size, so a differently-sized import can replace the
-    old one.  nframes is len(pixel_lists), one shared palette."""
+    old one.  nframes is len(pixel_lists), one shared palette.
+
+    The record is zero-padded up to a 4-byte boundary.  The device finds the
+    next record by walking from this one -- it reads this header, computes
+    6 + 2*ncol + pixel_bytes, rounds *up to a multiple of 4*, and lands on the
+    next record.  Retail files obey this on every record (verified across the
+    whole outing set); a record left an odd length desyncs that walk and every
+    later sprite draws from the wrong bytes (flicker / missing sprites)."""
     nf, ncol = len(pixel_lists), len(palette)
     out = bytes((w, h, ncol, 0, nf, 0xFF))
     out += b''.join(struct.pack('>H', rgb_to_bgr565(c)) for c in palette)
     px = [v for pixels in pixel_lists for v in pixels]
-    return out + pack_pixels(px, ncol)
+    body = out + pack_pixels(px, ncol)
+    pad = (-len(body)) % LOOSE_ALIGN
+    return body + b'\x00' * pad
 
 
 def loose_span(rec):
-    """Byte length of a loose record as it sits now (header+palette+pixels)."""
-    _start, _w, _h, ncol, _nf, avail = rec
-    return 6 + 2 * ncol + avail
+    """Stride to the next record: header+palette+pixels, rounded up to 4.
+
+    This is the walk step the device takes, so a resize must replace exactly
+    this many bytes and shift the rest by a multiple of 4 to keep every later
+    record on its boundary."""
+    _start, w, h, ncol, nf, _avail = rec
+    body = 6 + 2 * ncol + pixel_bytes(w, h, nf, ncol)
+    return (body + LOOSE_ALIGN - 1) // LOOSE_ALIGN * LOOSE_ALIGN
 
 
 def encode_bank(frames, grow=False):
