@@ -504,7 +504,16 @@ const isOpaque=()=>pk&&pk.opaque;
 // and 116 smaller ones are opaque.
 const TRANSPARENT=[0,255,0];
 const transGreen=f=>{const c=f&&f.palette&&f.palette[0];return c&&c[1]===255&&c[0]<128&&c[2]<128};
-const frOpaque=f=>!!f&&!transGreen(f);
+// An outing's records have a fixed role: its sprites are always transparent
+// (green index 0) and only some full-screen backdrops are opaque.  That is
+// stamped as `trans0` at load so recolouring index 0 cannot flip a sprite to
+// opaque -- on the device index 0 stays the transparency key, so a sprite
+// whose index 0 is a real colour draws a solid block and breaks the scene.
+const frOpaque=f=>{
+  if(!f)return false;
+  if(f.trans0!==undefined)return !f.trans0;   // outing: locked at load
+  return !transGreen(f);
+};
 
 // ---- file open ----
 $('openBtn').onclick=()=>$('fileInput').click();
@@ -767,6 +776,9 @@ function selectPacket(path){
   flat=[];
   (pk.banks||[]).forEach((bank,bi)=>{
     if(bank.loose)bank.frames.forEach(f=>f.palette=bank.frames[0].palette);
+    // lock each outing record's transparent/opaque nature to how it shipped
+    // (see frOpaque) so index-0 edits can't turn a sprite opaque
+    if(pk.outing&&bank.loose){const t=transGreen(bank.frames[0]);bank.frames.forEach(f=>f.trans0=t)}
     bank.frames.forEach((fr,fi)=>flat.push({bank:bi,idx:fi,frame:fr,offset:bank.offset,loose:!!bank.loose}));
   });
   $('spriteCard').style.display=flat.length?'':'none';
@@ -932,12 +944,18 @@ function renderPal(){
     d.ondrop=ev=>{
       ev.preventDefault(); d.classList.remove('drop');
       if(palDrag==null||palDrag===i)return;
+      // index 0 of a transparent frame is the transparency key; moving it (or
+      // another colour onto it) would put a real colour in the key slot
+      if(!frOpaque(f)&&(palDrag===0||i===0)){
+        toast('0번(투명색)은 순서를 바꿀 수 없습니다'); palDrag=null; return;
+      }
       movePalette(f,palDrag,i);
       palIdx=i; palDrag=null;
       renderFrame();
     };
     d.ondragend=()=>{palDrag=null;document.querySelectorAll('.sw.drop').forEach(x=>x.classList.remove('drop'))};
     d.ondblclick=()=>{
+      if(i===0&&!frOpaque(f)){toast('0번은 투명색(투명 슬롯)이라 색을 바꿀 수 없습니다');return}
       const inp=document.createElement('input');inp.type='color';
       inp.value='#'+c.map(v=>v.toString(16).padStart(2,'0')).join('');
       inp.oninput=()=>{
@@ -1860,18 +1878,21 @@ $('bmpInput').onchange=async e=>{
       f.w=src.w; f.h=src.h;
       pk.banks[e2.bank].grow=true;      // the slot may have to grow on save
     }
-    // Bring the BMP's own palette in unchanged -- do not force index 0 to
-    // green.  The transparency marker is whatever the imported index 0 is
-    // (G=255 -> transparent), so the user's colour stands; if the sprite
-    // should be transparent they set index 0 to the transparent green
-    // themselves (the swatch shows it as a checkerboard).
+    // A transparent frame's index 0 is the transparency key, not artwork:
+    // the device always reads index 0 of such a record as transparent, so it
+    // must stay the green marker whatever colour the BMP put there (outing
+    // sprites break outright otherwise).  An opaque frame -- a room wallpaper
+    // or an opaque backdrop -- keeps its imported index 0, which is a real
+    // colour there; we never force green onto those.
     const wasTransparent=!frOpaque(f);
     undoStack.push(f.pixels.slice());
     f.pixels=src.pixels;
     f.palette=src.palette.slice(0,Math.max(...src.pixels)+1).map(snap565);
     let note='';
-    if(wasTransparent&&frOpaque(f))
-      note=' · 0번이 투명색이 아니라 이 스프라이트는 불투명이 됩니다 (투명하게 하려면 0번을 초록으로)';
+    if(wasTransparent&&!transGreen(f)){
+      f.palette[0]=TRANSPARENT.slice();
+      note=' · 0번은 투명색(초록)으로 유지했습니다';
+    }
     if(resized){undoStack=[]; renderTabs()}   // the tab label carries the size
     renderFrame(); drawSim();
     toast('BMP 가져오기 완료'+resized+note);
@@ -2582,6 +2603,12 @@ $('saveBtn').onclick=async()=>{
     const palShift=pk.banks.some(b=>b.loose&&b.frames[0].palette.length!==b.loose[3]);
     if(palShift&&!confirmOutingShift())return;
     pk.banks.forEach(b=>{if(b.loose&&b.frames[0].palette.length!==b.loose[3])b.grow=true});
+    // a transparent outing record must ship with the green key in index 0 --
+    // the device reads index 0 as transparent, so a stray colour there breaks
+    // the sprite.  Guarantee it here, keeping any valid green variant as is.
+    pk.banks.forEach(b=>b.frames.forEach(f=>{
+      if(f.trans0&&!transGreen(f))f.palette[0]=TRANSPARENT.slice();
+    }));
     edit.banks=pk.banks;
   }
   if(pk.texts)edit.texts=pk.texts;   // parts[] carries the run layout
