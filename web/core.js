@@ -516,25 +516,12 @@ export function writeLoose(raw, rec, palette, pixelLists) {
 
 // A whole loose record from scratch -- see tama4u/sprites.encode_loose.  Used
 // to replace a record with a differently-sized one; returns the bytes.
-export const LOOSE_ALIGN = 4;   // records sit on 4-byte boundaries (see looseSpan)
-
 export function encodeLoose(w, h, palette, pixelLists) {
-  // zero-pad to a 4-byte boundary: the device walks record->record by
-  // 6 + 2*ncol + pixel_bytes rounded up to 4, so an unaligned record desyncs
-  // the walk and every later sprite draws from the wrong bytes.
   const nf = pixelLists.length, ncol = palette.length;
   const out = [w, h, ncol, 0, nf, 0xff];
   for (const c of palette) { const v = rgbToBgr565(c); out.push(v >> 8, v & 0xff); }
   const px = [].concat(...pixelLists);
-  const body = [...out, ...packPixels(px, ncol)];
-  while (body.length % LOOSE_ALIGN) body.push(0);
-  return Uint8Array.from(body);
-}
-
-// stride to the next record: header+palette+pixels rounded up to 4
-export function looseSpan(w, h, ncol, nf) {
-  const body = 6 + 2 * ncol + pixelBytes(w, h, nf, ncol);
-  return Math.ceil(body / LOOSE_ALIGN) * LOOSE_ALIGN;
+  return Uint8Array.from([...out, ...packPixels(px, ncol)]);
 }
 
 // ---- indexed BMP: 4bpp like Tama Image Editor, 8bpp for >16 colours ---

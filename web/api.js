@@ -3,7 +3,7 @@
 // unchanged; web/selftest.js diffs the two implementations file by file.
 import {
   parseFile, buildFile, Packet, u16, putU16, OFF_PACKET_SIZE,
-  parseBank, writeBank, encodeBank, encodeLoose, looseSpan, sum16, scanBanks, scanLoose, readLoose, writeLoose,
+  parseBank, writeBank, encodeBank, encodeLoose, sum16, scanBanks, scanLoose, readLoose, writeLoose,
   destOptions,
   OFF_TYPE_SIG,
 } from './core.js';
@@ -356,18 +356,13 @@ function resizeBanks(packets, edits) {
       const off = bank.offset;
       let raw, oldSpan;
       if (bank.loose) {
-        // a loose record sits in a program's sprite tail.  The device walks
-        // record->record by 6 + 2*ncol + pixel_bytes rounded up to 4, so
-        // encodeLoose 4-byte-pads the rebuilt record and looseSpan gives that
-        // same aligned stride; keeping every record on its boundary lets the
-        // walk still reach them all (the dialogue text / table / nested packet
-        // after them just shift, none is referenced by an absolute offset).
+        // a loose record sits in a program's sprite tail; rebuild at any
+        // size and splice, moving every record after it (see api warning)
         const rec = bank.loose;
-        oldSpan = looseSpan(rec[1], rec[2], rec[3], rec[4]);
+        oldSpan = 6 + 2 * rec[3] + rec[5];
         const fr = bank.frames;
         const blob = encodeLoose(fr[0].w, fr[0].h, fr[0].palette, fr.map(f => f.pixels));
-        // splice even when the aligned length is unchanged (a colour added
-        // while the record was short of its boundary); grew is then 0.
+        if (blob.length === oldSpan) continue;        // same size; in-place has it
         raw = new Uint8Array(pkt.size - oldSpan + blob.length);
         raw.set(pkt.raw.subarray(0, off), 0);
         raw.set(blob, off);

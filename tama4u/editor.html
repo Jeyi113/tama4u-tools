@@ -823,37 +823,23 @@ function resizableFrame(){
   if(!pk||pk.model!=='4U')return null;
   const e=flat[cur]; if(!e)return null;
   // a character's built-in accessory (wardrobe frames 23-26) grows in its
-  // count-bank slot
+  // count-bank slot.  Outing sprites are NOT resizable: they are loose
+  // records the program addresses by baked-in offsets, so changing any
+  // record's byte length (bigger frame OR a different colour count, which
+  // resizes the palette section) shifts every record after it and the
+  // device then draws the wrong sprites -- confirmed to break scenes on
+  // hardware.  Outing swaps must keep the exact record size instead.
   if(pk.is_wardrobe&&!e.loose&&RESIZABLE_FRAMES.includes(e.idx+1))return e;
-  // an outing's sprites are loose records in the program's data tail.  A
-  // resized record is safe as long as it stays on its 4-byte boundary: the
-  // device finds each sprite by walking record->record from the headers
-  // (6 + 2*ncol + pixel_bytes, rounded up to 4) and refers to sprites by
-  // order, not by stored offset -- verified across the whole outing set,
-  // and the dialogue text / dispatch table / nested packet after them carry
-  // no absolute pointers either, so they simply shift along.  encodeLoose
-  // keeps the alignment; the earlier breakage was an unaligned rebuild.
-  if(pk.outing&&e.loose)return e;
   return null;
 }
-function resizeIsOuting(){
+// The record's fixed colour count for the current outing sprite (its loose
+// header's ncol); the palette must stay this size so the record byte length
+// never changes.  null when the current frame is not an outing loose record.
+function outingLockedNcol(){
   const e=flat[cur];
-  return !!(pk&&pk.outing&&e&&e.loose);
-}
-// Resizing an outing sprite (bigger frame or a different colour count) rebuilds
-// the record and shifts the ones after it.  That is safe -- records stay 4-byte
-// aligned so the device's walk still finds them, and nothing after is addressed
-// by an absolute offset -- but it changes a program file, so ask once per file
-// and suggest a real-device check.
-let outingResizeOK=false;
-function confirmOutingResize(){
-  if(outingResizeOK)return true;
-  if(confirm('외출지 스프라이트의 크기/색 수를 바꾸면 뒤 스프라이트들이 밀립니다.\n\n'
-      +'기기는 스프라이트를 순서로 찾고 4바이트 정렬을 지키므로 화면은 정상 유지됩니다'
-      +'(리테일 전 파일로 검증). 다만 프로그램 파일이니 실기에서 한 번 확인해 주세요.\n\n계속할까요?')){
-    outingResizeOK=true; return true;
-  }
-  return false;
+  if(!(pk&&pk.outing&&e&&e.loose))return null;
+  const b=pk.banks[e.bank];
+  return b&&b.loose?b.loose[3]:null;
 }
 function renderFrame(){
   const f=curFrame(), sc=scaleFor(f), cv=$('cv');
@@ -976,14 +962,11 @@ function renderPal(){
       e.preventDefault();
       if(used){toast(`인덱스 ${i}은 ${used}픽셀에서 사용 중이라 삭제할 수 없습니다`);return}
       if(f.palette.length<=1)return;
-      // loose records carry their colour count in the header, so removing a
-      // colour changes the record length.  An outing rebuilds the record
-      // (kept 4-byte aligned) on save; a game loose record is not resizable.
-      if(flat[cur].loose){
-        if(!resizeIsOuting()){toast('이 스프라이트는 팔레트 색 수를 바꿀 수 없습니다');return}
-        if(!confirmOutingResize())return;
-        pk.banks[flat[cur].bank].grow=true;
-      }
+      // loose records (games/outings) carry their colour count in the header,
+      // so removing a colour changes the record length and shifts every later
+      // record -- which breaks the program.  The count is fixed; unused slots
+      // just stay unused.
+      if(flat[cur].loose){toast('이 스프라이트는 팔레트 색 수를 바꿀 수 없습니다 (레코드 크기 고정)');return}
       f.palette.splice(i,1);
       f.pixels=f.pixels.map(v=>v>i?v-1:v);
       if(palIdx>=f.palette.length)palIdx=f.palette.length-1;
@@ -991,13 +974,10 @@ function renderPal(){
     };
     el.appendChild(d);
   });
-  if(f.palette.length<16&&(!flat[cur].loose||resizeIsOuting())){
+  if(f.palette.length<16&&!flat[cur].loose){
     const add=document.createElement('div');add.className='sw';add.textContent='+';
     add.style.cssText='display:grid;place-items:center;color:#999';
-    add.onclick=()=>{
-      if(flat[cur].loose){if(!confirmOutingResize())return; pk.banks[flat[cur].bank].grow=true}
-      f.palette.push([0,0,0]);palIdx=f.palette.length-1;renderFrame();
-    };
+    add.onclick=()=>{f.palette.push([0,0,0]);palIdx=f.palette.length-1;renderFrame()};
     el.appendChild(add);
   }
 }
@@ -1866,6 +1846,7 @@ $('bmpInput').onchange=async e=>{
   e.target.value='';
   try{
     const src=bmpToFrame(await file.arrayBuffer()), f=curFrame();
+    const lockNcol=outingLockedNcol();     // fixed colour count for outings
     const usedColors=Math.max(...src.pixels)+1;
     let resized='';
     if(src.w!==f.w||src.h!==f.h){
@@ -1876,19 +1857,23 @@ $('bmpInput').onchange=async e=>{
       const e2=resizableFrame();
       if(!e2){
         toast(`크기가 다릅니다: ${src.w}×${src.h} → ${f.w}×${f.h} 필요`
-          +' (크기를 바꿀 수 있는 것은 캐릭터 23~26번 프레임과 외출지 스프라이트뿐입니다)');
+          +(lockNcol!=null
+            ? ' (외출지 스프라이트는 크기를 바꿀 수 없습니다 — 레코드가 밀려 게임이 깨집니다. 같은 크기로 맞춰 주세요)'
+            : ' (크기를 바꿀 수 있는 것은 캐릭터 23~26번 프레임뿐입니다)'));
         return;
       }
-      if(resizeIsOuting()&&!confirmOutingResize())return;
       resized=` · ${f.w}×${f.h} → ${src.w}×${src.h}로 맞췄습니다`;
       f.w=src.w; f.h=src.h;
-      pk.banks[e2.bank].grow=true;      // the record is rebuilt (4-aligned) on save
+      pk.banks[e2.bank].grow=true;      // the slot may have to grow on save
     }
-    // An outing record whose colour count changes also has to be rebuilt (the
-    // palette section is 2 bytes/colour); encodeLoose keeps it 4-byte aligned.
-    if(resizeIsOuting()&&usedColors!==pk.banks[flat[cur].bank].loose[3]){
-      if(!resized&&!confirmOutingResize())return;
-      pk.banks[flat[cur].bank].grow=true;
+    // An outing record's byte length is fixed -- the program addresses the
+    // records by baked-in offsets, so a record that grows or shrinks shifts
+    // the rest and breaks the scene.  The palette section is 2 bytes/colour,
+    // so the colour count must stay the record's original ncol: pad up to it
+    // (extra slots go unused) and refuse a BMP that needs more colours.
+    if(lockNcol!=null&&usedColors>lockNcol){
+      toast(`이 외출지 스프라이트는 최대 ${lockNcol}색입니다 (레코드 크기가 고정이라 색을 늘리면 뒤 스프라이트가 밀려 깨집니다). 색을 ${lockNcol}개 이하로 줄여 다시 시도하세요`);
+      return;
     }
     // A transparent frame's index 0 is the transparency key, not artwork:
     // the device always reads index 0 of such a record as transparent, so it
@@ -1904,6 +1889,12 @@ $('bmpInput').onchange=async e=>{
     if(wasTransparent&&!transGreen(f)){
       f.palette[0]=TRANSPARENT.slice();
       note=' · 0번은 투명색(초록)으로 유지했습니다';
+    }
+    if(lockNcol!=null){
+      // keep the record the exact same length: pad the palette back up to its
+      // fixed colour count with unused slots
+      while(f.palette.length<lockNcol)f.palette.push([0,0,0]);
+      if(f.palette.length<usedColors)f.palette.length=usedColors; // safety
     }
     if(resized){undoStack=[]; renderTabs()}   // the tab label carries the size
     renderFrame(); drawSim();
@@ -2607,10 +2598,6 @@ $('saveBtn').onclick=async()=>{
   }
   if(pk.acc_pos)edit.acc_pos=pk.acc_pos;
   if(pk.banks){
-    // a loose record whose colour count no longer matches its header ncol must
-    // be rebuilt (encodeLoose, 4-byte aligned) rather than rewritten in place;
-    // mark it grow so the resize path takes it (safety net for any edit path)
-    pk.banks.forEach(b=>{if(b.loose&&b.frames[0].palette.length!==b.loose[3])b.grow=true});
     // a transparent outing record must ship with the green key in index 0 --
     // the device reads index 0 as transparent, so a stray colour there breaks
     // the sprite.  Guarantee it here, keeping any valid green variant as is.
