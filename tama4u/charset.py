@@ -246,10 +246,12 @@ def write_text(packet_raw, offset, char_count, text, table=None, width=2,
     """Replace a text run in place; shorter text is padded out.
 
     `pad` is the fill code for the unused tail.  The default is the
-    full-width space, right for a dialogue box.  A name field read until a
-    terminator (the character block's Name 2 and transform-item name sit
-    back to back) must instead pad with 0 the way retail does -- otherwise
-    the device runs one name straight into the next.  Pass pad=0 there."""
+    full-width space, for a run the device measures by its fixed width.  Any
+    field the device reads until a terminator must instead pad with 0 the way
+    retail does, or one entry runs straight into the next: the character
+    block's Name 2 and transform-item name sit back to back, and each of the
+    14 character dialogue slots is null-terminated (space-padding there spills
+    one line into the following slots all the way down).  Pass pad=0."""
     import struct
     table = table or load_table()
     codes = encode(text, table)

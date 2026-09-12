@@ -210,7 +210,7 @@ export function describe(data, opts = {}) {
           const off = F.CH.DIALOGUE + i * 150;
           const codes = [];
           for (let k = 0; k < 75; k++) codes.push(u16(pkt.raw, off + 2 * k));
-          return { offset: off, chars: 75, label, width: 2,
+          return { offset: off, chars: 75, label, width: 2, pad: 0,  // null-terminated
                    text: F.decode(codes, table).replace(/^　+|　+$/g, '') };
         });
         info.body_type = pkt.raw[F.CH.BODY_TYPE];
@@ -496,7 +496,9 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     if ('anim_a' in edit) F.setAnim(pkt, edit.anim_a, edit.anim_b ?? edit.anim_a);
     for (const t of edit.texts || []) {
       if (t.parts) F.writeGrouped(pkt.raw, t.parts, t.text, model, t.width ?? 2);
-      else F.writeText(pkt.raw, t.offset, t.chars, t.text, model, t.width ?? 2);
+      // character dialogue slots are null-terminated (pad:0) so the device
+      // stops at each; space-padding runs one line into the next -- see format.js
+      else F.writeText(pkt.raw, t.offset, t.chars, t.text, model, t.width ?? 2, t.pad ?? null);
     }
     for (const bank of edit.banks || []) {
       const off = bank.offset;

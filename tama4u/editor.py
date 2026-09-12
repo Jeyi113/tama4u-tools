@@ -306,6 +306,8 @@ def describe(data, partner=None):
                              for k in range(75)]
                     info['texts'].append({
                         'offset': off, 'chars': 75, 'label': label, 'width': 2,
+                        # null-terminated on retail (see _apply_fields)
+                        'pad': 0,
                         'text': charset.decode(codes, table).strip('\u3000')})
                 info['body_type'] = pkt.raw[character.OFF_BODY_TYPE]
                 info['char_stats'] = character.get_stats(pkt)
@@ -525,8 +527,13 @@ def _apply_fields(pkt, edit):
             charset.write_grouped(pkt.raw, [tuple(p) for p in t['parts']],
                                   t['text'], table, t.get('width', 2))
         else:
+            # character dialogue slots are null-terminated: the device reads a
+            # slot until 0x0000, so space-padding runs one line into the next
+            # (and on down the 14 slots to the end).  describe() marks those
+            # with pad=0; item/letter text keeps the full-width-space default.
             charset.write_text(pkt.raw, t['offset'], t['chars'],
-                               t['text'], table, t.get('width', 2))
+                               t['text'], table, t.get('width', 2),
+                               pad=t.get('pad'))
     for bank in edit.get('banks', []):
         off = bank['offset']
         if bank.get('loose'):
