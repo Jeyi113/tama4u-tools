@@ -306,9 +306,15 @@ def describe(data, partner=None):
                              for k in range(75)]
                     info['texts'].append({
                         'offset': off, 'chars': 75, 'label': label, 'width': 2,
-                        # null-terminated on retail (see _apply_fields)
+                        # null-terminated on retail (see _apply_fields), and
+                        # the LEADING full-width spaces are load-bearing -- they
+                        # scroll each line in and keep it from running into the
+                        # next situation's line; stripping them (as .strip once
+                        # did) makes the device concatenate every line to the
+                        # end.  Keep the run verbatim; decode already drops the
+                        # trailing 0x0000 padding.
                         'pad': 0,
-                        'text': charset.decode(codes, table).strip('\u3000')})
+                        'text': charset.decode(codes, table)})
                 info['body_type'] = pkt.raw[character.OFF_BODY_TYPE]
                 info['char_stats'] = character.get_stats(pkt)
                 cs = info['char_stats']

@@ -210,8 +210,11 @@ export function describe(data, opts = {}) {
           const off = F.CH.DIALOGUE + i * 150;
           const codes = [];
           for (let k = 0; k < 75; k++) codes.push(u16(pkt.raw, off + 2 * k));
-          return { offset: off, chars: 75, label, width: 2, pad: 0,  // null-terminated
-                   text: F.decode(codes, table).replace(/^　+|　+$/g, '') };
+          // null-terminated, and the LEADING full-width spaces are load-bearing
+          // (they scroll each line in and stop it running into the next); keep
+          // the run verbatim -- decode already drops the trailing 0x0000.
+          return { offset: off, chars: 75, label, width: 2, pad: 0,
+                   text: F.decode(codes, table) };
         });
         info.body_type = pkt.raw[F.CH.BODY_TYPE];
         info.char_stats = F.getCharStats(pkt);
