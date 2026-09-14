@@ -304,17 +304,20 @@ def describe(data, partner=None):
                     off = character.OFF_DIALOGUE + i * 150
                     codes = [struct.unpack_from('>H', pkt.raw, off + 2 * k)[0]
                              for k in range(75)]
+                    full = charset.decode(codes, table)
                     info['texts'].append({
                         'offset': off, 'chars': 75, 'label': label, 'width': 2,
-                        # null-terminated on retail (see _apply_fields), and
-                        # the LEADING full-width spaces are load-bearing -- they
-                        # scroll each line in and keep it from running into the
-                        # next situation's line; stripping them (as .strip once
-                        # did) makes the device concatenate every line to the
-                        # end.  Keep the run verbatim; decode already drops the
-                        # trailing 0x0000 padding.
+                        # null-terminated on retail, and the LEADING full-width
+                        # spaces are load-bearing -- they scroll each line in and
+                        # keep it from running into the next situation's line, so
+                        # stripping them makes the device concatenate every line
+                        # to the end.  The editor shows the clean message and
+                        # carries the leading-space count in `lead`; _apply_fields
+                        # puts the spaces back on save so the user never manages
+                        # them by hand.
                         'pad': 0,
-                        'text': charset.decode(codes, table)})
+                        'lead': len(full) - len(full.lstrip('　')),
+                        'text': full.strip('　')})
                 info['body_type'] = pkt.raw[character.OFF_BODY_TYPE]
                 info['char_stats'] = character.get_stats(pkt)
                 cs = info['char_stats']
@@ -533,12 +536,16 @@ def _apply_fields(pkt, edit):
             charset.write_grouped(pkt.raw, [tuple(p) for p in t['parts']],
                                   t['text'], table, t.get('width', 2))
         else:
-            # character dialogue slots are null-terminated: the device reads a
-            # slot until 0x0000, so space-padding runs one line into the next
-            # (and on down the 14 slots to the end).  describe() marks those
-            # with pad=0; item/letter text keeps the full-width-space default.
+            # character dialogue slots are null-terminated (pad=0) and keep the
+            # leading full-width spaces that scroll the line in; the editor drops
+            # them for display and carries the count in `lead`, so put them back
+            # here.  A non-empty line gets its `lead` spaces (capped so the whole
+            # thing still fits the slot); an empty line stays all-null.
+            body, lead = t['text'], t.get('lead', 0)
+            if body and lead:
+                body = '　' * lead + body[:max(0, t['chars'] - lead)]
             charset.write_text(pkt.raw, t['offset'], t['chars'],
-                               t['text'], table, t.get('width', 2),
+                               body, table, t.get('width', 2),
                                pad=t.get('pad'))
     for bank in edit.get('banks', []):
         off = bank['offset']

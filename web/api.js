@@ -210,11 +210,14 @@ export function describe(data, opts = {}) {
           const off = F.CH.DIALOGUE + i * 150;
           const codes = [];
           for (let k = 0; k < 75; k++) codes.push(u16(pkt.raw, off + 2 * k));
-          // null-terminated, and the LEADING full-width spaces are load-bearing
-          // (they scroll each line in and stop it running into the next); keep
-          // the run verbatim -- decode already drops the trailing 0x0000.
+          // null-terminated, and the LEADING full-width spaces scroll each line
+          // in and stop it running into the next situation's line; drop them for
+          // display and carry the count in `lead` so applyEdits puts them back
+          // (the user never manages them by hand).
+          const full = F.decode(codes, table);
           return { offset: off, chars: 75, label, width: 2, pad: 0,
-                   text: F.decode(codes, table) };
+                   lead: full.length - full.replace(/^　+/, '').length,
+                   text: full.replace(/^　+|　+$/g, '') };
         });
         info.body_type = pkt.raw[F.CH.BODY_TYPE];
         info.char_stats = F.getCharStats(pkt);
@@ -499,9 +502,14 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     if ('anim_a' in edit) F.setAnim(pkt, edit.anim_a, edit.anim_b ?? edit.anim_a);
     for (const t of edit.texts || []) {
       if (t.parts) F.writeGrouped(pkt.raw, t.parts, t.text, model, t.width ?? 2);
-      // character dialogue slots are null-terminated (pad:0) so the device
-      // stops at each; space-padding runs one line into the next -- see format.js
-      else F.writeText(pkt.raw, t.offset, t.chars, t.text, model, t.width ?? 2, t.pad ?? null);
+      else {
+        // character dialogue: null-terminated (pad:0) and the leading full-width
+        // spaces (carried in `lead`) are put back here so the line still scrolls
+        // in and stops at its slot -- empty lines stay all-null.
+        let body = t.text, lead = t.lead ?? 0;
+        if (body && lead) body = '　'.repeat(lead) + body.slice(0, Math.max(0, t.chars - lead));
+        F.writeText(pkt.raw, t.offset, t.chars, body, model, t.width ?? 2, t.pad ?? null);
+      }
     }
     for (const bank of edit.banks || []) {
       const off = bank.offset;

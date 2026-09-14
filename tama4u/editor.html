@@ -761,13 +761,17 @@ function selectPacket(path){
   if(pk.texts){
     $('texts').innerHTML='';
     pk.texts.forEach((t,i)=>{
+      // dialogue reserves `lead` leading full-width spaces (scroll-in), added
+      // back automatically on save, so the usable length is that much shorter
+      const lim=t.chars-(t.lead||0);
+      const lead=t.lead? ` · 앞 여백 ${t.lead}칸 자동`:'';
       const l=document.createElement('label');
-      l.textContent=`${t.label||('@0x'+t.offset.toString(16))} · 최대 ${t.chars}자`+
+      l.textContent=`${t.label||('@0x'+t.offset.toString(16))} · 최대 ${lim}자${lead}`+
         (t.parts&&t.parts.length>1?` (${t.parts.length}줄 합침)`:'');
       const inp=document.createElement('input');
-      inp.value=t.text.replace(/　+$/,''); inp.maxLength=t.chars; inp.dataset.i=i;
+      inp.value=t.text.replace(/　+$/,''); inp.maxLength=lim; inp.dataset.i=i;
       inp.oninput=()=>{pk.texts[i].text=inp.value;
-        l.textContent=`${t.label} · ${inp.value.length}/${t.chars}자`+
+        l.textContent=`${t.label} · ${inp.value.length}/${lim}자${lead}`+
           (t.parts&&t.parts.length>1?` (${t.parts.length}줄 합침)`:'')};
       $('texts').append(l,inp);
     });
