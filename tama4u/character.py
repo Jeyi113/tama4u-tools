@@ -115,6 +115,13 @@ DIALOGUE_LABELS = [
     'Best friend rnd NFC1', 'Random talk 1', 'Random talk 2',
 ]
 
+# Leading full-width spaces each dialogue slot scrolls in behind.  Dead
+# constant across all 78 4U download characters: the scrolled status lines
+# (slots 1-7, 12, 13) carry 13, and the NFC-result lines shown in place
+# (0, 8-11) carry none.  An edited file that lost them is restored to this
+# so it does not run one line into the next on the device.
+DIALOGUE_LEAD = {i: 13 for i in (1, 2, 3, 4, 5, 6, 7, 12, 13)}
+
 _U8 = {
     'graphics': None, 'personality': OFF_PERSONALITY, 'stage': OFF_STAGE,
     'weight_std': OFF_WEIGHT_STD, 'weight_min': OFF_WEIGHT_MIN,

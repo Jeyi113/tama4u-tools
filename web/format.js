@@ -1041,6 +1041,10 @@ export const DIALOGUE_LABELS = [
   'Hobby skill rnd NFC4', 'Dream job rnd NFC3', 'Fav.food rnd NFC2',
   'Best friend rnd NFC1', 'Random talk 1', 'Random talk 2',
 ];
+// leading full-width spaces each slot scrolls in behind (see tama4u/character.py):
+// the scrolled status lines carry 13, the in-place NFC-result lines none.  Used
+// to repair a file whose leading spaces an earlier edit stripped.
+export const DIALOGUE_LEAD = { 1: 13, 2: 13, 3: 13, 4: 13, 5: 13, 6: 13, 7: 13, 12: 13, 13: 13 };
 
 export function getCharStats(p) {
   const out = {};

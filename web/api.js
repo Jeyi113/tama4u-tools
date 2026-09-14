@@ -215,8 +215,11 @@ export function describe(data, opts = {}) {
           // display and carry the count in `lead` so applyEdits puts them back
           // (the user never manages them by hand).
           const full = F.decode(codes, table);
+          // keep the file's own leading spaces, else fall back to the retail
+          // standard for this slot so re-saving a broken file repairs it
           return { offset: off, chars: 75, label, width: 2, pad: 0,
-                   lead: full.length - full.replace(/^　+/, '').length,
+                   lead: (full.length - full.replace(/^　+/, '').length)
+                         || (F.DIALOGUE_LEAD[i] || 0),
                    text: full.replace(/^　+|　+$/g, '') };
         });
         info.body_type = pkt.raw[F.CH.BODY_TYPE];

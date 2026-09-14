@@ -316,7 +316,11 @@ def describe(data, partner=None):
                         # puts the spaces back on save so the user never manages
                         # them by hand.
                         'pad': 0,
-                        'lead': len(full) - len(full.lstrip('　')),
+                        # keep the file's own leading spaces, but if an earlier
+                        # edit stripped them, fall back to the retail standard
+                        # for this slot so re-saving a broken file repairs it
+                        'lead': (len(full) - len(full.lstrip('　')))
+                                 or character.DIALOGUE_LEAD.get(i, 0),
                         'text': full.strip('　')})
                 info['body_type'] = pkt.raw[character.OFF_BODY_TYPE]
                 info['char_stats'] = character.get_stats(pkt)
