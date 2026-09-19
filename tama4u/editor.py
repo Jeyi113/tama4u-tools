@@ -650,6 +650,41 @@ def _resize_banks(packets, edits):
             edit['banks'] = [b for b in edit['banks'] if not b.get('done')]
     return delta
 
+def _grow_loose_in_packet(pkt, edit):
+    """Rebuild grow-marked loose banks inside a single packet, in place.
+
+    _resize_banks skips VDP paths because a VDP content sits in the packed
+    stream, not at a top-level offset -- but a content that is itself a program
+    (an embedded outing/game) can still have a sprite resized.  Here we rebuild
+    the record (4-byte aligned, like _resize_banks), splice it into the content's
+    own bytes, fix its 0x4A packet size and checksum, and shift the later banks;
+    the VDP re-assembly then carries the now longer content across.  Handled
+    banks are marked done so the in-place writer skips them."""
+    for bank in edit.get('banks', []):
+        if not bank.get('grow') or not bank.get('loose'):
+            continue
+        off = bank['offset']
+        old_len = sprites.loose_span(tuple(bank['loose']))
+        fr = bank['frames']
+        blob = sprites.encode_loose(fr[0]['w'], fr[0]['h'],
+                                    [tuple(c) for c in fr[0]['palette']],
+                                    [f['pixels'] for f in fr])
+        raw = bytearray(pkt.raw)
+        raw[off:off + old_len] = blob
+        struct.pack_into('>H', raw, container.OFF_PACKET_SIZE, len(raw))
+        struct.pack_into('>H', raw, len(raw) - 2, container.sum16(raw[:-2]))
+        grew = len(raw) - len(pkt.raw)
+        pkt.raw = raw
+        bank['done'] = True
+        for other in edit.get('banks', []):
+            if other is bank or other.get('offset', 0) <= off:
+                continue
+            other['offset'] += grew
+            if other.get('loose'):
+                other['loose'] = [other['loose'][0] + grew, *other['loose'][1:]]
+    edit['banks'] = [b for b in edit.get('banks', []) if not b.get('done')]
+
+
 def apply_edits(data, edits, new_jpeg=None, partner=None):
     """`partner` is a VDP+'s continuations -- one file or a list.  With
     them, edits reach the whole bundle and the result comes back as a list
@@ -742,6 +777,7 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
                     donor = convert.convert(donor, edit['convert_to'])
                 subs[idx] = vdp.fit_content(subs[idx], donor)
                 continue
+            _grow_loose_in_packet(subs[idx], edit)   # resize embedded program sprites
             _apply_fields(subs[idx], edit)
         for idx, edit in charjobs:
             vdp.write_char_block(payload, idx, edit, model=pkt.model)
