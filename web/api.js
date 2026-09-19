@@ -482,6 +482,36 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
     for (const p of packets) p.shiftDeclaredSize(delta);
     jpeg = newJpeg;
   }
+  // resizeBanks skips VDP paths, so rebuild grow-marked loose banks inside a
+  // VDP content here (embedded outing/game sprite resize) -- mirror of
+  // tama4u/editor.py _grow_loose_in_packet.  The re-assembly carries the now
+  // longer content across.
+  const growLooseInPacket = (pkt, edit) => {
+    const banks = edit.banks || [];
+    for (const bank of banks) {
+      if (!bank.grow || !bank.loose) continue;
+      const off = bank.offset, rec = bank.loose;
+      const oldLen = F.looseSpan ? F.looseSpan(rec[1], rec[2], rec[3], rec[4])
+                                 : looseSpan(rec[1], rec[2], rec[3], rec[4]);
+      const fr = bank.frames;
+      const blob = encodeLoose(fr[0].w, fr[0].h, fr[0].palette, fr.map(f => f.pixels));
+      const raw = new Uint8Array(pkt.raw.length - oldLen + blob.length);
+      raw.set(pkt.raw.subarray(0, off), 0);
+      raw.set(blob, off);
+      raw.set(pkt.raw.subarray(off + oldLen), off + blob.length);
+      putU16(raw, OFF_PACKET_SIZE, raw.length);
+      putU16(raw, raw.length - 2, sum16(raw.subarray(0, raw.length - 2)));
+      const grew = raw.length - pkt.raw.length;
+      pkt.raw = raw;
+      bank.done = true;
+      for (const other of banks) {
+        if (other === bank || (other.offset ?? 0) <= off) continue;
+        other.offset += grew;
+        if (other.loose) other.loose = [other.loose[0] + grew, ...other.loose.slice(1)];
+      }
+    }
+    edit.banks = banks.filter(b => !b.done);
+  };
   const applyOne = (pkt, edit) => {
     const model = pkt.model;
     if ('serial' in edit) pkt.setSerial(+edit.serial);
@@ -582,6 +612,7 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
         subs[idx] = F.vdpFitContent(subs[idx], donor);
         continue;
       }
+      growLooseInPacket(subs[idx], edit);   // resize embedded program sprites
       applyOne(subs[idx], edit);
     }
     for (const [idx, edit] of charjobs)
