@@ -851,16 +851,19 @@ function resizeIsOuting(){
   return !!(pk&&pk.outing&&e&&e.loose);
 }
 // Resizing an outing sprite (bigger frame or a different colour count) rebuilds
-// the record and shifts the ones after it.  That is safe -- records stay 4-byte
-// aligned so the device's walk still finds them, and nothing after is addressed
-// by an absolute offset -- but it changes a program file, so ask once per file
-// and suggest a real-device check.
+// the record and shifts everything after it.  An outing bakes the *absolute*
+// address of every sprite and dialogue string into its own S1C33 code, so the
+// save re-points all of those, patches the dialogue pointer table and the
+// copy-size/packet-size fields, and reseals the checksum (tama4u/outing.py).
+// Verified on real P's and 4U hardware; still a program file, so a one-time
+// device check is worth it.
 let outingResizeOK=false;
 function confirmOutingResize(){
   if(outingResizeOK)return true;
   if(confirm('외출지 스프라이트의 크기/색 수를 바꾸면 뒤 스프라이트들이 밀립니다.\n\n'
-      +'기기는 스프라이트를 순서로 찾고 4바이트 정렬을 지키므로 화면은 정상 유지됩니다'
-      +'(리테일 전 파일로 검증). 다만 프로그램 파일이니 실기에서 한 번 확인해 주세요.\n\n계속할까요?')){
+      +'엔진 코드의 절대주소 참조·대사 포인터 테이블·크기 필드를 저장 시 자동으로 함께 '
+      +'보정합니다 (P’s·4U 실기 검증 완료). 다만 프로그램 파일이니 실기에서 한 번 확인해 주세요.'
+      +'\n\n계속할까요?')){
     outingResizeOK=true; return true;
   }
   return false;

@@ -537,6 +537,125 @@ export function looseSpan(w, h, ncol, nf) {
   return Math.ceil(body / LOOSE_ALIGN) * LOOSE_ALIGN;
 }
 
+// ---- outing sprite resize (S1C33-aware) -- mirror of tama4u/outing.py ------
+// A P's/4U outing runs from an exec buffer at CPU 0x02000000 and bakes the
+// absolute address of every sprite and dialogue string into its own code, so a
+// resize must move each baked reference by the same delta.  See outing.py for
+// the full account of the six things that move together.
+export const u32le = (b, o) =>
+  (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+export const putU32le = (b, o, v) => {
+  b[o] = v & 0xff; b[o + 1] = (v >> 8) & 0xff;
+  b[o + 2] = (v >> 16) & 0xff; b[o + 3] = (v >>> 24) & 0xff;
+};
+
+const OUTING_EXEC_BASE = 0x02000000;      // P's/4U/iD L default; iD is 0x00FF0000
+const OUTING_CODE_START = 0x104;          // real entry (exec base + BE32 @0xA4)
+const outingIsExecPtr = (v, len, base) => v >= base && v <= base + len;
+
+// The exec-buffer base is device-specific, but every sprite reference is
+// base + record_offset, so the base is the offset most ld.w immediates share
+// with a loose record start.  Mirror of tama4u/outing.py _detect_base.
+function detectOutingBase(item) {
+  const recs = scanLoose(item);
+  if (!recs.length) return OUTING_EXEC_BASE;
+  const starts = recs.map(r => r[0]);
+  const votes = new Map();
+  for (const [, imm] of outingCodeRefs(item))
+    for (const o of starts) {
+      const b = imm - o;
+      if (b > 0) votes.set(b, (votes.get(b) || 0) + 1);
+    }
+  let best = OUTING_EXEC_BASE, bestN = 0;
+  for (const [b, n] of votes) if (n > bestN) { best = b; bestN = n; }
+  return bestN ? best : OUTING_EXEC_BASE;
+}
+
+// Yield [pc, imm] for every two-ext `xld.w` in the code region.  A pure S1C33
+// walk from the entry point; verified to match the emulator's disassembler.
+export function* outingCodeRefs(item, lo = OUTING_CODE_START, hi = null) {
+  if (hi === null) { const r = scanLoose(item); hi = r.length ? r[0][0] : item.length; }
+  let pc = lo;
+  while (pc < hi - 1) {
+    const start = pc;
+    let hw = u16le(item, pc), extN = 0, ext0 = 0, ext1 = 0;
+    while ((hw >> 13) === 6) {
+      if (extN === 0) ext0 = hw & 0x1fff;
+      else if (extN === 1) ext1 = hw & 0x1fff;
+      else break;
+      extN++; pc += 2;
+      if (pc >= hi - 1) return;
+      hw = u16le(item, pc);
+    }
+    if ((hw >> 13) === 3 && extN === 2) {          // two-ext class-3 ALU imm
+      const op1 = (hw >> 10) & 7, imm6 = (hw >> 4) & 0x3f;
+      const imm = ((ext0 << 19) | (ext1 << 6) | imm6) >>> 0;
+      if (op1 === 3) yield [start, imm];           // ld.w rd, imm
+    }
+    pc += 2;
+  }
+}
+
+function outingReencodeLdw(item, pc, newImm) {
+  putU16le(item, pc, 0xc000 | ((newImm >> 19) & 0x1fff));
+  putU16le(item, pc + 2, 0xc000 | ((newImm >> 6) & 0x1fff));
+  let base = u16le(item, pc + 4);
+  base = (base & ~(0x3f << 4)) | ((newImm & 0x3f) << 4);
+  putU16le(item, pc + 4, base);
+}
+
+// Replace loose sprite `index` and fix every baked reference; returns new bytes.
+export function resizeOuting(item, index, width, height, palette, pixelLists) {
+  const orig = Uint8Array.from(item), origLen = orig.length;
+  const base = detectOutingBase(orig);          // exec buffer (device-specific)
+  const rec = scanLoose(orig)[index];
+  const start = rec[0];
+  const oldLen = looseSpan(rec[1], rec[2], rec[3], rec[4]);
+  const blob = encodeLoose(width, height, palette, pixelLists);
+  const delta = blob.length - oldLen;
+  const growPoint = start + oldLen;
+
+  // locate references and dialogue pointer tables on the ORIGINAL layout
+  const refs = [];
+  for (const [pc, imm] of outingCodeRefs(orig))
+    if (outingIsExecPtr(imm, origLen, base)) refs.push([pc, imm]);
+  const tables = [];
+  for (const [, imm] of refs) {
+    const fo = imm - base;
+    if (fo + 8 <= origLen && outingIsExecPtr(u32le(orig, fo), origLen, base)
+        && outingIsExecPtr(u32le(orig, fo + 4), origLen, base)) tables.push(fo);
+  }
+
+  // 1. splice the rebuilt record in
+  const out = new Uint8Array(origLen - oldLen + blob.length);
+  out.set(orig.subarray(0, start), 0);
+  out.set(blob, start);
+  out.set(orig.subarray(start + oldLen), start + blob.length);
+
+  // 2. patch code immediates past the edit
+  for (const [pc, imm] of refs)
+    if (imm - base >= growPoint) outingReencodeLdw(out, pc, imm + delta);
+
+  // 3. patch each dialogue pointer table's entries
+  for (const fo of tables) {
+    let a = fo + (fo >= growPoint ? delta : 0);
+    while (a + 4 <= out.length) {
+      const v = u32le(out, a);
+      if (outingIsExecPtr(v, origLen, base) && (v - base) >= growPoint) {
+        putU32le(out, a, v + delta); a += 4;
+      } else if (outingIsExecPtr(v, origLen, base)) { a += 4; }
+      else break;
+    }
+  }
+
+  // 4/5. size fields (the 4U leaves 0x102 zero and sizes the copy another way)
+  if (u16(orig, 0x102) !== 0) putU16(out, 0x102, out.length - 0x106);
+  putU16(out, OFF_PACKET_SIZE, out.length);
+  // 6. checksum
+  putU16(out, out.length - 2, sum16(out.subarray(0, out.length - 2)));
+  return out;
+}
+
 // ---- indexed BMP: 4bpp like Tama Image Editor, 8bpp for >16 colours ---
 export function frameToBmp(f) {
   const ncol = Math.max(f.palette.length, 1);

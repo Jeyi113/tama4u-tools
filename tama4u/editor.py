@@ -12,7 +12,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import (character, charset, container, convert, create, destinations,
-               items, sprites, vdp)
+               items, outing, sprites, vdp)
 
 HTML_PATH = os.path.join(os.path.dirname(__file__), 'editor.html')
 CHARA_DIR = os.path.join(os.path.dirname(__file__), 'charasprites')
@@ -575,6 +575,49 @@ def _bank_frames(bank):
             for f in bank['frames']]
 
 
+def _is_outing(pkt):
+    return items.is_program(pkt) and items.get_destination(pkt) == '외출지'
+
+
+def _grow_outing_loose(raw, edit):
+    """Resize an outing's grow loose banks with full S1C33 fixups.
+
+    A plain splice (see _resize_banks/_grow_loose_in_packet) only keeps records
+    4-byte aligned; an outing also bakes *absolute* addresses of its sprites and
+    dialogue into its own code, so those references have to move with the data.
+    outing.resize_sprite does the whole job (code immediates, the dialogue
+    pointer table, the copy-size and packet-size fields, the checksum).  Handled
+    banks are marked done and later banks' offsets shift, exactly like the
+    generic path, so the in-place recolour writer still lands correctly.
+    """
+    raw = bytes(raw)
+    total = 0
+    for bank in edit.get('banks', []):
+        if not bank.get('grow') or not bank.get('loose'):
+            continue
+        off = bank['offset']
+        recs = sprites.scan_loose(raw)
+        idx = next((i for i, r in enumerate(recs) if r[0] == off), None)
+        if idx is None:
+            continue
+        fr = bank['frames']
+        before = len(raw)
+        raw = outing.resize_sprite(raw, idx, fr[0]['w'], fr[0]['h'],
+                                   [tuple(c) for c in fr[0]['palette']],
+                                   [f['pixels'] for f in fr])
+        grew = len(raw) - before
+        total += grew
+        bank['done'] = True
+        for other in edit.get('banks', []):
+            if other is bank or other.get('offset', 0) <= off:
+                continue
+            other['offset'] += grew
+            if other.get('loose'):
+                other['loose'] = [other['loose'][0] + grew, *other['loose'][1:]]
+    edit['banks'] = [b for b in edit.get('banks', []) if not b.get('done')]
+    return raw, total
+
+
 def _resize_banks(packets, edits):
     """Rewrite banks whose frames no longer fit their slots.
 
@@ -590,6 +633,16 @@ def _resize_banks(packets, edits):
         path = list(edit['path'])
         if 'vdp' in path or 'vdpchar' in path:
             continue            # packed stream; repacked wholesale instead
+        # an outing's sprites carry baked code/dialogue references; resize them
+        # through the S1C33-aware path rather than the plain splice below
+        pkt = _find(packets, path)
+        if _is_outing(pkt) and any(b.get('grow') and b.get('loose')
+                                   for b in edit.get('banks', [])):
+            new_raw, grew = _grow_outing_loose(pkt.raw, edit)
+            if new_raw != bytes(pkt.raw):
+                replace_packet(packets, path, new_raw)
+                delta += grew
+            continue
         for bank in edit.get('banks', []):
             if not bank.get('grow'):
                 continue
@@ -597,15 +650,12 @@ def _resize_banks(packets, edits):
             off = bank['offset']
             if bank.get('loose'):
                 # a loose record has no slot prefix and sits in a program's
-                # sprite tail.  The device finds each record by walking from the
-                # previous one -- read header, take 6 + 2*ncol + pixel_bytes,
-                # round up to 4, land on the next -- so encode_loose 4-byte-pads
-                # the rebuilt record and loose_span returns that same 4-aligned
-                # stride.  As long as every record stays on its 4-byte boundary
-                # the walk still reaches all of them (and the dialogue text /
-                # dispatch table / nested packet that follow just shift with it);
-                # an unaligned record desyncs the walk and later sprites draw
-                # from the wrong bytes -- flicker / missing sprites.
+                # sprite tail; encode_loose 4-byte-pads the rebuilt record and
+                # loose_span returns that same 4-aligned stride.  NOTE outings
+                # are routed to _grow_outing_loose above (they bake absolute
+                # addresses of their sprites/dialogue that must be re-pointed);
+                # this plain splice only reaches a non-outing program, which the
+                # UI does not offer resize for.
                 rec = tuple(bank['loose'])
                 old_len = sprites.loose_span(rec)
                 fr = bank['frames']
@@ -777,7 +827,13 @@ def apply_edits(data, edits, new_jpeg=None, partner=None):
                     donor = convert.convert(donor, edit['convert_to'])
                 subs[idx] = vdp.fit_content(subs[idx], donor)
                 continue
-            _grow_loose_in_packet(subs[idx], edit)   # resize embedded program sprites
+            # resize embedded program sprites: outings need the S1C33-aware
+            # fixups, other programs use the plain aligned splice
+            if _is_outing(subs[idx]):
+                new_raw, _grew = _grow_outing_loose(subs[idx].raw, edit)
+                subs[idx].raw = bytearray(new_raw)
+            else:
+                _grow_loose_in_packet(subs[idx], edit)
             _apply_fields(subs[idx], edit)
         for idx, edit in charjobs:
             vdp.write_char_block(payload, idx, edit, model=pkt.model)

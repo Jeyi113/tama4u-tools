@@ -1036,6 +1036,125 @@ function looseSpan(w, h, ncol, nf) {
   return Math.ceil(body / LOOSE_ALIGN) * LOOSE_ALIGN;
 }
 
+// ---- outing sprite resize (S1C33-aware) -- mirror of tama4u/outing.py ------
+// A P's/4U outing runs from an exec buffer at CPU 0x02000000 and bakes the
+// absolute address of every sprite and dialogue string into its own code, so a
+// resize must move each baked reference by the same delta.  See outing.py for
+// the full account of the six things that move together.
+const u32le = (b, o) =>
+  (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+const putU32le = (b, o, v) => {
+  b[o] = v & 0xff; b[o + 1] = (v >> 8) & 0xff;
+  b[o + 2] = (v >> 16) & 0xff; b[o + 3] = (v >>> 24) & 0xff;
+};
+
+const OUTING_EXEC_BASE = 0x02000000;      // P's/4U/iD L default; iD is 0x00FF0000
+const OUTING_CODE_START = 0x104;          // real entry (exec base + BE32 @0xA4)
+const outingIsExecPtr = (v, len, base) => v >= base && v <= base + len;
+
+// The exec-buffer base is device-specific, but every sprite reference is
+// base + record_offset, so the base is the offset most ld.w immediates share
+// with a loose record start.  Mirror of tama4u/outing.py _detect_base.
+function detectOutingBase(item) {
+  const recs = scanLoose(item);
+  if (!recs.length) return OUTING_EXEC_BASE;
+  const starts = recs.map(r => r[0]);
+  const votes = new Map();
+  for (const [, imm] of outingCodeRefs(item))
+    for (const o of starts) {
+      const b = imm - o;
+      if (b > 0) votes.set(b, (votes.get(b) || 0) + 1);
+    }
+  let best = OUTING_EXEC_BASE, bestN = 0;
+  for (const [b, n] of votes) if (n > bestN) { best = b; bestN = n; }
+  return bestN ? best : OUTING_EXEC_BASE;
+}
+
+// Yield [pc, imm] for every two-ext `xld.w` in the code region.  A pure S1C33
+// walk from the entry point; verified to match the emulator's disassembler.
+function* outingCodeRefs(item, lo = OUTING_CODE_START, hi = null) {
+  if (hi === null) { const r = scanLoose(item); hi = r.length ? r[0][0] : item.length; }
+  let pc = lo;
+  while (pc < hi - 1) {
+    const start = pc;
+    let hw = u16le(item, pc), extN = 0, ext0 = 0, ext1 = 0;
+    while ((hw >> 13) === 6) {
+      if (extN === 0) ext0 = hw & 0x1fff;
+      else if (extN === 1) ext1 = hw & 0x1fff;
+      else break;
+      extN++; pc += 2;
+      if (pc >= hi - 1) return;
+      hw = u16le(item, pc);
+    }
+    if ((hw >> 13) === 3 && extN === 2) {          // two-ext class-3 ALU imm
+      const op1 = (hw >> 10) & 7, imm6 = (hw >> 4) & 0x3f;
+      const imm = ((ext0 << 19) | (ext1 << 6) | imm6) >>> 0;
+      if (op1 === 3) yield [start, imm];           // ld.w rd, imm
+    }
+    pc += 2;
+  }
+}
+
+function outingReencodeLdw(item, pc, newImm) {
+  putU16le(item, pc, 0xc000 | ((newImm >> 19) & 0x1fff));
+  putU16le(item, pc + 2, 0xc000 | ((newImm >> 6) & 0x1fff));
+  let base = u16le(item, pc + 4);
+  base = (base & ~(0x3f << 4)) | ((newImm & 0x3f) << 4);
+  putU16le(item, pc + 4, base);
+}
+
+// Replace loose sprite `index` and fix every baked reference; returns new bytes.
+function resizeOuting(item, index, width, height, palette, pixelLists) {
+  const orig = Uint8Array.from(item), origLen = orig.length;
+  const base = detectOutingBase(orig);          // exec buffer (device-specific)
+  const rec = scanLoose(orig)[index];
+  const start = rec[0];
+  const oldLen = looseSpan(rec[1], rec[2], rec[3], rec[4]);
+  const blob = encodeLoose(width, height, palette, pixelLists);
+  const delta = blob.length - oldLen;
+  const growPoint = start + oldLen;
+
+  // locate references and dialogue pointer tables on the ORIGINAL layout
+  const refs = [];
+  for (const [pc, imm] of outingCodeRefs(orig))
+    if (outingIsExecPtr(imm, origLen, base)) refs.push([pc, imm]);
+  const tables = [];
+  for (const [, imm] of refs) {
+    const fo = imm - base;
+    if (fo + 8 <= origLen && outingIsExecPtr(u32le(orig, fo), origLen, base)
+        && outingIsExecPtr(u32le(orig, fo + 4), origLen, base)) tables.push(fo);
+  }
+
+  // 1. splice the rebuilt record in
+  const out = new Uint8Array(origLen - oldLen + blob.length);
+  out.set(orig.subarray(0, start), 0);
+  out.set(blob, start);
+  out.set(orig.subarray(start + oldLen), start + blob.length);
+
+  // 2. patch code immediates past the edit
+  for (const [pc, imm] of refs)
+    if (imm - base >= growPoint) outingReencodeLdw(out, pc, imm + delta);
+
+  // 3. patch each dialogue pointer table's entries
+  for (const fo of tables) {
+    let a = fo + (fo >= growPoint ? delta : 0);
+    while (a + 4 <= out.length) {
+      const v = u32le(out, a);
+      if (outingIsExecPtr(v, origLen, base) && (v - base) >= growPoint) {
+        putU32le(out, a, v + delta); a += 4;
+      } else if (outingIsExecPtr(v, origLen, base)) { a += 4; }
+      else break;
+    }
+  }
+
+  // 4/5. size fields (the 4U leaves 0x102 zero and sizes the copy another way)
+  if (u16(orig, 0x102) !== 0) putU16(out, 0x102, out.length - 0x106);
+  putU16(out, OFF_PACKET_SIZE, out.length);
+  // 6. checksum
+  putU16(out, out.length - 2, sum16(out.subarray(0, out.length - 2)));
+  return out;
+}
+
 // ---- indexed BMP: 4bpp like Tama Image Editor, 8bpp for >16 colours ---
 function frameToBmp(f) {
   const ncol = Math.max(f.palette.length, 1);
@@ -2675,6 +2794,39 @@ function replacePacket(packets, path, newRaw) {
   replacePacket(packets, path.slice(0, -1), raw);
 }
 
+const isOuting = pkt => isProgram(pkt) && getDestination(pkt) === '외출지';
+
+// Resize an outing's grow loose banks with full S1C33 fixups -- mirror of
+// tama4u/editor.py _grow_outing_loose.  A plain splice keeps records aligned
+// but an outing bakes absolute addresses of its sprites and dialogue into its
+// own code, so resizeOuting patches those too.  Returns [newRaw, totalDelta].
+const growOutingLoose = (raw, edit) => {
+  const banks = edit.banks || [];
+  let total = 0;
+  raw = Uint8Array.from(raw);
+  for (const bank of banks) {
+    if (!bank.grow || !bank.loose) continue;
+    const off = bank.offset;
+    const recs = scanLoose(raw);
+    let idx = -1;
+    for (let i = 0; i < recs.length; i++) if (recs[i][0] === off) { idx = i; break; }
+    if (idx < 0) continue;
+    const fr = bank.frames;
+    const before = raw.length;
+    raw = resizeOuting(raw, idx, fr[0].w, fr[0].h, fr[0].palette, fr.map(f => f.pixels));
+    const grew = raw.length - before;
+    total += grew;
+    bank.done = true;
+    for (const other of banks) {
+      if (other === bank || (other.offset ?? 0) <= off) continue;
+      other.offset += grew;
+      if (other.loose) other.loose = [other.loose[0] + grew, ...other.loose.slice(1)];
+    }
+  }
+  edit.banks = banks.filter(b => !b.done);
+  return [raw, total];
+};
+
 // Rewrite banks whose frames no longer fit their slots.  A bigger frame
 // makes the packet longer, invalidating its 0x4A, every enclosing 0x4A and
 // every top-level 0x32; splicing through replacePacket fixes the first two
@@ -2685,18 +2837,26 @@ function resizeBanks(packets, edits) {
   let delta = 0;
   for (const edit of edits) {
     if (edit.path.includes('vdp') || edit.path.includes('vdpchar')) continue;
+    // an outing's sprites carry baked code/dialogue references; resize them
+    // through the S1C33-aware path rather than the plain splice below
+    const opkt = findPacket(packets, edit.path);
+    if (isOuting(opkt) && (edit.banks || []).some(b => b.grow && b.loose)) {
+      const [nr, grew] = growOutingLoose(opkt.raw, edit);
+      replacePacket(packets, edit.path, nr);
+      delta += grew;
+      continue;
+    }
     for (const bank of edit.banks || []) {
       if (!bank.grow) continue;
       const pkt = findPacket(packets, edit.path);
       const off = bank.offset;
       let raw, oldSpan;
       if (bank.loose) {
-        // a loose record sits in a program's sprite tail.  The device walks
-        // record->record by 6 + 2*ncol + pixel_bytes rounded up to 4, so
-        // encodeLoose 4-byte-pads the rebuilt record and looseSpan gives that
-        // same aligned stride; keeping every record on its boundary lets the
-        // walk still reach them all (the dialogue text / table / nested packet
-        // after them just shift, none is referenced by an absolute offset).
+        // a loose record sits in a program's sprite tail; encodeLoose 4-byte-
+        // pads the rebuilt record and looseSpan gives that same aligned stride.
+        // NOTE outings are routed to growOutingLoose above (they bake absolute
+        // addresses that must be re-pointed); this plain splice only reaches a
+        // non-outing program, which the UI does not offer resize for.
         const rec = bank.loose;
         oldSpan = looseSpan(rec[1], rec[2], rec[3], rec[4]);
         const fr = bank.frames;
@@ -2938,7 +3098,12 @@ function applyEdits(data, edits, newJpeg = null, partner = null) {
         subs[idx] = vdpFitContent(subs[idx], donor);
         continue;
       }
-      growLooseInPacket(subs[idx], edit);   // resize embedded program sprites
+      // resize embedded program sprites: outings need the S1C33-aware fixups,
+      // other programs use the plain aligned splice
+      if (isOuting(subs[idx])) {
+        const [nr] = growOutingLoose(subs[idx].raw, edit);
+        subs[idx].raw = nr;
+      } else growLooseInPacket(subs[idx], edit);
       applyOne(subs[idx], edit);
     }
     for (const [idx, edit] of charjobs)
@@ -3373,16 +3538,19 @@ function resizeIsOuting(){
   return !!(pk&&pk.outing&&e&&e.loose);
 }
 // Resizing an outing sprite (bigger frame or a different colour count) rebuilds
-// the record and shifts the ones after it.  That is safe -- records stay 4-byte
-// aligned so the device's walk still finds them, and nothing after is addressed
-// by an absolute offset -- but it changes a program file, so ask once per file
-// and suggest a real-device check.
+// the record and shifts everything after it.  An outing bakes the *absolute*
+// address of every sprite and dialogue string into its own S1C33 code, so the
+// save re-points all of those, patches the dialogue pointer table and the
+// copy-size/packet-size fields, and reseals the checksum (tama4u/outing.py).
+// Verified on real P's and 4U hardware; still a program file, so a one-time
+// device check is worth it.
 let outingResizeOK=false;
 function confirmOutingResize(){
   if(outingResizeOK)return true;
   if(confirm('외출지 스프라이트의 크기/색 수를 바꾸면 뒤 스프라이트들이 밀립니다.\n\n'
-      +'기기는 스프라이트를 순서로 찾고 4바이트 정렬을 지키므로 화면은 정상 유지됩니다'
-      +'(리테일 전 파일로 검증). 다만 프로그램 파일이니 실기에서 한 번 확인해 주세요.\n\n계속할까요?')){
+      +'엔진 코드의 절대주소 참조·대사 포인터 테이블·크기 필드를 저장 시 자동으로 함께 '
+      +'보정합니다 (P’s·4U 실기 검증 완료). 다만 프로그램 파일이니 실기에서 한 번 확인해 주세요.'
+      +'\n\n계속할까요?')){
     outingResizeOK=true; return true;
   }
   return false;

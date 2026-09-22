@@ -4,6 +4,7 @@
 import {
   parseFile, buildFile, Packet, u16, putU16, OFF_PACKET_SIZE,
   parseBank, writeBank, encodeBank, encodeLoose, looseSpan, sum16, scanBanks, scanLoose, readLoose, writeLoose,
+  resizeOuting,
   destOptions,
   OFF_TYPE_SIG,
 } from './core.js';
@@ -349,6 +350,39 @@ function replacePacket(packets, path, newRaw) {
   replacePacket(packets, path.slice(0, -1), raw);
 }
 
+const isOuting = pkt => F.isProgram(pkt) && F.getDestination(pkt) === '외출지';
+
+// Resize an outing's grow loose banks with full S1C33 fixups -- mirror of
+// tama4u/editor.py _grow_outing_loose.  A plain splice keeps records aligned
+// but an outing bakes absolute addresses of its sprites and dialogue into its
+// own code, so resizeOuting patches those too.  Returns [newRaw, totalDelta].
+const growOutingLoose = (raw, edit) => {
+  const banks = edit.banks || [];
+  let total = 0;
+  raw = Uint8Array.from(raw);
+  for (const bank of banks) {
+    if (!bank.grow || !bank.loose) continue;
+    const off = bank.offset;
+    const recs = scanLoose(raw);
+    let idx = -1;
+    for (let i = 0; i < recs.length; i++) if (recs[i][0] === off) { idx = i; break; }
+    if (idx < 0) continue;
+    const fr = bank.frames;
+    const before = raw.length;
+    raw = resizeOuting(raw, idx, fr[0].w, fr[0].h, fr[0].palette, fr.map(f => f.pixels));
+    const grew = raw.length - before;
+    total += grew;
+    bank.done = true;
+    for (const other of banks) {
+      if (other === bank || (other.offset ?? 0) <= off) continue;
+      other.offset += grew;
+      if (other.loose) other.loose = [other.loose[0] + grew, ...other.loose.slice(1)];
+    }
+  }
+  edit.banks = banks.filter(b => !b.done);
+  return [raw, total];
+};
+
 // Rewrite banks whose frames no longer fit their slots.  A bigger frame
 // makes the packet longer, invalidating its 0x4A, every enclosing 0x4A and
 // every top-level 0x32; splicing through replacePacket fixes the first two
@@ -359,18 +393,26 @@ function resizeBanks(packets, edits) {
   let delta = 0;
   for (const edit of edits) {
     if (edit.path.includes('vdp') || edit.path.includes('vdpchar')) continue;
+    // an outing's sprites carry baked code/dialogue references; resize them
+    // through the S1C33-aware path rather than the plain splice below
+    const opkt = findPacket(packets, edit.path);
+    if (isOuting(opkt) && (edit.banks || []).some(b => b.grow && b.loose)) {
+      const [nr, grew] = growOutingLoose(opkt.raw, edit);
+      replacePacket(packets, edit.path, nr);
+      delta += grew;
+      continue;
+    }
     for (const bank of edit.banks || []) {
       if (!bank.grow) continue;
       const pkt = findPacket(packets, edit.path);
       const off = bank.offset;
       let raw, oldSpan;
       if (bank.loose) {
-        // a loose record sits in a program's sprite tail.  The device walks
-        // record->record by 6 + 2*ncol + pixel_bytes rounded up to 4, so
-        // encodeLoose 4-byte-pads the rebuilt record and looseSpan gives that
-        // same aligned stride; keeping every record on its boundary lets the
-        // walk still reach them all (the dialogue text / table / nested packet
-        // after them just shift, none is referenced by an absolute offset).
+        // a loose record sits in a program's sprite tail; encodeLoose 4-byte-
+        // pads the rebuilt record and looseSpan gives that same aligned stride.
+        // NOTE outings are routed to growOutingLoose above (they bake absolute
+        // addresses that must be re-pointed); this plain splice only reaches a
+        // non-outing program, which the UI does not offer resize for.
         const rec = bank.loose;
         oldSpan = looseSpan(rec[1], rec[2], rec[3], rec[4]);
         const fr = bank.frames;
@@ -612,7 +654,12 @@ export function applyEdits(data, edits, newJpeg = null, partner = null) {
         subs[idx] = F.vdpFitContent(subs[idx], donor);
         continue;
       }
-      growLooseInPacket(subs[idx], edit);   // resize embedded program sprites
+      // resize embedded program sprites: outings need the S1C33-aware fixups,
+      // other programs use the plain aligned splice
+      if (isOuting(subs[idx])) {
+        const [nr] = growOutingLoose(subs[idx].raw, edit);
+        subs[idx].raw = nr;
+      } else growLooseInPacket(subs[idx], edit);
       applyOne(subs[idx], edit);
     }
     for (const [idx, edit] of charjobs)
