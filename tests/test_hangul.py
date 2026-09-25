@@ -17,8 +17,14 @@ def test_encode():
     assert hangul.encode('지우けす', CS).hex() == 'cda0ccd8090d'
 
 
+def test_jamo_after_syllables():
+    assert hangul.encode('ㄱ', CS) == hangul.code(2350)
+    assert hangul.encode('ㅄ', CS) == hangul.code(2350 + 50)
+    assert len(hangul.GLYPHS) <= 16 * 254
+
+
 def test_codes_avoid_terminators():
-    for g in range(len(hangul.KS)):
+    for g in range(len(hangul.GLYPHS)):
         lead, trail = hangul.LEADS[g // 254], g % 254 + 1
         assert trail not in (0x00, 0xFF) and lead not in (0x00, 0xFF)
 

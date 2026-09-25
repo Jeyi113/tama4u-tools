@@ -25,6 +25,13 @@ import struct
 BASE = 0x02000000
 LEADS = list(range(0xC7, 0xD0)) + list(range(0xD9, 0xE0))
 KS = [(h << 8 | l) for h in range(0xB0, 0xC9) for l in range(0xA1, 0xFF)]
+# Some's standalone jamo at 0xB001-0xB033, in its font order; shown while a
+# syllable is being composed on the name screen.  Appended after KS so the
+# syllable codes stay put.
+CHO = 'ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㄲㄸㅃㅆㅉ'
+JUNG = 'ㅏㅑㅓㅕㅗㅛㅜㅠㅡㅣㅐㅒㅔㅖㅘㅙㅚㅝㅞㅟㅢ'
+JAMO = CHO + JUNG + 'ㄳㄵㄶㄺㄻㄼㄽㄾㄿㅀㅄ'
+GLYPHS = KS + [0xB001 + i for i in range(len(JAMO))]
 CODE_AT, TBL_AT, FREE_END = 0x310E00, 0x311000, 0x380000
 KW, KWS = 14, 10
 
@@ -72,14 +79,20 @@ def embolden(w, h, g):
     return bytes(out[i] | out[i + 1] << 4 for i in range(0, w * h, 2))
 
 
+def code(g):
+    """Glyph number (index into GLYPHS) -> P's 2-byte code."""
+    return bytes([LEADS[g // 254], g % 254 + 1])
+
+
 def encode(text, charset):
     """Text -> P's bytes: Hangul as lead/trail, the rest via the 1-byte charset."""
     rev = {v: int(k, 16) for k, v in charset.items()}
     out = bytearray()
     for ch in text:
         if '가' <= ch <= '힣':
-            g = KS.index(int.from_bytes(ch.encode('euc-kr'), 'big'))
-            out += bytes([LEADS[g // 254], g % 254 + 1])
+            out += code(KS.index(int.from_bytes(ch.encode('euc-kr'), 'big')))
+        elif ch in JAMO:
+            out += code(len(KS) + JAMO.index(ch))
         else:
             out.append(rev[ch])
     return bytes(out)
@@ -229,7 +242,7 @@ def build_ps(ps_rom, some_rom, bold=True, strings=()):
     p, ptrs = TBL_AT + 32 * 4, [0] * 32
     for big in (True, False):
         for k in range(16):
-            gs = [font.glyph(c, big) for c in KS[k * 254:(k + 1) * 254]]
+            gs = [font.glyph(c, big) for c in GLYPHS[k * 254:(k + 1) * 254]]
             if not gs:
                 continue
             if bold:
