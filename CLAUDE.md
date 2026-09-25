@@ -10,6 +10,7 @@
 - CPU = Epson S1C33 (6502/unSP 아님). 상세는 메모리 참조.
 - 외출지 리사이즈 해법·기종별 파라미터 → [[outing-engine-sprite-lock]]
 - 아이템 포맷 해독 상태 → [[t4u-item-format]]
+- 펌웨어 한글화(썸 KS 글리프 → P's 2바이트 패치, `python3 -m tama4u hangul`) → [[korean-localization]]
 
 ## 작업 규칙
 - 실기 검증은 사용자가 수행. 버그 리포트 시 재현 환경·증상 범위 먼저 확인.

@@ -1,0 +1,216 @@
+"""Korean (Hangul) patch for the P's firmware, glyphs taken from Tamagotchi Some.
+
+Some (the Korean Meets, ARM, load base 0x20000000) stores its font in the
+same loose-sprite codec as the colour family: 14x14 and 10x10 two-colour
+strips.  A range table maps its 2-byte big-endian codes (EUC-KR for the
+2,350 KS X 1001 syllables) to (strip pair, frame).
+
+The P's text engine is one byte per character (0x00 ends, 0xFF breaks a
+line) with no spare room for 2,350 syllables, so Hangul goes in as two
+bytes: a lead from the codes the glyph lookup never uses (0xC7-0xCF,
+0xD9-0xDF) and a trail 0x01-0xFE.  Existing kana/Latin/symbol codes are
+untouched, so Japanese names and downloads keep working.
+
+Patched (P's, CPU addresses; file offset = addr - 0x02000000):
+  0x2401D02  putstr's glyph call -> KGLYPH (2-byte aware, else original)
+  0x2401D2C  putstr's advance    -> KADV (Hangul 14px/small 10px, skips trail)
+New code at 0x2310E00, pointer table + strips from 0x2311000 (free 0xFF run).
+Real-device verified on P's (thin and bold, 2026-09-26).
+"""
+import struct
+
+BASE = 0x02000000
+LEADS = list(range(0xC7, 0xD0)) + list(range(0xD9, 0xE0))
+KS = [(h << 8 | l) for h in range(0xB0, 0xC9) for l in range(0xA1, 0xFF)]
+CODE_AT, TBL_AT, FREE_END = 0x310E00, 0x311000, 0x380000
+KW, KWS = 14, 10
+
+# glyph weight per model (user's call): bold on P's/iD/iDL, thin on 4U
+BOLD = {'ps': True, 'id': True, 'idl': True, '4u': False}
+
+
+class SomeFont:
+    PTRS, RANGES, SOME_BASE = 0x5427E0, 0x542D08, 0x20000000
+
+    def __init__(self, data):
+        self.d = data
+        self.ent = [struct.unpack_from('<II', data, self.PTRS + 8 * k) for k in range(165)]
+        self.rng, k = [], 0
+        while True:
+            s, e, bl, ix = struct.unpack_from('>HHBB', data, self.RANGES + 6 * k)
+            if s > e or (self.rng and s < self.rng[-1][0]):
+                break
+            self.rng.append((s, e, bl, ix)); k += 1
+
+    def glyph(self, code, big=True):
+        """(w, h, 4bpp pixels) for a Some code, or None."""
+        for s, e, bl, ix in self.rng:
+            if s <= code <= e:
+                if ix == 0xFF:
+                    return None
+                a = self.ent[ix][1 if big else 0] - self.SOME_BASE
+                w, h, nc, _, n = self.d[a:a + 5]
+                f, sz = (code & 0xFF) - bl, (w * h + 1) // 2
+                if not 0 <= f < n:
+                    return None
+                p = a + 6 + 2 * nc + f * sz
+                return w, h, self.d[p:p + sz]
+        return None
+
+
+def embolden(w, h, g):
+    """Widen strokes one pixel to the right (Some ink is 13px, cell 14)."""
+    px = [(g[i // 2] >> (4 * (i % 2))) & 15 for i in range(w * h)]
+    out = px[:]
+    for y in range(h):
+        for x in range(1, w):
+            if px[y * w + x - 1] and not out[y * w + x]:
+                out[y * w + x] = px[y * w + x - 1]
+    return bytes(out[i] | out[i + 1] << 4 for i in range(0, w * h, 2))
+
+
+def encode(text, charset):
+    """Text -> P's bytes: Hangul as lead/trail, the rest via the 1-byte charset."""
+    rev = {v: int(k, 16) for k, v in charset.items()}
+    out = bytearray()
+    for ch in text:
+        if '가' <= ch <= '힣':
+            g = KS.index(int.from_bytes(ch.encode('euc-kr'), 'big'))
+            out += bytes([LEADS[g // 254], g % 254 + 1])
+        else:
+            out.append(rev[ch])
+    return bytes(out)
+
+
+class _Asm:
+    """Just enough S1C33 to write the two hooks; branches resolve in 2 passes."""
+    def __init__(s, org):
+        s.org, s.items, s.labels = org, [], {}
+
+    def L(s, n): s.items.append(('L', n))
+    def w(s, v): s.items.append(('w', v))
+    def ext(s, v): s.w(0xC000 | (v & 0x1FFF))
+    def br(s, op, tgt, x=False): s.items.append(('br', op, tgt, x))
+
+    def li(s, rd, v):                                   # xld.w rd,imm32
+        s.ext(v >> 19); s.ext(v >> 6); s.w(0x6C00 | (v & 0x3F) << 4 | rd)
+
+    def build(s):
+        for last in (False, True):
+            pc, out = s.org, []
+            for it in s.items:
+                if it[0] == 'L':
+                    s.labels[it[1]] = pc; continue
+                if it[0] == 'w':
+                    out.append(it[1]); pc += 2; continue
+                _, op, tgt, x = it
+                t = s.labels.get(tgt, 0) if isinstance(tgt, str) else tgt
+                if x:
+                    d = (t - (pc + 2)) // 2
+                    assert not last or -(1 << 20) <= d < (1 << 20)
+                    out += [0xC000 | (d >> 8) & 0x1FFF, op << 8 | d & 0xFF]; pc += 4
+                else:
+                    d = (t - pc) // 2
+                    assert not last or -128 <= d < 128, tgt
+                    out.append(op << 8 | d & 0xFF); pc += 2
+        return b''.join(struct.pack('<H', v) for v in out)
+
+
+JRULE, JRUGT, JREQ, JRNE, CALL, JP, RET = 0x16, 0x10, 0x18, 0x1A, 0x1C, 0x1E, 0x0640
+ldub_rb = lambda rd, rb: 0x2400 | rb << 4 | rd
+ldub_rs = lambda rd, rs: 0xA500 | rs << 4 | rd
+ldw_rs = lambda rd, rs: 0x2E00 | rs << 4 | rd
+ldw_rb = lambda rd, rb: 0x3000 | rb << 4 | rd
+lduh_rb = lambda rd, rb: 0x2C00 | rb << 4 | rd
+add_i = lambda rd, i: 0x6000 | (i & 0x3F) << 4 | rd
+sub_i = lambda rd, i: 0x6400 | (i & 0x3F) << 4 | rd
+cmp_i = lambda rd, i: 0x6800 | (i & 0x3F) << 4 | rd
+add_rs = lambda rd, rs: 0x2200 | rs << 4 | rd
+sll_i = lambda rd, i: 0x8C00 | i << 4 | rd
+
+
+def _xsub(a, rd, v):
+    a.ext(v >> 6); a.w(sub_i(rd, v))
+
+
+def _lead_test(a, reg, yes, no):
+    """Hangul lead in `reg` -> r5 = lead index, branch to `yes`; else `no`."""
+    a.w(ldw_rs(5, reg)); _xsub(a, 5, 0xC7); a.w(ldub_rs(5, 5)); a.w(cmp_i(5, 8)); a.br(JRULE, yes)
+    a.w(ldw_rs(5, reg)); _xsub(a, 5, 0xD9); a.w(ldub_rs(5, 5)); a.w(cmp_i(5, 6))
+    a.br(JRUGT, no); a.w(add_i(5, 9)); a.br(JP, yes)
+
+
+def _hooks():
+    a = _Asm(BASE + CODE_AT)
+    # KGLYPH(r6 obj, r7, r8 code, r9 small flag; r1 = putstr's string pointer)
+    a.L('KGLYPH')
+    a.w(ldub_rb(4, 1))
+    _lead_test(a, 4, 'KG_K', 'KG_NO')
+    a.L('KG_K')
+    a.w(ldw_rs(4, 1)); a.w(add_i(4, 1)); a.w(ldub_rb(8, 4)); a.w(sub_i(8, 1))
+    a.w(sll_i(5, 2)); a.li(4, BASE + TBL_AT); a.w(add_rs(5, 4))
+    a.w(ldub_rs(9, 9)); a.w(cmp_i(9, 0)); a.br(JREQ, 'KG_BIG')
+    a.ext(1); a.w(add_i(5, 0))                          # xadd r5,64 -> small strips
+    a.L('KG_BIG')
+    a.w(ldw_rb(9, 5)); a.w(ldub_rs(6, 6)); a.w(ldub_rs(7, 7))
+    a.br(JP, 0x024019C6, x=True)
+    a.L('KG_NO')
+    a.br(JP, 0x02401BDC, x=True)
+    # KADV(r5 small flag, r1 ptr, r0 obj) -> r4 = next x; steps r1 over a trail
+    a.L('KADV')
+    a.w(ldw_rs(6, 5))
+    a.w(ldub_rb(4, 1))
+    _lead_test(a, 4, 'KA_K', 'KA_N')
+    a.L('KA_N')
+    a.w(cmp_i(6, 0)); a.br(JRNE, 'KA9')
+    a.w(ldub_rb(4, 1)); _xsub(a, 4, 0x6D); a.w(ldub_rs(4, 4)); a.w(cmp_i(4, 9)); a.br(JRULE, 'KA9')
+    a.ext(4); a.w(lduh_rb(4, 0)); a.w(add_i(4, 12)); a.w(RET)
+    a.L('KA9')
+    a.ext(4); a.w(lduh_rb(4, 0)); a.w(add_i(4, 9)); a.w(RET)
+    a.L('KA_K')
+    a.w(add_i(1, 1)); a.ext(4); a.w(lduh_rb(4, 0))
+    a.w(cmp_i(6, 0)); a.br(JRNE, 'KAS'); a.w(add_i(4, KW)); a.w(RET)
+    a.L('KAS')
+    a.w(add_i(4, KWS)); a.w(RET)
+    return a.build(), a.labels
+
+
+def build_ps(ps_rom, some_rom, bold=True, strings=()):
+    """Patched P's image.  `strings` = [(file offset, slot bytes, P's bytes)]."""
+    rom = bytearray(ps_rom)
+    assert all(b == 0xFF for b in rom[CODE_AT:FREE_END - 1]), 'free area not blank'
+    font = SomeFont(some_rom)
+    code, lab = _hooks()
+    assert CODE_AT + len(code) <= TBL_AT
+    rom[CODE_AT:CODE_AT + len(code)] = code
+
+    p, ptrs = TBL_AT + 32 * 4, [0] * 32
+    for big in (True, False):
+        for k in range(16):
+            gs = [font.glyph(c, big) for c in KS[k * 254:(k + 1) * 254]]
+            if not gs:
+                continue
+            if bold:
+                gs = [(w, h, embolden(w, h, g)) for w, h, g in gs]
+            w, h, _ = gs[0]
+            p = (p + 5) & ~3
+            rec = bytes([w, h, 2, 0, len(gs), 0xFF]) + b'\x07\xe0\x60\x00' + b''.join(g for *_, g in gs)
+            rom[p - 2:p] = b'\0\0'
+            rom[p:p + len(rec)] = rec
+            ptrs[k + (0 if big else 16)] = BASE + p
+            p += len(rec)
+    assert p < FREE_END, hex(p)
+    rom[TBL_AT:TBL_AT + 128] = struct.pack('<32I', *ptrs)
+
+    h = _Asm(0x02401D02); h.br(CALL, lab['KGLYPH'], x=True)
+    b = h.build(); rom[0x401D02:0x401D02 + len(b)] = b
+    h = _Asm(0x02401D2C)
+    h.w(0x5035)                                         # ld.w r5,[sp+0x3] (original)
+    h.br(CALL, lab['KADV'], x=True); h.br(JP, 0x02401D4C)
+    b = h.build()
+    rom[0x401D2C:0x401D4C] = b.ljust(0x20, b'\0')
+
+    for off, slot, data in strings:
+        assert len(data) < slot, (hex(off), len(data))
+        rom[off:off + slot] = (data + b'\0').ljust(slot, b'\0')
+    return bytes(rom)

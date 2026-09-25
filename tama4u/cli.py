@@ -87,6 +87,20 @@ def cmd_charset(args):
     print(f'{len(table)} mappings saved')
 
 
+def cmd_hangul(args):
+    import json, os
+    from . import hangul
+    cs = json.load(open(os.path.join(os.path.dirname(__file__), 'charset-ps.json')))
+    strings = []
+    if args.demo:       # boot menu, the string pair verified on the device
+        strings = [(0x557620, 8, hangul.encode('이어12', cs)),
+                   (0x557628, 8, hangul.encode('지우けす', cs))]
+    rom = hangul.build_ps(open(args.ps, 'rb').read(), open(args.some, 'rb').read(),
+                          bold=not args.thin, strings=strings)
+    open(args.out, 'wb').write(rom)
+    print(args.out, 'thin' if args.thin else 'bold')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='tama4u')
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -95,6 +109,9 @@ def main(argv=None):
     p = sub.add_parser('export'); p.add_argument('file')
     p.add_argument('-o', '--out', default='sprites'); p.set_defaults(fn=cmd_export)
     p = sub.add_parser('charset'); p.add_argument('corpus'); p.set_defaults(fn=cmd_charset)
+    p = sub.add_parser('hangul'); p.add_argument('ps'); p.add_argument('some')
+    p.add_argument('-o', '--out', required=True); p.add_argument('--thin', action='store_true')
+    p.add_argument('--demo', action='store_true'); p.set_defaults(fn=cmd_hangul)
     p = sub.add_parser('edit'); p.add_argument('-p', '--port', type=int, default=8477)
     p.set_defaults(fn=lambda a: __import__('tama4u.editor', fromlist=['serve']).serve(a.port))
     args = ap.parse_args(argv)
