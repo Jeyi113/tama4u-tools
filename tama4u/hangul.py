@@ -14,6 +14,8 @@ untouched, so Japanese names and downloads keep working.
 Patched (P's, CPU addresses; file offset = addr - 0x02000000):
   0x2401D02  putstr's glyph call -> KGLYPH (2-byte aware, else original)
   0x2401D2C  putstr's advance    -> KADV (Hangul 14px/small 10px, skips trail)
+The character limit putstr/drawstr take is a byte budget: a Hangul syllable
+spends two, so fixed buffers (the 5-byte user name) never over-read.
   0x2401DBC  drawstr's centring  -> KCENT (pixel width, not strlen bytes)
 New code at 0x2310E00, pointer table + strips from 0x2311000 (free 0xFF run).
 Real-device verified on P's (thin and bold, 2026-09-26).
@@ -118,7 +120,7 @@ class _Asm:
 
 
 JRULE, JRUGT, JREQ, JRNE, CALL, JP, RET = 0x16, 0x10, 0x18, 0x1A, 0x1C, 0x1E, 0x0640
-JRGE, JRUGE = 0x0A, 0x12
+JRGE, JRULT, JRUGE = 0x0A, 0x14, 0x12
 ldub_rb = lambda rd, rb: 0x2400 | rb << 4 | rd
 ldub_rs = lambda rd, rs: 0xA500 | rs << 4 | rd
 ldw_rs = lambda rd, rs: 0x2E00 | rs << 4 | rd
@@ -174,11 +176,14 @@ def _hooks():
     a.L('KA9')
     a.ext(4); a.w(lduh_rb(4, 0)); a.w(add_i(4, 9)); a.w(RET)
     a.L('KA_K')
+    a.w(cmp_i(2, 2)); a.br(JRULT, 'KA_B')              # r2 = putstr's budget:
+    a.w(sub_i(2, 1))                                    # a syllable spends 2
+    a.L('KA_B')
     a.w(add_i(1, 1)); a.ext(4); a.w(lduh_rb(4, 0))
     a.w(cmp_i(6, 0)); a.br(JRNE, 'KAS'); a.w(add_i(4, KW)); a.w(RET)
     a.L('KAS')
     a.w(add_i(4, KWS)); a.w(RET)
-    # KCENT(r9 str, r0 max chars, r1 small) -> r6 = chars drawn, r5 = centred x.
+    # KCENT(r9 str, r0 byte budget, r1 small) -> r6 = budget for putstr, r5 = x.
     # Non-Hangul keeps drawstr's own 12/9px per character, so old layouts hold.
     a.L('KCENT')
     a.w(ldw_rs(4, 9)); a.w(ld_i(6, 0)); a.w(ld_i(8, 0))
@@ -193,6 +198,7 @@ def _hooks():
     a.L('KC_N9')
     a.w(add_i(8, 9)); a.br(JP, 'KC_NX')
     a.L('KC_K')
+    a.w(add_i(6, 1))                                    # 2 bytes of budget
     a.w(add_i(4, 2)); a.w(cmp_i(1, 0)); a.br(JRNE, 'KC_K9')
     a.w(add_i(8, KW)); a.br(JP, 'KC_NX')
     a.L('KC_K9')
@@ -200,6 +206,9 @@ def _hooks():
     a.L('KC_NX')
     a.w(add_i(6, 1)); a.br(JP, 'KC_L')
     a.L('KC_D')
+    a.w(cmp_rs(6, 0)); a.br(JRULE, 'KC_C')
+    a.w(ldw_rs(6, 0))                                   # clamp to the budget
+    a.L('KC_C')
     a.ext(2); a.w(ld_i(5, 0))                           # xld.w r5,0x80
     a.w(sub_rs(5, 8)); a.w(cmp_i(5, 0)); a.br(JRGE, 'KC_P')
     a.w(add_i(5, 1))                                    # round toward zero
