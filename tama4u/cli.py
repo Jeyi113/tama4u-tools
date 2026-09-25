@@ -88,12 +88,14 @@ def cmd_charset(args):
 
 
 def cmd_hangul(args):
-    import json, os
+    import json
     from . import hangul
     cs = json.load(open(os.path.join(os.path.dirname(__file__), 'charset-ps.json')))
     strings = []
-    if args.demo:       # boot menu, the string pair verified on the device
-        strings = [(0x557620, 8, hangul.encode('이어12', cs)),
+    if args.demo:       # boot: centred wait text (drawstr) + menu (putstr, mixed)
+        strings = [(0x557610, 8, hangul.encode('잠깐만', cs)),
+                   (0x557618, 8, hangul.encode('기다려', cs)),
+                   (0x557620, 8, hangul.encode('이어12', cs)),
                    (0x557628, 8, hangul.encode('지우けす', cs))]
     rom = hangul.build_ps(open(args.ps, 'rb').read(), open(args.some, 'rb').read(),
                           bold=not args.thin, strings=strings)

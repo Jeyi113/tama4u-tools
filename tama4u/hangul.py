@@ -14,6 +14,7 @@ untouched, so Japanese names and downloads keep working.
 Patched (P's, CPU addresses; file offset = addr - 0x02000000):
   0x2401D02  putstr's glyph call -> KGLYPH (2-byte aware, else original)
   0x2401D2C  putstr's advance    -> KADV (Hangul 14px/small 10px, skips trail)
+  0x2401DBC  drawstr's centring  -> KCENT (pixel width, not strlen bytes)
 New code at 0x2310E00, pointer table + strips from 0x2311000 (free 0xFF run).
 Real-device verified on P's (thin and bold, 2026-09-26).
 """
@@ -117,6 +118,7 @@ class _Asm:
 
 
 JRULE, JRUGT, JREQ, JRNE, CALL, JP, RET = 0x16, 0x10, 0x18, 0x1A, 0x1C, 0x1E, 0x0640
+JRGE, JRUGE = 0x0A, 0x12
 ldub_rb = lambda rd, rb: 0x2400 | rb << 4 | rd
 ldub_rs = lambda rd, rs: 0xA500 | rs << 4 | rd
 ldw_rs = lambda rd, rs: 0x2E00 | rs << 4 | rd
@@ -127,6 +129,10 @@ sub_i = lambda rd, i: 0x6400 | (i & 0x3F) << 4 | rd
 cmp_i = lambda rd, i: 0x6800 | (i & 0x3F) << 4 | rd
 add_rs = lambda rd, rs: 0x2200 | rs << 4 | rd
 sll_i = lambda rd, i: 0x8C00 | i << 4 | rd
+sra_i = lambda rd, i: 0x9000 | i << 4 | rd
+cmp_rs = lambda rd, rs: 0x2A00 | rs << 4 | rd
+sub_rs = lambda rd, rs: 0x2600 | rs << 4 | rd
+ld_i = lambda rd, i: 0x6C00 | (i & 0x3F) << 4 | rd
 
 
 def _xsub(a, rd, v):
@@ -172,6 +178,33 @@ def _hooks():
     a.w(cmp_i(6, 0)); a.br(JRNE, 'KAS'); a.w(add_i(4, KW)); a.w(RET)
     a.L('KAS')
     a.w(add_i(4, KWS)); a.w(RET)
+    # KCENT(r9 str, r0 max chars, r1 small) -> r6 = chars drawn, r5 = centred x.
+    # Non-Hangul keeps drawstr's own 12/9px per character, so old layouts hold.
+    a.L('KCENT')
+    a.w(ldw_rs(4, 9)); a.w(ld_i(6, 0)); a.w(ld_i(8, 0))
+    a.L('KC_L')
+    a.w(cmp_rs(6, 0)); a.br(JRUGE, 'KC_D')
+    a.w(ldub_rb(7, 4)); a.w(cmp_i(7, 0)); a.br(JREQ, 'KC_D')
+    a.ext(3); a.w(cmp_i(7, 0x3F)); a.br(JREQ, 'KC_D')     # xcmp r7,0xff
+    _lead_test(a, 7, 'KC_K', 'KC_N')
+    a.L('KC_N')
+    a.w(add_i(4, 1)); a.w(cmp_i(1, 0)); a.br(JRNE, 'KC_N9')
+    a.w(add_i(8, 12)); a.br(JP, 'KC_NX')
+    a.L('KC_N9')
+    a.w(add_i(8, 9)); a.br(JP, 'KC_NX')
+    a.L('KC_K')
+    a.w(add_i(4, 2)); a.w(cmp_i(1, 0)); a.br(JRNE, 'KC_K9')
+    a.w(add_i(8, KW)); a.br(JP, 'KC_NX')
+    a.L('KC_K9')
+    a.w(add_i(8, KWS))
+    a.L('KC_NX')
+    a.w(add_i(6, 1)); a.br(JP, 'KC_L')
+    a.L('KC_D')
+    a.ext(2); a.w(ld_i(5, 0))                           # xld.w r5,0x80
+    a.w(sub_rs(5, 8)); a.w(cmp_i(5, 0)); a.br(JRGE, 'KC_P')
+    a.w(add_i(5, 1))                                    # round toward zero
+    a.L('KC_P')
+    a.w(sra_i(5, 1)); a.w(RET)
     return a.build(), a.labels
 
 
@@ -209,6 +242,9 @@ def build_ps(ps_rom, some_rom, bold=True, strings=()):
     h.br(CALL, lab['KADV'], x=True); h.br(JP, 0x02401D4C)
     b = h.build()
     rom[0x401D2C:0x401D4C] = b.ljust(0x20, b'\0')
+    h = _Asm(0x02401DBC); h.br(CALL, lab['KCENT'], x=True); h.br(JP, 0x02401DF0)
+    b = h.build()
+    rom[0x401DBC:0x401DF0] = b.ljust(0x34, b'\0')
 
     for off, slot, data in strings:
         assert len(data) < slot, (hex(off), len(data))

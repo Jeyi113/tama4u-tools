@@ -37,3 +37,5 @@ def test_hooks_disassemble():
         d -= (1 << 21) if d & (1 << 20) else 0
         assert j >> 8 == 0x1E and src + 2 + 2 * d == dst
     assert lab['KADV'] - lab['KGLYPH'] == 0x48
+    assert hangul.CODE_AT + len(code) <= hangul.TBL_AT
+    assert 'sra %r5,0x1' in text          # KCENT's centring tail
