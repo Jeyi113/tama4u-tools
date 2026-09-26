@@ -173,11 +173,12 @@ def _code(a, tab, pitch):
     li(8, len(H.GLYPHS) - 1); w(H.RET)
     L('G_DEC')                                         # r7 = lead index
     ldub_off(8, 5, 1); w(H.sub_i(8, 1))
-    ext(0xD7 >> 6); w(H.cmp_i(8, 0xD7 & 0x3F)); br(H.JRULT, 'G_T'); w(H.sub_i(8, 8))
-    L('G_T')                                           # + lead * 246
+    ext(0xCF + H.GAP >> 6); w(H.cmp_i(8, 0xCF + H.GAP & 0x3F)); br(H.JRULT, 'G_T'); w(H.sub_i(8, H.GAP))
+    L('G_T')                                           # + lead * 245 (256-8-2-1)
     w(H.ldw_rs(4, 7)); w(H.sll_i(4, 8)); w(H.add_rs(8, 4))
     w(H.ldw_rs(4, 7)); w(H.sll_i(4, 3)); w(H.sub_rs(8, 4))
-    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 1)); w(H.sub_rs(8, 4)); w(H.RET)
+    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 1)); w(H.sub_rs(8, 4))
+    w(H.sub_rs(8, 7)); w(H.RET)
 
     # ---- PAIROFF -> r5 = &LIST[PAIR[ci*21+ji]], r4 = that offset -----------
     L('PAIROFF')
@@ -343,7 +344,7 @@ def _code(a, tab, pitch):
     L('B_L2')
     local(6, 0); li(7, NAME); w(H.add_rs(7, 6)); w(H.add_rs(7, 6))
     stb(7, 5); w(H.add_i(8, 1))
-    ext(0xD0 >> 6); w(H.cmp_i(8, 0xD0 & 0x3F)); br(H.JRULT, 'B_T'); w(H.add_i(8, 8))
+    ext(0xD0 >> 6); w(H.cmp_i(8, 0xD0 & 0x3F)); br(H.JRULT, 'B_T'); w(H.add_i(8, H.GAP))
     L('B_T')
     stb(7, 8, 1)
     li(4, 0); setl(1, 4)

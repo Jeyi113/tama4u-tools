@@ -11,10 +11,10 @@ CS = json.load(open(os.path.join(os.path.dirname(__file__), '..', 'tama4u', 'cha
 
 def test_encode():
     assert hangul.encode('가', CS) == b'\xc7\x01'
-    assert hangul.encode('힝', CS) == bytes([0xD9, 2349 - 9 * 246 + 1])
-    # trails skip 0xD0-0xD7: glyph 206 is the last before the gap, 207 after
-    assert hangul.code(206) == b'\xc7\xcf' and hangul.code(207) == b'\xc7\xd8'
-    assert hangul.code(245) == b'\xc7\xfe' and hangul.code(246) == b'\xc8\x01'
+    assert hangul.encode('힝', CS) == bytes([0xD9, 2349 - 9 * 245 + 1])
+    # trails skip 0xD0-0xD8: glyph 206 is the last before the gap, 207 after
+    assert hangul.code(206) == b'\xc7\xcf' and hangul.code(207) == b'\xc7\xd9'
+    assert hangul.code(244) == b'\xc7\xfe' and hangul.code(245) == b'\xc8\x01'
 
 
 def test_jamo_after_syllables():
@@ -26,7 +26,7 @@ def test_jamo_after_syllables():
 def test_codes_avoid_terminators():
     for g in range(len(hangul.GLYPHS)):
         lead, trail = hangul.code(g)
-        assert trail not in (0x00, 0xFF) and not 0xD0 <= trail <= 0xD7
+        assert trail not in (0x00, 0xFF) and not 0xD0 <= trail <= 0xD8
         assert lead in hangul.LEADS
     assert len({hangul.code(g) for g in range(len(hangul.GLYPHS))}) == len(hangul.GLYPHS)
 
