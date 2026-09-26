@@ -19,6 +19,10 @@ from . import hangul
 
 BANK = (0x530000, 0x55C980)
 CODE = (0x400000, 0x530000)
+# Texts the firmware copies into fixed profile fields (stored in the save and
+# sent with the profile), not just drawn: max text bytes before the NUL.
+FIELDS = {0x5580D4: 4, 0x5580DC: 4}                     # gender: 5-byte field
+FIELDS.update({0x5580EC + 12 * k: 7 for k in range(12)})  # zodiac: 8-byte field
 ASCII = {'!': '！', '?': '？', '(': '（', ')': '）', '~': '～', '&': '＆',
          '.': '．', ',': '、', '"': '」'}
 
@@ -87,6 +91,8 @@ def apply(rom, texts, alloc, refs=None):
     targets = sorted(refs)
     done = [0, 0]
     for addr, data in sorted(texts.items()):
+        if len(data) > FIELDS.get(addr, len(data)):
+            raise ValueError(f'{addr:#x}: {len(data)} B > profile field {FIELDS[addr]} B')
         n = rom.index(0, addr) - addr
         slot = (n + 4) & ~3
         shared = any(addr < t < addr + slot for t in targets)

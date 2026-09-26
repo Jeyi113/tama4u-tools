@@ -101,3 +101,16 @@ def test_half_space():
     assert T.encode('\u3000') == b'\x6c'
     code, lab = hangul._hooks()
     assert 'KAH' in lab and 'KC_H9' in lab
+
+
+def test_profile_field_limits():
+    from tama4u import hangul_text as T
+    rom = bytearray(0x560000)
+    rom[0x5580EC:0x5580F2] = b'\x01\x02\x03\x04\x05\x00'
+    try:
+        T.apply(rom, {0x5580EC: T.encode('물병자리')}, lambda n: 0x55D000)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('8-byte zodiac accepted')
+    T.apply(rom, {0x5580EC: T.encode('쌍둥이')}, lambda n: 0x55D000)
