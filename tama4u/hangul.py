@@ -313,9 +313,10 @@ def _record(gs):
     return bytes([w, h, 2, 0, len(gs), 0xFF]) + b'\x07\xe0\x60\x00' + b''.join(g for *_, g in gs)
 
 
-def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=(),
+def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
              name_ui=False, galmuri=GALMURI):
-    """Patched P's image.  `strings` = [(file offset, slot bytes, P's bytes)].
+    """Patched P's image.  `strings` = {file offset: P's bytes} (hangul_text:
+    in place when it fits, else moved to SAFE with its references).
     `font`: galmuri11 | galmuri11-bold | some (bold = Some glyphs widened).
     `name_ui` swaps the user-name screen for Hangul jamo entry (hangul_name)."""
     rom = bytearray(ps_rom)
@@ -372,7 +373,28 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=(),
         b = h.build(); rom[0x5251BE:0x5251BE + len(b)] = b
         hangul_name.patch_bg(rom, kw)
 
-    for off, slot, data in strings:
-        assert len(data) < slot, (hex(off), len(data))
-        rom[off:off + slot] = (data + b'\0').ljust(slot, b'\0')
+    if strings:
+        from . import hangul_text
+
+        def alloc(n):
+            for i, (lo, hi) in enumerate(SAFE):
+                if cursor[i] + n <= hi:
+                    cursor[i] += n
+                    return cursor[i] - n
+            raise ValueError(f'no room for {n} B of text')
+        hangul_text.apply(rom, strings, alloc, hangul_text.scan_refs(ps_rom))
     return bytes(rom)
+
+
+def carry_save(old_rom, old_save, new_rom, sector=0x1000):
+    """tamaemu's save.sav is the whole 8MB flash (ROM included) and wins over
+    the .bin, so a save copied to a new build runs the old build.  New image =
+    new_rom with every sector the device rewrote (old_save != old_rom) taken
+    from old_save; asserts none of those touches what the patch changed."""
+    out = bytearray(new_rom)
+    for i in range(0, len(out), sector):
+        if old_save[i:i + sector] != old_rom[i:i + sector]:
+            assert old_rom[i:i + sector] == new_rom[i:i + sector] or \
+                any(lo <= i < hi for lo, hi in ((0, 0x50000), (0x2D0000, 0x380000), (0x570000, len(out)))), hex(i)
+            out[i:i + sector] = old_save[i:i + sector]
+    return bytes(out)

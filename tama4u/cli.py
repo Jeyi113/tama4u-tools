@@ -88,21 +88,30 @@ def cmd_charset(args):
 
 
 def cmd_hangul(args):
-    import json
-    from . import hangul
-    cs = json.load(open(os.path.join(os.path.dirname(__file__), 'charset-ps.json')))
-    strings = []
+    from . import hangul, hangul_text
+    strings = {}
+    for path in args.text or ():
+        strings.update(hangul_text.load(path))
     if args.demo:       # boot: centred wait text (drawstr) + menu (putstr, mixed)
-        strings = [(0x557610, 8, hangul.encode('잠깐만', cs)),
-                   (0x557618, 8, hangul.encode('기다려', cs)),
-                   (0x557620, 8, hangul.encode('이어12', cs)),
-                   (0x557628, 8, hangul.encode('지우けす', cs))]
+        enc = hangul_text.encode
+        strings.update({0x557610: enc('잠깐만'), 0x557618: enc('기다려'),
+                        0x557620: enc('이어12'), 0x557628: enc('지우けす')})
     some = open(args.some, 'rb').read() if args.some else None
     rom = hangul.build_ps(open(args.ps, 'rb').read(), some, font=args.font,
                           bold=not args.thin, strings=strings, name_ui=args.name_ui,
                           galmuri=args.galmuri)
     open(args.out, 'wb').write(rom)
-    print(args.out, args.font)
+    print(args.out, args.font, f'{len(strings)} texts')
+    if args.carry_save:     # tamaemu: saves/tamagotchi_ps/<rom name>/save.sav
+        sav = lambda p: os.path.join(os.path.dirname(os.path.abspath(p)), 'saves',
+                                     'tamagotchi_ps', os.path.basename(p), 'save.sav')
+        old, dst = args.carry_save, sav(args.out)
+        img = hangul.carry_save(open(old, 'rb').read(), open(sav(old), 'rb').read(), rom)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        open(dst, 'wb').write(img)
+        if os.path.exists(dst + '.tamasave'):
+            os.remove(dst + '.tamasave')    # RAM snapshot of another build
+        print(dst, 'save data carried from', old)
 
 
 def main(argv=None):
@@ -119,6 +128,9 @@ def main(argv=None):
     p.add_argument('--galmuri', default='~/Downloads/galmuri', help='folder with Galmuri*.bdf')
     p.add_argument('--thin', action='store_true', help='font=some: keep 1px strokes')
     p.add_argument('--name-ui', action='store_true', help='Hangul user-name entry (unverified)')
+    p.add_argument('--text', action='append', help='translations JSON {"0xADDR": "텍스트"}')
+    p.add_argument('--carry-save', metavar='OLD_ROM',
+                   help="tamaemu: start OUT with OLD_ROM's save data (not its flash image)")
     p.add_argument('--demo', action='store_true'); p.set_defaults(fn=cmd_hangul)
     p = sub.add_parser('edit'); p.add_argument('-p', '--port', type=int, default=8477)
     p.set_defaults(fn=lambda a: __import__('tama4u.editor', fromlist=['serve']).serve(a.port))

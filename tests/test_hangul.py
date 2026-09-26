@@ -1,6 +1,7 @@
 """Hangul patch: code allocation and the hook assembly, without firmware files."""
 import json
 import os
+import struct
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -70,3 +71,25 @@ def test_name_tables():
 def test_name_symbols_are_mono():
     from tama4u import hangul_name as N
     assert N.EMO == list(range(0x51, 0x6C))      # no 0xD0-0xD7 colour icons
+
+
+def test_text_in_place_and_relocated():
+    from tama4u import hangul_text as T
+    rom = bytearray(0x560000)
+    a, b = 0x538000, 0x538008                  # 'あい' (slot 4) and 'あいうえお' (slot 8)
+    rom[a:a + 2] = b'\x01\x02'; rom[b:b + 5] = b'\x01\x02\x03\x04\x05'
+    struct.pack_into('<I', rom, 0x538100, hangul.BASE + a)
+    v = hangul.BASE + b                        # xld.w %r7,b at 0x400000
+    struct.pack_into('<3H', rom, 0x400000, 0xC000 | v >> 19, 0xC000 | v >> 6 & 0x1FFF,
+                     0x6C07 | (v & 0x3F) << 4)
+    free = [0x55D000]
+
+    def alloc(n):
+        free[0] += n
+        return free[0] - n
+    got = T.apply(rom, {a: T.encode('가'), b: T.encode('거실 가기!')}, alloc)
+    assert got == (1, 1) and rom[a:a + 4] == T.encode('가') + b'\0\0'
+    new, rd = T._xld(rom, 0x400000)
+    assert rd == 7 and rom[new - hangul.BASE:].startswith(T.encode('거실 가기!') + b'\0')
+    assert T.encode('다/iDL') == hangul.code(hangul.KS.index(0xB4D9)) + b'\xff\xfa\xe3\xeb'
+
