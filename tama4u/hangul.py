@@ -434,4 +434,21 @@ def carry_save(old_rom, old_save, new_rom, sector=0x1000):
             assert old_rom[i:i + sector] == new_rom[i:i + sector] or \
                 any(lo <= i < hi for lo, hi in ((0, 0x50000), (0x2D0000, 0x380000), (0x570000, len(out)))), hex(i)
             out[i:i + sector] = old_save[i:i + sector]
+    # items the device holds are record copies in flash: rename them as the ROM
+    from . import hangul_text
+    rom_items = {v: k for k, v in hangul_text.item_names(new_rom).items()}
+    for off, iid in hangul_text.item_names(out, 0x570000, len(out)).items():
+        src = rom_items.get(iid)
+        if src is not None:
+            out[off:off + hangul_text.ITEM_NAME_LEN] = new_rom[src:src + hangul_text.ITEM_NAME_LEN]
     return bytes(out)
+
+
+def debug_menu(rom):
+    """Show the download menu's 'debug set' (entry 5).  Its visibility case at
+    0x24FFC92 hides it unless port 0x300380 bit 6 reads 0 (a test pad); jump
+    to the ordinary 'shown' path instead ([0xE62] = 6, return 1)."""
+    rom = bytearray(rom)
+    assert rom[0x4FFC92:0x4FFC96] == b'\x03\x1f\x65\x6c'
+    rom[0x4FFC92:0x4FFC94] = struct.pack('<H', 0x1F00 | (0x2FFC88 - 0x2FFC92) // 2 & 0xFF)
+    return bytes(rom)

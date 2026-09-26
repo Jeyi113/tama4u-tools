@@ -13,6 +13,7 @@ space (hangul.HALF; '\u3000' keeps the firmware's full-cell 0x6C), ASCII
 """
 import json
 import os
+import re
 import struct
 
 from . import hangul
@@ -23,6 +24,22 @@ CODE = (0x400000, 0x530000)
 # sent with the profile), not just drawn: max text bytes before the NUL.
 FIELDS = {0x5580D4: 4, 0x5580DC: 4}                     # gender: 5-byte field
 FIELDS.update({0x5580EC + 12 * k: 7 for k in range(12)})  # zodiac: 8-byte field
+# Built-in item records ("idn_gh15001_1\0" ...): the name is a fixed 10-byte
+# field at record+0x2A, then a u16 kind (0x0002 ...) whose high byte is 0 and
+# ends a full 10-byte name; written in place.
+ITEM_ID = re.compile(rb'idn_[a-z]+\d+_\d\x00')
+ITEM_NAME, ITEM_NAME_LEN = 0x2A, 10
+
+
+def item_names(rom, lo=0, hi=0x400000):
+    """{name field offset: item id} for the item records in rom[lo:hi]."""
+    out = {}
+    for m in ITEM_ID.finditer(rom, lo, hi):
+        if rom[m.start() + 0x26] == 0x3A:
+            out[m.start() + ITEM_NAME] = m.group()[:-1].decode()
+    return out
+
+
 ASCII = {'!': '！', '?': '？', '(': '（', ')': '）', '~': '～', '&': '＆',
          '.': '．', ',': '、', '"': '」'}
 
@@ -89,8 +106,15 @@ def apply(rom, texts, alloc, refs=None):
     `refs`: scan_refs of the unpatched image.  Returns (in place, relocated)."""
     refs = refs if refs is not None else scan_refs(rom)
     targets = sorted(refs)
+    items = item_names(rom)
     done = [0, 0]
     for addr, data in sorted(texts.items()):
+        if addr in items:                              # fixed item name field
+            if len(data) > ITEM_NAME_LEN or rom[addr + ITEM_NAME_LEN]:
+                raise ValueError(f'{addr:#x} {items[addr]}: {len(data)} B > item name {ITEM_NAME_LEN} B')
+            rom[addr:addr + ITEM_NAME_LEN] = data.ljust(ITEM_NAME_LEN, b'\0')
+            done[0] += 1
+            continue
         if len(data) > FIELDS.get(addr, len(data)):
             raise ValueError(f'{addr:#x}: {len(data)} B > profile field {FIELDS[addr]} B')
         n = rom.index(0, addr) - addr

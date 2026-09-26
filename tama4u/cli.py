@@ -100,6 +100,8 @@ def cmd_hangul(args):
     rom = hangul.build_ps(open(args.ps, 'rb').read(), some, font=args.font,
                           bold=not args.thin, strings=strings, name_ui=args.name_ui,
                           galmuri=args.galmuri)
+    if args.debug_menu:     # test builds: show the download menu's debug set
+        rom = hangul.debug_menu(rom)
     open(args.out, 'wb').write(rom)
     print(args.out, args.font, f'{len(strings)} texts')
     if args.carry_save:     # tamaemu: saves/tamagotchi_ps/<rom name>/save.sav
@@ -131,6 +133,8 @@ def main(argv=None):
     p.add_argument('--text', action='append', help='translations JSON {"0xADDR": "텍스트"}')
     p.add_argument('--carry-save', metavar='OLD_ROM',
                    help="tamaemu: start OUT with OLD_ROM's save data (not its flash image)")
+    p.add_argument('--debug-menu', action='store_true',
+                   help='test builds: show the hidden debug set in the download menu')
     p.add_argument('--demo', action='store_true'); p.set_defaults(fn=cmd_hangul)
     p = sub.add_parser('edit'); p.add_argument('-p', '--port', type=int, default=8477)
     p.set_defaults(fn=lambda a: __import__('tama4u.editor', fromlist=['serve']).serve(a.port))

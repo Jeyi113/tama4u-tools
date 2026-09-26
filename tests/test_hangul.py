@@ -114,3 +114,20 @@ def test_profile_field_limits():
     else:
         raise AssertionError('8-byte zodiac accepted')
     T.apply(rom, {0x5580EC: T.encode('쌍둥이')}, lambda n: 0x55D000)
+
+
+def test_item_name_fixed_field():
+    from tama4u import hangul_text as T
+    rom = bytearray(0x560000)
+    a = 0x3CF6A8
+    rom[a:a + 14] = b'idn_gh15001_1\0'; rom[a + 0x26] = 0x3A
+    n = a + T.ITEM_NAME
+    rom[n:n + 12] = b'\x36\x33\x3c\x0e\x2e\x00\x00\x00\x00\x00\x00\x02'
+    T.apply(rom, {n: T.encode('김밥')}, lambda k: 0x55D000)
+    assert rom[n:n + 12] == T.encode('김밥').ljust(10, b'\0') + b'\x00\x02'
+    try:
+        T.apply(rom, {n: T.encode('함박스테이크요')}, lambda k: 0x55D000)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('over-long item name accepted')
