@@ -2,16 +2,18 @@
 
 The stock screen (inside 0x2524B10) edits five 1-byte kana slots.  With
 2-byte Hangul the 5-byte name at RAM 0x1307 holds two syllables, so the
-loop from 0x25251BE is replaced by KNAME: two 14px slots, each composed
-cho -> jung -> jong from lists restricted to the 2,350 KS syllables.
+loop from 0x25251BE is replaced by KNAME: two Hangul slots, each composed
+cho -> jung -> jong from lists restricted to the 2,350 KS syllables, and a
+third 1-byte slot for one of the P's own emoticons (EMO).
 
 Keys (event flags the firmware's key task sets):
-  A 0x1450  idle: skip to next slot (last slot: finish) | composing: next candidate
-  B 0x1451  idle: start composing | composing: confirm the stage
-  C 0x1452  back one stage; idle on slot 2 -> slot 1
+  A 0x1450  idle: skip to next slot (last slot: finish) | choosing: next candidate
+  B 0x1451  idle: start choosing | choosing: confirm (emoticon: and finish)
+  C 0x1452  back one stage; idle -> previous slot
 Only the current candidate shows in the slot: the bare initial while
 choosing cho, the open syllable (가 갸 거 ...) for jung, the full syllable
-for jong.  Name bytes = [syl1][syl2][0x6C]; an unused slot is 0x6C 0x6C.
+for jong.  Name bytes = [syl1][syl2][emo]; unused = 0x6C (0x6C 0x6C).
+Editing resumes from what the slot already holds.
 """
 import struct
 
@@ -22,6 +24,8 @@ OBJS = 0x84418            # slot object ids, one byte each
 EV_A, EV_B, EV_C, EV_T = 0x1450, 0x1451, 0x1452, 0x1453
 SLOT_Y = 0x4F
 BLANK_SLOT = 0x6C
+# colour icons 0xD0-0xD7 (8x9, 0xD8 is empty), then the 12x14 symbols
+EMO = list(range(0xD0, 0xD8)) + list(range(0x51, 0x6C))
 
 # Some's jamo order -> Unicode syllable-block indices
 CHO_U = [0, 2, 3, 5, 6, 7, 9, 11, 12, 14, 15, 16, 17, 18, 1, 4, 8, 10, 13]
@@ -79,8 +83,8 @@ def _code(a, tab, pitch):
     li(4, 0)
     for k in range(8):
         setl(k, 4)
-    # two slots centred, the other three off screen
-    for k, x in enumerate(slot_x(pitch) + (200, 200, 200)):
+    # three slots centred, the other two off screen
+    for k, x in enumerate(slot_x(pitch) + (200, 200)):
         li(5, OBJS); ldub_off(6, 5, k); li(7, x); li(8, SLOT_Y)
         br(H.CALL, 0x02401B28, x=True)
     br(H.CALL, 'NORM', x=True)
@@ -126,7 +130,9 @@ def _code(a, tab, pitch):
     br(H.CALL, 'NORM', x=True)
     li(5, NAME); w(H.ldub_rb(4, 5)); lead_idx(a, 4, 'F_OK', 'F_1')
     L('F_1')
-    ldub_off(4, 5, 2); lead_idx(a, 4, 'F_OK', 'F_EMPTY')
+    ldub_off(4, 5, 2); lead_idx(a, 4, 'F_OK', 'F_2')
+    L('F_2')
+    ldub_off(4, 5, 4); ext(BLANK_SLOT >> 6); w(H.cmp_i(4, BLANK_SLOT & 0x3F)); br(H.JRNE, 'F_OK')
     L('F_EMPTY')                                       # empty name: stay
     li(4, 0); setl(6, 4); setl(0, 4); br(H.JP, 'LOOP', x=True)
     L('F_OK')
@@ -140,7 +146,11 @@ def _code(a, tab, pitch):
         L(f'N_BL{k}')
         li(4, BLANK_SLOT); stb(5, 4, k); stb(5, 4, k + 1)
         L(f'N_OK{k}')
-    li(5, NAME); li(4, BLANK_SLOT); stb(5, 4, 4)
+    li(5, NAME); ldub_off(4, 5, 4)                     # byte 4: keep an emoticon
+    w(H.ldw_rs(7, 4)); H._xsub(a, 7, 0xD0); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 7)); br(H.JRULE, 'N_E')
+    w(H.ldw_rs(7, 4)); H._xsub(a, 7, 0x51); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 0x1A)); br(H.JRULE, 'N_E')
+    li(4, BLANK_SLOT); stb(5, 4, 4)
+    L('N_E')
     w(H.RET)
 
     # ---- GLYPH_OF(r6 = slot) -> r8 = glyph number shown in that slot ------
@@ -197,13 +207,49 @@ def _code(a, tab, pitch):
     w(0x0242)                                          # popn %r2
     w(H.RET)
 
+    # ---- DRAW_E: the emoticon slot, through the stock 1-byte lookup ---------
+    ex = slot_x(pitch)[2]
+    L('DRAW_E')
+    w(0x0202)                                          # pushn %r2
+    li(7, 0); local(4, 0); w(H.cmp_i(4, 2)); br(H.JRNE, 'E_ATTR')
+    local(4, 5); w(0x7000 | 1 << 4 | 4); w(H.cmp_i(4, 0)); br(H.JREQ, 'E_ATTR')
+    ext(0x2000 >> 6); w(H.ld_i(7, 0))
+    L('E_ATTR')
+    li(5, OBJS); ldub_off(6, 5, 2); w(H.ldw_rs(2, 6))
+    br(H.CALL, 0x02401E1C, x=True)
+    local(4, 0); w(H.cmp_i(4, 2)); br(H.JRNE, 'E_STORED')
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'E_STORED')
+    local(4, 7); w(H.sll_i(4, 1)); a.li(5, tab.get('EMO', 0)); w(H.add_rs(5, 4))
+    w(H.lduh_rb(1, 5)); br(H.JP, 'E_POS')
+    L('E_STORED')
+    li(5, NAME); ldub_off(1, 5, 4)
+    L('E_POS')                                         # 8x9 icons: centre in the box
+    w(H.ldw_rs(6, 2)); li(7, ex); li(8, SLOT_Y)
+    w(H.ldw_rs(4, 1)); H._xsub(a, 4, 0xD0); w(H.ldub_rs(4, 4)); w(H.cmp_i(4, 7)); br(H.JRUGT, 'E_MV')
+    li(7, ex + 2); li(8, SLOT_Y + 2)
+    L('E_MV')
+    br(H.CALL, 0x02401B28, x=True)
+    w(H.ldw_rs(6, 2)); li(7, 0x20); w(H.ldw_rs(8, 1)); li(9, 0)
+    br(H.CALL, 0x02401BDC, x=True)
+    w(0x0242)                                          # popn %r2
+    w(H.RET)
+
     L('REFRESH')
     li(6, 0); br(H.CALL, 'DRAW', x=True)
     li(6, 1); br(H.CALL, 'DRAW', x=True)
+    br(H.CALL, 'DRAW_E', x=True)
     w(H.RET)
 
     # ---- keys ---------------------------------------------------------------
     L('KEY_A')
+    local(4, 0); w(H.cmp_i(4, 2)); br(H.JRNE, 'A_K')
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'A_E'); br(H.JP, 'NEXTSLOT', x=True)
+    L('A_E')                                           # next emoticon
+    local(4, 7); w(H.add_i(4, 1)); ext(len(EMO) >> 6); w(H.cmp_i(4, len(EMO) & 0x3F))
+    br(H.JRULT, 'A_ES'); li(4, 0)
+    L('A_ES')
+    setl(7, 4); w(H.RET)
+    L('A_K')
     local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'A_1')
     br(H.JP, 'NEXTSLOT', x=True)
     L('A_1')
@@ -235,6 +281,24 @@ def _code(a, tab, pitch):
     w(H.RET)
 
     L('KEY_B')
+    local(4, 0); w(H.cmp_i(4, 2)); br(H.JRNE, 'B_K')
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'B_EC')
+    # emoticon slot: start from the one already there (or the first)
+    li(4, 0); setl(7, 4)
+    li(5, NAME); ldub_off(6, 5, 4); a.li(5, tab.get('EMO', 0)); li(7, 0)
+    L('B_ES')
+    w(H.lduh_rb(4, 5)); w(H.cmp_rs(4, 6)); br(H.JREQ, 'B_EF')
+    w(H.add_i(5, 2)); w(H.add_i(7, 1)); ext(len(EMO) >> 6); w(H.cmp_i(7, len(EMO) & 0x3F))
+    br(H.JRULT, 'B_ES'); br(H.JP, 'B_E1')
+    L('B_EF')
+    setl(7, 7)
+    L('B_E1')
+    li(4, 1); setl(1, 4); w(H.RET)
+    L('B_EC')                                          # commit emoticon, finish
+    local(4, 7); w(H.sll_i(4, 1)); a.li(5, tab.get('EMO', 0)); w(H.add_rs(5, 4))
+    w(H.lduh_rb(4, 5)); li(5, NAME); stb(5, 4, 4)
+    li(4, 0); setl(1, 4); li(4, 1); setl(6, 4); w(H.RET)
+    L('B_K')
     local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'B_1')
     # start: resume from the syllable already in the slot, else from ㄱ/ㅏ/none
     local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # st 0 -> stored glyph
@@ -282,8 +346,8 @@ def _code(a, tab, pitch):
     stb(7, 5); w(H.add_i(8, 1)); stb(7, 8, 1)
     li(4, 0); setl(1, 4)
     L('NEXTSLOT')
-    local(4, 0); w(H.cmp_i(4, 0)); br(H.JRNE, 'NS_END')
-    li(4, 1); setl(0, 4); w(H.RET)
+    local(4, 0); w(H.cmp_i(4, 2)); br(H.JRUGE, 'NS_END')
+    w(H.add_i(4, 1)); setl(0, 4); w(H.RET)
     L('NS_END')
     li(4, 1); setl(6, 4); w(H.RET)
 
@@ -291,7 +355,10 @@ def _code(a, tab, pitch):
     local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'C_0')
     w(H.sub_i(4, 1)); setl(1, 4); w(H.RET)
     L('C_0')
-    li(4, 0); setl(0, 4); w(H.RET)
+    local(4, 0); w(H.cmp_i(4, 0)); br(H.JREQ, 'C_R')
+    w(H.sub_i(4, 1)); setl(0, 4)
+    L('C_R')
+    w(H.RET)
 
     # ---- tables -------------------------------------------------------------
     pair, lst, dec = tables()
@@ -303,6 +370,9 @@ def _code(a, tab, pitch):
         w(v)
     L('DECOMP')
     for v in dec:
+        w(v)
+    L('EMO')
+    for v in EMO:
         w(v)
 
 
@@ -319,12 +389,12 @@ BOX_ROWS, BOX_COLOUR = range(0x4F - 0x1C, 0x4F - 0x1C + 14), 5
 
 
 def slot_x(pitch):
-    x0 = 64 - (pitch + 2 + pitch) // 2               # two cells, 2px apart
-    return x0, x0 + pitch + 2
+    x0 = 64 - (3 * pitch + 4) // 2                   # three cells, 2px apart
+    return x0, x0 + pitch + 2, x0 + 2 * (pitch + 2)
 
 
 def patch_bg(rom, pitch):
-    """Repaint the window's five green boxes as two, under the KNAME slots."""
+    """Repaint the window's five green boxes as three, under the KNAME slots."""
     w, h, nc = rom[BG], rom[BG + 1], rom[BG + 2]
     p = BG + 6 + 2 * nc
 
