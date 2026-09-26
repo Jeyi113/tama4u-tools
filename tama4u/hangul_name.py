@@ -4,7 +4,9 @@ The stock screen (inside 0x2524B10) edits five 1-byte kana slots.  With
 2-byte Hangul the 5-byte name at RAM 0x1307 holds two syllables, so the
 loop from 0x25251BE is replaced by KNAME: two Hangul slots, each composed
 cho -> jung -> jong from lists restricted to the 2,350 KS syllables, and a
-third 1-byte slot for one of the P's own emoticons (EMO).
+third 1-byte slot for one of the P's own mono symbols (EMO).  The 8x9 colour
+icons 0xD0-0xD7 are left out: drawn in a speech bubble their 8-colour
+palette overwrites the bubble's colours (seen on the emulator).
 
 Keys (event flags the firmware's key task sets):
   A 0x1450  idle: skip to next slot (last slot: finish) | choosing: next candidate
@@ -24,8 +26,8 @@ OBJS = 0x84418            # slot object ids, one byte each
 EV_A, EV_B, EV_C, EV_T = 0x1450, 0x1451, 0x1452, 0x1453
 SLOT_Y = 0x4F
 BLANK_SLOT = 0x6C
-# colour icons 0xD0-0xD7 (8x9, 0xD8 is empty), then the 12x14 symbols
-EMO = list(range(0xD0, 0xD8)) + list(range(0x51, 0x6C))
+# the 12x14 symbols 0x51-0x6B (0x6C is the blank)
+EMO = list(range(0x51, 0x6C))
 
 # Some's jamo order -> Unicode syllable-block indices
 CHO_U = [0, 2, 3, 5, 6, 7, 9, 11, 12, 14, 15, 16, 17, 18, 1, 4, 8, 10, 13]
@@ -146,8 +148,7 @@ def _code(a, tab, pitch):
         L(f'N_BL{k}')
         li(4, BLANK_SLOT); stb(5, 4, k); stb(5, 4, k + 1)
         L(f'N_OK{k}')
-    li(5, NAME); ldub_off(4, 5, 4)                     # byte 4: keep an emoticon
-    w(H.ldw_rs(7, 4)); H._xsub(a, 7, 0xD0); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 7)); br(H.JRULE, 'N_E')
+    li(5, NAME); ldub_off(4, 5, 4)                     # byte 4: keep a symbol
     w(H.ldw_rs(7, 4)); H._xsub(a, 7, 0x51); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 0x1A)); br(H.JRULE, 'N_E')
     li(4, BLANK_SLOT); stb(5, 4, 4)
     L('N_E')
@@ -223,12 +224,7 @@ def _code(a, tab, pitch):
     w(H.lduh_rb(1, 5)); br(H.JP, 'E_POS')
     L('E_STORED')
     li(5, NAME); ldub_off(1, 5, 4)
-    L('E_POS')                                         # 8x9 icons: centre in the box
-    w(H.ldw_rs(6, 2)); li(7, ex); li(8, SLOT_Y)
-    w(H.ldw_rs(4, 1)); H._xsub(a, 4, 0xD0); w(H.ldub_rs(4, 4)); w(H.cmp_i(4, 7)); br(H.JRUGT, 'E_MV')
-    li(7, ex + 2); li(8, SLOT_Y + 2)
-    L('E_MV')
-    br(H.CALL, 0x02401B28, x=True)
+    L('E_POS')
     w(H.ldw_rs(6, 2)); li(7, 0x20); w(H.ldw_rs(8, 1)); li(9, 0)
     br(H.CALL, 0x02401BDC, x=True)
     w(0x0242)                                          # popn %r2

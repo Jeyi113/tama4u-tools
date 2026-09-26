@@ -63,3 +63,8 @@ def test_name_tables():
     for g, v in enumerate(dec):
         ci, ji, ti = v & 31, v >> 5 & 31, v >> 10
         assert lst[pair[ci * 21 + ji] + ti] == g
+
+
+def test_name_symbols_are_mono():
+    from tama4u import hangul_name as N
+    assert N.EMO == list(range(0x51, 0x6C))      # no 0xD0-0xD7 colour icons
