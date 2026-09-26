@@ -57,26 +57,255 @@ def tables():
     return pair, lst, dec
 
 
+class _Ops:
+    """Emit helpers over an _Asm; labels get `pfx` so the jamo engine can be
+    generated twice (name screen, profile editor) against one set of tables."""
+    def __init__(s, a, pfx=''):
+        s.a, s.pfx = a, pfx
+
+    def w(s, v): s.a.w(v)
+    def ext(s, v): s.a.ext(v)
+    def L(s, n): s.a.L(s.pfx + n)
+
+    def br(s, op, tgt, x=False):
+        s.a.br(op, s.pfx + tgt if isinstance(tgt, str) else tgt, x)
+
+    def ldub_off(s, rd, rb, off):
+        if off:
+            s.ext(off)
+        s.w(H.ldub_rb(rd, rb))
+
+    def stb(s, rb, rs, off=0):
+        if off:
+            s.ext(off)
+        s.w(0x3400 | rb << 4 | rs)
+
+    def li(s, rd, v):                                  # small/medium immediates
+        if -32 <= v < 32:
+            s.w(H.ld_i(rd, v))
+        elif 0 <= v < (1 << 18):
+            s.ext(v >> 6); s.w(H.ld_i(rd, v & 0x3F))
+        else:
+            s.a.li(rd, v)
+
+    def far(s, op, tgt):                               # call/jp via r4 (IRAM etc.)
+        s.a.li(4, tgt); s.w((0x0600 if op == 'call' else 0x0680) | 4)
+
+    def local(s, rd, k): s.ldub_off(rd, 3, k)          # r3 = frame pointer
+    def setl(s, k, rs): s.stb(3, rs, k)
+
+    def lead_idx(s, reg, yes, no):
+        w = s.w
+        w(H.ldw_rs(7, reg)); H._xsub(s.a, 7, 0xC7); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 8)); s.br(H.JRULE, yes)
+        w(H.ldw_rs(7, reg)); H._xsub(s.a, 7, 0xD9); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 6))
+        s.br(H.JRUGT, no); w(H.add_i(7, 9)); s.br(H.JP, yes)
+
+
+def _engine1(o, tab, nh, base, term, blank=(BLANK_SLOT, BLANK_SLOT), sym=True):
+    """NORM, GLYPH_OF, PAIROFF.  Text = nh Hangul pairs from `base(rd)`, then
+    one symbol byte; `term`: also NUL the byte after it (profile field);
+    `blank`: the pair an empty slot gets; `sym` False: no symbol byte."""
+    w, L, br, ext, li, local = o.w, o.L, o.br, o.ext, o.li, o.local
+
+    # ---- NORM: non-Hangul slots -> 0x6C 0x6C, symbol byte -> 0x6C ---------
+    L('NORM')
+    for k in range(0, 2 * nh, 2):
+        base(5); o.ldub_off(4, 5, k); o.lead_idx(4, f'N_OK{k}', f'N_BL{k}')
+        L(f'N_BL{k}')
+        li(4, blank[0]); o.stb(5, 4, k)
+        if blank[1] != blank[0]:
+            li(4, blank[1])
+        o.stb(5, 4, k + 1)
+        L(f'N_OK{k}')
+    if sym:
+        base(5); o.ldub_off(4, 5, 2 * nh)              # keep a symbol
+        w(H.ldw_rs(7, 4)); H._xsub(o.a, 7, 0x51); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 0x1A)); br(H.JRULE, 'N_E')
+        li(4, BLANK_SLOT); o.stb(5, 4, 2 * nh)
+        L('N_E')
+    if term:
+        li(4, 0); o.stb(5, 4, 2 * nh + 1)
+    w(H.RET)
+
+    # ---- GLYPH_OF(r6 = slot) -> r8 = glyph number shown in that slot ------
+    L('GLYPH_OF')
+    local(4, 0); w(H.cmp_rs(4, 6)); br(H.JRNE, 'G_STORED')
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'G_STORED')
+    w(H.cmp_i(4, 1)); br(H.JRNE, 'G_JUNG')
+    local(8, 2); ext(len(H.KS) >> 6); w(H.add_i(8, len(H.KS) & 0x3F)); w(H.RET)
+    L('G_JUNG')
+    br(H.CALL, 'PAIROFF', x=True)                      # r5 = &LIST[off]
+    local(4, 1); w(H.cmp_i(4, 2)); br(H.JREQ, 'G_LIST')
+    local(4, 4); w(H.sll_i(4, 1)); w(H.add_rs(5, 4))
+    L('G_LIST')
+    w(H.lduh_rb(8, 5)); w(H.RET)
+    L('G_STORED')                                      # decode text[2*slot]
+    base(5); w(H.add_rs(5, 6)); w(H.add_rs(5, 6))
+    w(H.ldub_rb(4, 5)); o.lead_idx(4, 'G_DEC', 'G_BLANK')
+    L('G_BLANK')
+    li(8, H.HALF); w(H.RET)
+    L('G_DEC')                                         # r7 = lead index
+    o.ldub_off(8, 5, 1); w(H.sub_i(8, 1))
+    ext(0xCF + H.GAP >> 6); w(H.cmp_i(8, 0xCF + H.GAP & 0x3F)); br(H.JRULT, 'G_T'); w(H.sub_i(8, H.GAP))
+    L('G_T')                                           # + lead * 245 (256-8-2-1)
+    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 8)); w(H.add_rs(8, 4))
+    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 3)); w(H.sub_rs(8, 4))
+    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 1)); w(H.sub_rs(8, 4))
+    w(H.sub_rs(8, 7)); w(H.RET)
+
+    # ---- PAIROFF -> r5 = &LIST[PAIR[ci*21+ji]], r4 = that offset -----------
+    L('PAIROFF')
+    local(4, 2); w(H.ldw_rs(5, 4)); w(H.sll_i(5, 4)); w(H.add_rs(5, 4))
+    w(H.add_rs(5, 4)); w(H.add_rs(5, 4)); w(H.add_rs(5, 4)); w(H.add_rs(5, 4))  # ci*21
+    local(4, 3); w(H.add_rs(5, 4)); w(H.sll_i(5, 1))
+    o.a.li(4, tab.get('PAIR', 0))
+    w(H.add_rs(5, 4)); w(H.lduh_rb(4, 5))
+    w(H.sll_i(4, 1)); o.a.li(5, tab.get('LIST', 0)); w(H.add_rs(5, 4))
+    w(H.RET)
+
+
+def _engine2(o, tab, nh, base, back, sym=True):
+    """KEY_A/KEY_B/KEY_C, PAIRRAW, NEXTSLOT.  Slot nh is the symbol slot.
+    Locals: [0] slot [1] stage [2] ci [3] ji [4] ti [6] done [7] symbol index.
+    `back`: C on the idle first slot sets done = 2 (leave backwards);
+    `sym` False: no symbol slot, the last Hangul slot finishes."""
+    w, L, br, ext, li, local, setl, stb = o.w, o.L, o.br, o.ext, o.li, o.local, o.setl, o.stb
+    L('KEY_A')
+    if sym:
+        local(4, 0); w(H.cmp_i(4, nh)); br(H.JRNE, 'A_K')
+        local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'A_E'); br(H.JP, 'NEXTSLOT', x=True)
+        L('A_E')                                       # next emoticon
+        local(4, 7); w(H.add_i(4, 1)); ext(len(EMO) >> 6); w(H.cmp_i(4, len(EMO) & 0x3F))
+        br(H.JRULT, 'A_ES'); li(4, 0)
+        L('A_ES')
+        setl(7, 4); w(H.RET)
+    L('A_K')
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'A_1')
+    br(H.JP, 'NEXTSLOT', x=True)
+    L('A_1')
+    w(H.cmp_i(4, 1)); br(H.JRNE, 'A_2')
+    local(4, 2); w(H.add_i(4, 1)); w(H.cmp_i(4, 19)); br(H.JRULT, 'A_1S'); li(4, 0)
+    L('A_1S')
+    setl(2, 4); w(H.RET)
+    L('A_2')
+    w(H.cmp_i(4, 2)); br(H.JRNE, 'A_3')
+    L('A_2N')                                          # next jung with syllables
+    local(4, 3); w(H.add_i(4, 1)); w(H.cmp_i(4, 21)); br(H.JRULT, 'A_2S'); li(4, 0)
+    L('A_2S')
+    setl(3, 4); br(H.CALL, 'PAIRRAW', x=True)
+    ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'A_2N')
+    w(H.RET)
+    L('A_3')
+    local(4, 4); w(H.add_i(4, 1)); setl(4, 4)
+    br(H.CALL, 'PAIROFF', x=True); local(4, 4); w(H.sll_i(4, 1)); w(H.add_rs(5, 4))
+    w(H.lduh_rb(4, 5)); ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JRNE, 'A_3R')
+    li(4, 0); setl(4, 4)
+    L('A_3R')
+    w(H.RET)
+
+    L('PAIRRAW')                                       # r4 = PAIR[ci*21+ji]
+    local(4, 2); w(H.ldw_rs(5, 4)); w(H.sll_i(5, 4)); w(H.add_rs(5, 4))
+    w(H.add_rs(5, 4)); w(H.add_rs(5, 4)); w(H.add_rs(5, 4)); w(H.add_rs(5, 4))
+    local(4, 3); w(H.add_rs(5, 4)); w(H.sll_i(5, 1))
+    o.a.li(4, tab.get('PAIR', 0)); w(H.add_rs(5, 4)); w(H.lduh_rb(4, 5))
+    w(H.RET)
+
+    L('KEY_B')
+    if sym:
+        local(4, 0); w(H.cmp_i(4, nh)); br(H.JRNE, 'B_K')
+        local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'B_EC')
+        # emoticon slot: start from the one already there (or the first)
+        li(4, 0); setl(7, 4)
+        base(5); o.ldub_off(6, 5, 2 * nh); o.a.li(5, tab.get('EMO', 0)); li(7, 0)
+        L('B_ES')
+        w(H.lduh_rb(4, 5)); w(H.cmp_rs(4, 6)); br(H.JREQ, 'B_EF')
+        w(H.add_i(5, 2)); w(H.add_i(7, 1)); ext(len(EMO) >> 6); w(H.cmp_i(7, len(EMO) & 0x3F))
+        br(H.JRULT, 'B_ES'); br(H.JP, 'B_E1')
+        L('B_EF')
+        setl(7, 7)
+        L('B_E1')
+        li(4, 1); setl(1, 4); w(H.RET)
+        L('B_EC')                                          # commit emoticon, finish
+        local(4, 7); w(H.sll_i(4, 1)); o.a.li(5, tab.get('EMO', 0)); w(H.add_rs(5, 4))
+        w(H.lduh_rb(4, 5)); base(5); stb(5, 4, 2 * nh)
+        li(4, 0); setl(1, 4); li(4, 1); setl(6, 4); w(H.RET)
+    L('B_K')
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'B_1')
+    # start: resume from the syllable already in the slot, else from ㄱ/ㅏ/none
+    local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # st 0 -> stored glyph
+    li(4, 0); setl(2, 4); setl(3, 4); setl(4, 4)
+    ext(len(H.KS) >> 6); w(H.cmp_i(8, len(H.KS) & 0x3F)); br(H.JRUGE, 'B_0S')
+    o.a.li(5, tab.get('DECOMP', 0)); w(H.add_rs(5, 8)); w(H.add_rs(5, 8)); w(H.lduh_rb(4, 5))
+    w(H.ldw_rs(5, 4)); w(0x7000 | 31 << 4 | 5); setl(2, 5)          # and r5,31
+    w(H.ldw_rs(5, 4)); w(0x8800 | 5 << 4 | 5); w(0x7000 | 31 << 4 | 5); setl(3, 5)
+    w(H.ldw_rs(5, 4)); w(0x8800 | 10 << 4 | 5); setl(4, 5)
+    L('B_0S')
+    li(4, 1); setl(1, 4); w(H.RET)
+    L('B_1')
+    w(H.cmp_i(4, 1)); br(H.JRNE, 'B_2')
+    li(4, 2); setl(1, 4)
+    br(H.CALL, 'PAIRRAW', x=True)                      # keep ji if still valid
+    ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'B_1R')
+    w(H.RET)
+    L('B_1R')
+    li(4, 20); setl(3, 4)                              # A_2N steps to the first valid
+    br(H.JP, 'A_2N', x=True)
+    L('B_2')
+    w(H.cmp_i(4, 2)); br(H.JRNE, 'B_3')
+    li(4, 3); setl(1, 4)
+    br(H.CALL, 'PAIROFF', x=True); local(7, 4)         # keep ti if inside this list
+    L('B_2L')
+    w(H.lduh_rb(4, 5)); ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'B_2R')
+    w(H.cmp_i(7, 0)); br(H.JREQ, 'B_2K')
+    w(H.sub_i(7, 1)); w(H.add_i(5, 2)); br(H.JP, 'B_2L')
+    L('B_2R')
+    li(4, 0); setl(4, 4)
+    L('B_2K')
+    w(H.RET)
+    L('B_3')                                           # commit syllable
+    local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # r8 = glyph
+    li(5, 0)
+    L('B_DIV')
+    ext(H.PER >> 6); w(H.cmp_i(8, H.PER & 0x3F)); br(H.JRULT, 'B_ENC')
+    ext(H.PER >> 6); w(H.sub_i(8, H.PER & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'B_DIV')
+    L('B_ENC')                                         # lead = LEADS[r5]
+    w(H.cmp_i(5, 9)); br(H.JRULT, 'B_L1'); ext(0xD9 - 9 >> 6); w(H.add_i(5, (0xD9 - 9) & 0x3F)); br(H.JP, 'B_L2')
+    L('B_L1')
+    ext(0xC7 >> 6); w(H.add_i(5, 0xC7 & 0x3F))
+    L('B_L2')
+    local(6, 0); base(7); w(H.add_rs(7, 6)); w(H.add_rs(7, 6))
+    stb(7, 5); w(H.add_i(8, 1))
+    ext(0xD0 >> 6); w(H.cmp_i(8, 0xD0 & 0x3F)); br(H.JRULT, 'B_T'); w(H.add_i(8, H.GAP))
+    L('B_T')
+    stb(7, 8, 1)
+    li(4, 0); setl(1, 4)
+    L('NEXTSLOT')
+    local(4, 0); w(H.cmp_i(4, nh if sym else nh - 1)); br(H.JRUGE, 'NS_END')
+    w(H.add_i(4, 1)); setl(0, 4); w(H.RET)
+    L('NS_END')
+    li(4, 1); setl(6, 4); w(H.RET)
+
+    L('KEY_C')
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'C_0')
+    w(H.sub_i(4, 1)); setl(1, 4); w(H.RET)
+    L('C_0')
+    local(4, 0); w(H.cmp_i(4, 0)); br(H.JREQ, 'C_R')
+    w(H.sub_i(4, 1)); setl(0, 4)
+    if back:
+        w(H.RET)
+        L('C_R')
+        li(4, 2); setl(6, 4)
+    else:
+        L('C_R')
+    w(H.RET)
+
+
 def _code(a, tab, pitch):
     """KNAME and helpers into _Asm `a`; `tab` = addresses of PAIR/LIST from a
     first pass (a.li is fixed-size, so the layout does not move)."""
-    w, L, br, ext = a.w, a.L, a.br, a.ext
-    ldub_off = lambda rd, rb, off: (ext(off), w(H.ldub_rb(rd, rb))) if off else w(H.ldub_rb(rd, rb))
-    stb = lambda rb, rs, off=0: (ext(off), w(0x3400 | rb << 4 | rs)) if off else w(0x3400 | rb << 4 | rs)
-
-    def li(rd, v):                                     # small/medium immediates
-        if -32 <= v < 32:
-            w(H.ld_i(rd, v))
-        elif 0 <= v < (1 << 18):
-            ext(v >> 6); w(H.ld_i(rd, v & 0x3F))
-        else:
-            a.li(rd, v)
-
-    def far(op, tgt):                                  # call/jp via r4 (IRAM etc.)
-        a.li(4, tgt); w((0x0600 if op == 'call' else 0x0680) | 4)
-
-    def local(rd, k): ldub_off(rd, 3, k)               # r3 = frame pointer
-    def setl(k, rs): stb(3, rs, k)
+    o = _Ops(a)
+    w, L, br, ext, li, local, setl, stb = o.w, o.L, o.br, o.ext, o.li, o.local, o.setl, o.stb
+    ldub_off = o.ldub_off
+    base = lambda rd: li(rd, NAME)
 
     # ---- KNAME: entered by jp from 0x25251BE, never returns ----------------
     L('KNAME')
@@ -123,16 +352,16 @@ def _code(a, tab, pitch):
         br(H.CALL, name, x=True)
     L('K_R')
     br(H.CALL, 'REFRESH', x=True)
-    far('call', 0xA18)
+    o.far('call', 0xA18)
     br(H.CALL, 0x025096CA, x=True)
     br(H.CALL, 0x0240049A, x=True)
     local(4, 6); w(H.cmp_i(4, 0)); br(H.JRNE, 'FINISH')
     br(H.JP, 'LOOP', x=True)
     L('FINISH')
     br(H.CALL, 'NORM', x=True)
-    li(5, NAME); w(H.ldub_rb(4, 5)); lead_idx(a, 4, 'F_OK', 'F_1')
+    li(5, NAME); w(H.ldub_rb(4, 5)); o.lead_idx(4, 'F_OK', 'F_1')
     L('F_1')
-    ldub_off(4, 5, 2); lead_idx(a, 4, 'F_OK', 'F_2')
+    ldub_off(4, 5, 2); o.lead_idx(4, 'F_OK', 'F_2')
     L('F_2')
     ldub_off(4, 5, 4); ext(BLANK_SLOT >> 6); w(H.cmp_i(4, BLANK_SLOT & 0x3F)); br(H.JRNE, 'F_OK')
     L('F_EMPTY')                                       # empty name: stay
@@ -141,54 +370,7 @@ def _code(a, tab, pitch):
     w(0x8002)                                          # add %sp,8
     br(H.JP, 0x0252545E, x=True)
 
-    # ---- NORM: non-Hangul slots -> 0x6C 0x6C, byte 4 = 0x6C ---------------
-    L('NORM')
-    for k in (0, 2):
-        li(5, NAME); ldub_off(4, 5, k); lead_idx(a, 4, f'N_OK{k}', f'N_BL{k}')
-        L(f'N_BL{k}')
-        li(4, BLANK_SLOT); stb(5, 4, k); stb(5, 4, k + 1)
-        L(f'N_OK{k}')
-    li(5, NAME); ldub_off(4, 5, 4)                     # byte 4: keep a symbol
-    w(H.ldw_rs(7, 4)); H._xsub(a, 7, 0x51); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 0x1A)); br(H.JRULE, 'N_E')
-    li(4, BLANK_SLOT); stb(5, 4, 4)
-    L('N_E')
-    w(H.RET)
-
-    # ---- GLYPH_OF(r6 = slot) -> r8 = glyph number shown in that slot ------
-    L('GLYPH_OF')
-    local(4, 0); w(H.cmp_rs(4, 6)); br(H.JRNE, 'G_STORED')
-    local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'G_STORED')
-    w(H.cmp_i(4, 1)); br(H.JRNE, 'G_JUNG')
-    local(8, 2); ext(len(H.KS) >> 6); w(H.add_i(8, len(H.KS) & 0x3F)); w(H.RET)
-    L('G_JUNG')
-    br(H.CALL, 'PAIROFF', x=True)                      # r5 = &LIST[off]
-    local(4, 1); w(H.cmp_i(4, 2)); br(H.JREQ, 'G_LIST')
-    local(4, 4); w(H.sll_i(4, 1)); w(H.add_rs(5, 4))
-    L('G_LIST')
-    w(H.lduh_rb(8, 5)); w(H.RET)
-    L('G_STORED')                                      # decode name[2*slot]
-    li(5, NAME); w(H.add_rs(5, 6)); w(H.add_rs(5, 6))
-    w(H.ldub_rb(4, 5)); lead_idx(a, 4, 'G_DEC', 'G_BLANK')
-    L('G_BLANK')
-    li(8, len(H.GLYPHS) - 1); w(H.RET)
-    L('G_DEC')                                         # r7 = lead index
-    ldub_off(8, 5, 1); w(H.sub_i(8, 1))
-    ext(0xCF + H.GAP >> 6); w(H.cmp_i(8, 0xCF + H.GAP & 0x3F)); br(H.JRULT, 'G_T'); w(H.sub_i(8, H.GAP))
-    L('G_T')                                           # + lead * 245 (256-8-2-1)
-    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 8)); w(H.add_rs(8, 4))
-    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 3)); w(H.sub_rs(8, 4))
-    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 1)); w(H.sub_rs(8, 4))
-    w(H.sub_rs(8, 7)); w(H.RET)
-
-    # ---- PAIROFF -> r5 = &LIST[PAIR[ci*21+ji]], r4 = that offset -----------
-    L('PAIROFF')
-    local(4, 2); w(H.ldw_rs(5, 4)); w(H.sll_i(5, 4)); w(H.add_rs(5, 4))
-    w(H.add_rs(5, 4)); w(H.add_rs(5, 4)); w(H.add_rs(5, 4)); w(H.add_rs(5, 4))  # ci*21
-    local(4, 3); w(H.add_rs(5, 4)); w(H.sll_i(5, 1))
-    a.li(4, tab.get('PAIR', 0))
-    w(H.add_rs(5, 4)); w(H.lduh_rb(4, 5))
-    w(H.sll_i(4, 1)); a.li(5, tab.get('LIST', 0)); w(H.add_rs(5, 4))
-    w(H.RET)
+    _engine1(o, tab, 2, base, False)
 
     # ---- DRAW(r6 = slot) ----------------------------------------------------
     L('DRAW')
@@ -213,7 +395,6 @@ def _code(a, tab, pitch):
     w(H.RET)
 
     # ---- DRAW_E: the emoticon slot, through the stock 1-byte lookup ---------
-    ex = slot_x(pitch)[2]
     L('DRAW_E')
     w(0x0202)                                          # pushn %r2
     li(7, 0); local(4, 0); w(H.cmp_i(4, 2)); br(H.JRNE, 'E_ATTR')
@@ -240,128 +421,7 @@ def _code(a, tab, pitch):
     br(H.CALL, 'DRAW_E', x=True)
     w(H.RET)
 
-    # ---- keys ---------------------------------------------------------------
-    L('KEY_A')
-    local(4, 0); w(H.cmp_i(4, 2)); br(H.JRNE, 'A_K')
-    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'A_E'); br(H.JP, 'NEXTSLOT', x=True)
-    L('A_E')                                           # next emoticon
-    local(4, 7); w(H.add_i(4, 1)); ext(len(EMO) >> 6); w(H.cmp_i(4, len(EMO) & 0x3F))
-    br(H.JRULT, 'A_ES'); li(4, 0)
-    L('A_ES')
-    setl(7, 4); w(H.RET)
-    L('A_K')
-    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'A_1')
-    br(H.JP, 'NEXTSLOT', x=True)
-    L('A_1')
-    w(H.cmp_i(4, 1)); br(H.JRNE, 'A_2')
-    local(4, 2); w(H.add_i(4, 1)); w(H.cmp_i(4, 19)); br(H.JRULT, 'A_1S'); li(4, 0)
-    L('A_1S')
-    setl(2, 4); w(H.RET)
-    L('A_2')
-    w(H.cmp_i(4, 2)); br(H.JRNE, 'A_3')
-    L('A_2N')                                          # next jung with syllables
-    local(4, 3); w(H.add_i(4, 1)); w(H.cmp_i(4, 21)); br(H.JRULT, 'A_2S'); li(4, 0)
-    L('A_2S')
-    setl(3, 4); br(H.CALL, 'PAIRRAW', x=True)
-    ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'A_2N')
-    w(H.RET)
-    L('A_3')
-    local(4, 4); w(H.add_i(4, 1)); setl(4, 4)
-    br(H.CALL, 'PAIROFF', x=True); local(4, 4); w(H.sll_i(4, 1)); w(H.add_rs(5, 4))
-    w(H.lduh_rb(4, 5)); ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JRNE, 'A_3R')
-    li(4, 0); setl(4, 4)
-    L('A_3R')
-    w(H.RET)
-
-    L('PAIRRAW')                                       # r4 = PAIR[ci*21+ji]
-    local(4, 2); w(H.ldw_rs(5, 4)); w(H.sll_i(5, 4)); w(H.add_rs(5, 4))
-    w(H.add_rs(5, 4)); w(H.add_rs(5, 4)); w(H.add_rs(5, 4)); w(H.add_rs(5, 4))
-    local(4, 3); w(H.add_rs(5, 4)); w(H.sll_i(5, 1))
-    a.li(4, tab.get('PAIR', 0)); w(H.add_rs(5, 4)); w(H.lduh_rb(4, 5))
-    w(H.RET)
-
-    L('KEY_B')
-    local(4, 0); w(H.cmp_i(4, 2)); br(H.JRNE, 'B_K')
-    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'B_EC')
-    # emoticon slot: start from the one already there (or the first)
-    li(4, 0); setl(7, 4)
-    li(5, NAME); ldub_off(6, 5, 4); a.li(5, tab.get('EMO', 0)); li(7, 0)
-    L('B_ES')
-    w(H.lduh_rb(4, 5)); w(H.cmp_rs(4, 6)); br(H.JREQ, 'B_EF')
-    w(H.add_i(5, 2)); w(H.add_i(7, 1)); ext(len(EMO) >> 6); w(H.cmp_i(7, len(EMO) & 0x3F))
-    br(H.JRULT, 'B_ES'); br(H.JP, 'B_E1')
-    L('B_EF')
-    setl(7, 7)
-    L('B_E1')
-    li(4, 1); setl(1, 4); w(H.RET)
-    L('B_EC')                                          # commit emoticon, finish
-    local(4, 7); w(H.sll_i(4, 1)); a.li(5, tab.get('EMO', 0)); w(H.add_rs(5, 4))
-    w(H.lduh_rb(4, 5)); li(5, NAME); stb(5, 4, 4)
-    li(4, 0); setl(1, 4); li(4, 1); setl(6, 4); w(H.RET)
-    L('B_K')
-    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'B_1')
-    # start: resume from the syllable already in the slot, else from ㄱ/ㅏ/none
-    local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # st 0 -> stored glyph
-    li(4, 0); setl(2, 4); setl(3, 4); setl(4, 4)
-    ext(len(H.KS) >> 6); w(H.cmp_i(8, len(H.KS) & 0x3F)); br(H.JRUGE, 'B_0S')
-    a.li(5, tab.get('DECOMP', 0)); w(H.add_rs(5, 8)); w(H.add_rs(5, 8)); w(H.lduh_rb(4, 5))
-    w(H.ldw_rs(5, 4)); w(0x7000 | 31 << 4 | 5); setl(2, 5)          # and r5,31
-    w(H.ldw_rs(5, 4)); w(0x8800 | 5 << 4 | 5); w(0x7000 | 31 << 4 | 5); setl(3, 5)
-    w(H.ldw_rs(5, 4)); w(0x8800 | 10 << 4 | 5); setl(4, 5)
-    L('B_0S')
-    li(4, 1); setl(1, 4); w(H.RET)
-    L('B_1')
-    w(H.cmp_i(4, 1)); br(H.JRNE, 'B_2')
-    li(4, 2); setl(1, 4)
-    br(H.CALL, 'PAIRRAW', x=True)                      # keep ji if still valid
-    ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'B_1R')
-    w(H.RET)
-    L('B_1R')
-    li(4, 20); setl(3, 4)                              # A_2N steps to the first valid
-    br(H.JP, 'A_2N', x=True)
-    L('B_2')
-    w(H.cmp_i(4, 2)); br(H.JRNE, 'B_3')
-    li(4, 3); setl(1, 4)
-    br(H.CALL, 'PAIROFF', x=True); local(7, 4)         # keep ti if inside this list
-    L('B_2L')
-    w(H.lduh_rb(4, 5)); ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'B_2R')
-    w(H.cmp_i(7, 0)); br(H.JREQ, 'B_2K')
-    w(H.sub_i(7, 1)); w(H.add_i(5, 2)); br(H.JP, 'B_2L')
-    L('B_2R')
-    li(4, 0); setl(4, 4)
-    L('B_2K')
-    w(H.RET)
-    L('B_3')                                           # commit syllable
-    local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # r8 = glyph
-    li(5, 0)
-    L('B_DIV')
-    ext(H.PER >> 6); w(H.cmp_i(8, H.PER & 0x3F)); br(H.JRULT, 'B_ENC')
-    ext(H.PER >> 6); w(H.sub_i(8, H.PER & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'B_DIV')
-    L('B_ENC')                                         # lead = LEADS[r5]
-    w(H.cmp_i(5, 9)); br(H.JRULT, 'B_L1'); ext(0xD9 - 9 >> 6); w(H.add_i(5, (0xD9 - 9) & 0x3F)); br(H.JP, 'B_L2')
-    L('B_L1')
-    ext(0xC7 >> 6); w(H.add_i(5, 0xC7 & 0x3F))
-    L('B_L2')
-    local(6, 0); li(7, NAME); w(H.add_rs(7, 6)); w(H.add_rs(7, 6))
-    stb(7, 5); w(H.add_i(8, 1))
-    ext(0xD0 >> 6); w(H.cmp_i(8, 0xD0 & 0x3F)); br(H.JRULT, 'B_T'); w(H.add_i(8, H.GAP))
-    L('B_T')
-    stb(7, 8, 1)
-    li(4, 0); setl(1, 4)
-    L('NEXTSLOT')
-    local(4, 0); w(H.cmp_i(4, 2)); br(H.JRUGE, 'NS_END')
-    w(H.add_i(4, 1)); setl(0, 4); w(H.RET)
-    L('NS_END')
-    li(4, 1); setl(6, 4); w(H.RET)
-
-    L('KEY_C')
-    local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'C_0')
-    w(H.sub_i(4, 1)); setl(1, 4); w(H.RET)
-    L('C_0')
-    local(4, 0); w(H.cmp_i(4, 0)); br(H.JREQ, 'C_R')
-    w(H.sub_i(4, 1)); setl(0, 4)
-    L('C_R')
-    w(H.RET)
+    _engine2(o, tab, 2, base, False)
 
     # ---- tables -------------------------------------------------------------
     pair, lst, dec = tables()
@@ -377,6 +437,177 @@ def _code(a, tab, pitch):
     L('EMO')
     for v in EMO:
         w(v)
+
+    _profile(a, tab)
+
+
+# ---- profile free-text fields ------------------------------------------------
+# The profile editor (state machine from 0x2526C4A, record in r1) dispatches on
+# the field index through the jump table at 0x25582F8; fields 3-7 (hobby,
+# dream, food, subject, person) share one kana editor at 0x252729E.  Each field
+# is 8 bytes at record+8*field+8 and is copied to friends with the profile.
+# HPROF replaces that editor: 4 Hangul slots filling the 8 bytes, previewed by
+# writing the candidate into the field and redrawing through the page routine
+# 0x2527B20 without its cursor (it draws the cursor cell as a 1-byte glyph).
+# The slot waiting for X blinks: '_' if empty, else its syllable on/off;
+# while composing the candidate shows steadily.
+# The page routine copies a field to an 8-byte stack buffer with NUL -> 0x6C
+# (7 bytes for pages 8 and 12) and draws it by character count, so a Hangul
+# field ran on into the frame; PROF_DRAW keeps the NUL, copies all 8 bytes and
+# calls PNUL after each loop to end the buffer (the byte after it is the low
+# byte of the saved record pointer, not read again before the routine returns).
+# Empty slots in the middle are the
+# full-pitch blank FULLB; trailing ones end as 0x6C so an empty field keeps its
+# grey placeholder.
+PROF_TABLE = 0x5582F8        # file offset of the field jump table
+PROF_FIELDS = range(3, 8)
+_DISPATCH, _RETURN, _SLEEP, _DRAWPG = 0x02526C76, 0x0252751A, 0x025274FC, 0x02527B20
+_FR = 3                      # HPROF's local words (12 bytes) below the caller's frame
+PROF_DRAW = [(0x527E94, 0x1B09, 0x1F09), (0x527EB8, 0x6866, 0x6876),   # page 8
+             (0x528044, 0x1B09, 0x1F09),                               # pages 9-11
+             (0x5280AE, 0x1B09, 0x1F09), (0x5280D2, 0x6866, 0x6876)]   # page 12
+PROF_NUL = [0x527EC0, 0x52806E, 0x5280DA]  # 'xld.w %r4,0x143c' after each loop -> call PNUL
+
+
+def _profile(a, tab):
+    """HPROF: entered through the field jump table with the caller's frame
+    (words [3] page, [4] field, [5] start column) and r1 = the record."""
+    o = _Ops(a, 'P_')
+    w, L, br, ext, li, local, setl, stb = o.w, o.L, o.br, o.ext, o.li, o.local, o.setl, o.stb
+    nh = 4
+    lead, trail = H.code(H.FULLB)
+    base = lambda rd: w(H.ldw_rs(rd, 2))              # r2 = the field
+    ldc = lambda rd, k: w(0x5000 | k << 4 | rd)        # caller word k (after add sp)
+    stc = lambda k, rs: w(0x5C00 | k << 4 | rs)
+
+    def slotptr(rd):                                   # rd = &field[2*slot]
+        local(6, 0); base(rd); w(H.add_rs(rd, 6)); w(H.add_rs(rd, 6))
+
+    a.L('HPROF')
+    w(0x8400 | _FR)                                    # sub %sp,3
+    w(0xA413)                                          # ld.w %r3,%sp
+    li(4, 0)
+    for k in range(12):
+        setl(k, 4)
+    w(0x5000 | (4 + _FR) << 4 | 4)                     # r4 = field
+    w(H.ldw_rs(5, 4)); w(H.add_i(5, 5)); w(H.cmp_i(4, 3)); br(H.JRNE, 'PG')
+    li(5, 8)                                           # page id: 8, or field+5
+    L('PG')
+    setl(11, 5)
+    w(H.sll_i(4, 3)); w(H.add_rs(4, 1)); w(H.add_i(4, 8)); w(H.ldw_rs(2, 4))
+    li(4, 0)
+    for f in (EV_A, EV_B, EV_C):
+        li(5, f); stb(5, 4)
+    li(5, 0x145C); li(4, 0x1E); stb(5, 4)
+    li(4, 1); setl(10, 4)                              # draw once
+    br(H.CALL, 'NORM', x=True)
+
+    L('LOOP')
+    li(5, 0x146C); w(H.ldub_rb(4, 5)); w(H.cmp_i(4, 0)); br(H.JRNE, 'SLEEPX', x=True)
+    br(H.CALL, 0x0240A5B4, x=True)                     # idle until the next interrupt
+    li(5, EV_T); w(H.ldub_rb(4, 5)); ext(0); w(0x7000 | 0x20 << 4 | 4)   # xand r4,0x20
+    w(H.cmp_i(4, 0)); br(H.JREQ, 'K_A')
+    local(4, 5); w(H.add_i(4, 1)); setl(5, 4)
+    w(0xAC55)                                          # bclr [%r5],0x5
+    li(4, 1); setl(10, 4)
+    for flag, name, nxt in ((EV_A, 'KEY_A', 'K_B'), (EV_B, 'KEY_B', 'K_C'), (EV_C, 'KEY_C', 'K_R')):
+        L({'KEY_A': 'K_A', 'KEY_B': 'K_B', 'KEY_C': 'K_C'}[name])
+        li(5, flag); w(H.ldub_rb(4, 5)); w(H.cmp_i(4, 0)); br(H.JREQ, nxt)
+        li(4, 0); stb(5, 4)
+        li(5, 0x145C); li(4, 0x1E); stb(5, 4)          # keep the idle timer up
+        li(4, 1); setl(10, 4); setl(5, 4)              # redraw, blink phase: cursor first
+        br(H.CALL, name, x=True)
+    L('K_R')
+    local(4, 10); w(H.cmp_i(4, 0)); br(H.JREQ, 'NODRAW')
+    li(4, 0); setl(10, 4)
+    br(H.CALL, 'REFRESH', x=True)
+    o.far('call', 0xA18)
+    L('NODRAW')
+    local(4, 6); w(H.cmp_i(4, 0)); br(H.JRNE, 'OUT', x=True)
+    br(H.JP, 'LOOP', x=True)
+
+    # ---- leaving: final draw, then the stock editor's own exits -------------
+    L('OUT')
+    li(4, 0); setl(1, 4); setl(5, 4)                   # stage idle, no blink
+    br(H.CALL, 'NORM', x=True); br(H.CALL, 'TRIM', x=True)
+    br(H.CALL, 'REFRESH', x=True); o.far('call', 0xA18)
+    local(4, 6)
+    w(0x8000 | _FR)                                    # add %sp,3
+    w(H.cmp_i(4, 2)); br(H.JREQ, 'BACK')
+    ldc(4, 4); w(H.add_i(4, 1)); stc(4, 4); li(4, 0); stc(5, 4)   # next field
+    ldc(5, 3); w(H.cmp_i(5, 0)); br(H.JRNE, 'FIN1')
+    ldc(4, 4); w(H.cmp_i(4, 4)); br(H.JREQ, 'RET0'); br(H.JP, _DISPATCH, x=True)
+    L('FIN1')
+    ldc(4, 4); w(H.cmp_i(4, 8)); br(H.JREQ, 'RET0'); br(H.JP, _DISPATCH, x=True)
+    L('RET0')
+    li(4, 0); br(H.JP, _RETURN, x=True)
+    L('BACK')                                          # C on the first slot
+    ldc(5, 3); w(H.cmp_i(5, 0)); br(H.JREQ, 'BK')
+    ldc(4, 4); w(H.cmp_i(4, 4)); br(H.JRNE, 'BK')
+    li(4, -1); br(H.JP, _RETURN, x=True)               # first field of page 2: cancel
+    L('BK')
+    ldc(4, 4); w(H.sub_i(4, 1)); stc(4, 4); li(4, 0); stc(5, 4)
+    br(H.JP, _DISPATCH, x=True)
+    L('SLEEPX')                                        # screen off: as the stock editor
+    br(H.CALL, 'NORM', x=True); br(H.CALL, 'TRIM', x=True)
+    w(0x8000 | _FR); li(3, 0); br(H.JP, _SLEEP, x=True)
+
+    # ---- REFRESH: preview the slot in the field, draw, put it back ----------
+    L('REFRESH')
+    slotptr(7)
+    o.ldub_off(4, 7, 0); setl(8, 4); o.ldub_off(4, 7, 1); setl(9, 4)
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'R_BL')
+    local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)
+    slotptr(7); br(H.CALL, 'ENC', x=True); br(H.JP, 'R_DRAW')
+    L('R_BL')                                          # idle: blink on odd phases
+    local(4, 5); w(0x7000 | 1 << 4 | 4); w(H.cmp_i(4, 0)); br(H.JREQ, 'R_DRAW')
+    local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)
+    li(4, H.FULLB); w(H.cmp_rs(8, 4)); br(H.JREQ, 'R_CUR')
+    li(4, H.HALF); w(H.cmp_rs(8, 4)); br(H.JREQ, 'R_CUR')
+    li(8, H.FULLB); br(H.JP, 'R_PUT')                  # a syllable: hide it
+    L('R_CUR')
+    li(8, H.CURSOR)
+    L('R_PUT')
+    slotptr(7); br(H.CALL, 'ENC', x=True)
+    L('R_DRAW')
+    local(6, 11); li(7, 0); li(8, -1); w(H.ldw_rs(9, 1))
+    br(H.CALL, _DRAWPG, x=True)
+    slotptr(7); local(4, 8); stb(7, 4); local(4, 9); stb(7, 4, 1)
+    w(H.RET)
+
+    # ---- ENC(r8 glyph, r7 dest): the 2-byte code --------------------------
+    L('ENC')
+    li(5, 0)
+    L('E_DIV')
+    ext(H.PER >> 6); w(H.cmp_i(8, H.PER & 0x3F)); br(H.JRULT, 'E_ENC')
+    ext(H.PER >> 6); w(H.sub_i(8, H.PER & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'E_DIV')
+    L('E_ENC')
+    w(H.cmp_i(5, 9)); br(H.JRULT, 'E_L1'); ext(0xD9 - 9 >> 6); w(H.add_i(5, (0xD9 - 9) & 0x3F)); br(H.JP, 'E_L2')
+    L('E_L1')
+    ext(0xC7 >> 6); w(H.add_i(5, 0xC7 & 0x3F))
+    L('E_L2')
+    stb(7, 5); w(H.add_i(8, 1))
+    ext(0xD0 >> 6); w(H.cmp_i(8, 0xD0 & 0x3F)); br(H.JRULT, 'E_T'); w(H.add_i(8, H.GAP))
+    L('E_T')
+    stb(7, 8, 1); w(H.RET)
+
+    # ---- TRIM: trailing FULLB pairs -> 0x6C 0x6C (empty field = all 0x6C) --
+    L('TRIM')
+    base(5)
+    for k in reversed(range(0, 2 * nh, 2)):
+        o.ldub_off(4, 5, k); ext(lead >> 6); w(H.cmp_i(4, lead & 0x3F)); br(H.JRNE, 'T_END')
+        o.ldub_off(4, 5, k + 1); ext(trail >> 6); w(H.cmp_i(4, trail & 0x3F)); br(H.JRNE, 'T_END')
+        li(4, BLANK_SLOT); o.stb(5, 4, k); o.stb(5, 4, k + 1)
+    L('T_END')
+    w(H.RET)
+
+    _engine1(o, tab, nh, base, False, blank=(lead, trail), sym=False)
+    _engine2(o, tab, nh, base, True, sym=False)
+
+    # ---- PNUL: end the page routine's field buffer (r9) after 8 bytes ------
+    a.L('PNUL')
+    li(4, 0); stb(9, 4, 8)
+    o.a.li(4, 0x143C); w(H.RET)                        # the instruction it replaced
 
 
 def lead_idx(a, reg, yes, no):

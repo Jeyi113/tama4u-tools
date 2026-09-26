@@ -42,11 +42,13 @@ KS = [(h << 8 | l) for h in range(0xB0, 0xC9) for l in range(0xA1, 0xFF)]
 CHO = 'ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㄲㄸㅃㅆㅉ'
 JUNG = 'ㅏㅑㅓㅕㅗㅛㅜㅠㅡㅣㅐㅒㅔㅖㅘㅙㅚㅝㅞㅟㅢ'
 JAMO = CHO + JUNG + 'ㄳㄵㄶㄺㄻㄼㄽㄾㄿㅀㅄ'
-GLYPHS = KS + [0xB001 + i for i in range(len(JAMO))] + [0]   # 0 = empty cell
+GLYPHS = KS + [0xB001 + i for i in range(len(JAMO))] + [0, 0, 1]  # empty x2, cursor '_'
 # The empty cell doubles as the Hangul space: putstr/drawstr advance it half
 # a pitch (the firmware's own space 0x6C is a full kana cell).  UI text only;
 # the name screen never enters it, so it is never sent over the link.
-HALF = len(GLYPHS) - 1
+HALF = len(KS) + len(JAMO)
+FULLB = HALF + 1           # full-pitch blank: an empty profile slot mid-text
+CURSOR = HALF + 2          # '_': the idle empty slot blinks with it (profile editor)
 SAFE = [(0x2AE600, 0x2D0000), (0x3DD800, 0x400000), (0x55CA00, 0x570000)]
 TBL_AT, CODE_AT = 0x55CA00, 0x55CA80
 GALMURI = '~/Downloads/galmuri'
@@ -145,6 +147,8 @@ def glyph_char(c):
     """GLYPHS entry -> the character it draws ('' for the empty cell)."""
     if not c:
         return ''
+    if c == 1:
+        return '_'
     if c >= 0xB0A1:
         return bytes([c >> 8, c & 0xFF]).decode('euc-kr')
     return JAMO[c - 0xB001]
@@ -156,7 +160,7 @@ def glyph_sets(font, some_rom=None, bold=True, galmuri=GALMURI):
     if font == 'some':
         f = SomeFont(some_rom)
         w0, h0, _ = f.glyph(KS[0])
-        big = [f.glyph(c) if c else (w0, h0, bytes((w0 * h0 + 1) // 2)) for c in GLYPHS]
+        big = [f.glyph(c) if c > 1 else (w0, h0, bytes((w0 * h0 + 1) // 2)) for c in GLYPHS]
         if bold:
             big = [(w, h, embolden(w, h, g)) for w, h, g in big]
         return big, None, 14, 14
@@ -396,6 +400,15 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         h = _Asm(0x025251BE); h.br(JP, nlab['KNAME'], x=True)
         b = h.build(); rom[0x5251BE:0x5251BE + len(b)] = b
         hangul_name.patch_bg(rom, kw)
+        for f in hangul_name.PROF_FIELDS:              # profile text fields -> HPROF
+            struct.pack_into('<I', rom, hangul_name.PROF_TABLE + 4 * f, nlab['HPROF'])
+        for off, old, new in hangul_name.PROF_DRAW:
+            assert struct.unpack_from('<H', rom, off)[0] == old, hex(off)
+            struct.pack_into('<H', rom, off, new)
+        for off in hangul_name.PROF_NUL:               # 4 bytes: ext + call PNUL
+            assert rom[off:off + 4] == b'\x50\xc0\xc4\x6f', hex(off)
+            h = _Asm(BASE + off); h.br(CALL, nlab['PNUL'], x=True)
+            rom[off:off + 4] = h.build()
 
     if strings:
         from . import hangul_text
