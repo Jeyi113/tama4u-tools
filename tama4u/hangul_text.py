@@ -7,8 +7,9 @@ NUL, rounded up to 4) is written in place; a longer one goes to SAFE and
 every reference to the old address is rewritten.  A slot another reference
 points into (tail-shared texts) is never written in place.
 
-Translations: {"0x538FBC": "거실", ...}; '/' = line break, spaces are the
-firmware's full-cell 0x6C, ASCII !?()~&., map to the full-width forms.
+Translations: {"0x538FBC": "거실", ...}; '/' = line break, ' ' = half-pitch
+space (hangul.HALF; '\u3000' keeps the firmware's full-cell 0x6C), ASCII
+!?()~&., map to the firmware's full-width forms.
 """
 import json
 import os
@@ -33,7 +34,9 @@ def encode(text, rev=None):
     for ch in text:
         if ch == '/':
             out.append(0xFF)
-        elif ch in ' \u3000':                           # the firmware's space
+        elif ch == ' ':                                 # half-pitch Hangul space
+            out += hangul.code(hangul.HALF)
+        elif ch == '\u3000':                            # full kana cell (0x6C)
             out.append(0x6C)
         elif '가' <= ch <= '힣':
             out += hangul.code(hangul.KS.index(int.from_bytes(ch.encode('euc-kr'), 'big')))

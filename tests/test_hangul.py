@@ -93,3 +93,11 @@ def test_text_in_place_and_relocated():
     assert rd == 7 and rom[new - hangul.BASE:].startswith(T.encode('거실 가기!') + b'\0')
     assert T.encode('다/iDL') == hangul.code(hangul.KS.index(0xB4D9)) + b'\xff\xfa\xe3\xeb'
 
+
+
+def test_half_space():
+    from tama4u import hangul_text as T
+    assert T.encode('가 나') == hangul.encode('가', CS) + hangul.code(hangul.HALF) + hangul.encode('나', CS)
+    assert T.encode('\u3000') == b'\x6c'
+    code, lab = hangul._hooks()
+    assert 'KAH' in lab and 'KC_H9' in lab

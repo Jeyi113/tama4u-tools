@@ -43,6 +43,10 @@ CHO = 'ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㄲㄸㅃㅆㅉ'
 JUNG = 'ㅏㅑㅓㅕㅗㅛㅜㅠㅡㅣㅐㅒㅔㅖㅘㅙㅚㅝㅞㅟㅢ'
 JAMO = CHO + JUNG + 'ㄳㄵㄶㄺㄻㄼㄽㄾㄿㅀㅄ'
 GLYPHS = KS + [0xB001 + i for i in range(len(JAMO))] + [0]   # 0 = empty cell
+# The empty cell doubles as the Hangul space: putstr/drawstr advance it half
+# a pitch (the firmware's own space 0x6C is a full kana cell).  UI text only;
+# the name screen never enters it, so it is never sent over the link.
+HALF = len(GLYPHS) - 1
 SAFE = [(0x2AE600, 0x2D0000), (0x3DD800, 0x400000), (0x55CA00, 0x570000)]
 TBL_AT, CODE_AT = 0x55CA00, 0x55CA80
 GALMURI = '~/Downloads/galmuri'
@@ -240,6 +244,14 @@ def _lead_test(a, reg, yes, no):
     a.br(JRUGT, no); a.w(add_i(5, 9)); a.br(JP, yes)
 
 
+def _half_test(a, ptr, off, tmp, no):
+    """r5 = lead index; falls through iff the pair at [ptr] is code(HALF)."""
+    lead, trail = code(HALF)
+    a.w(cmp_i(5, LEADS.index(lead))); a.br(JRNE, no)
+    a.w(ldw_rs(tmp, ptr)); a.w(add_i(tmp, off)); a.w(ldub_rb(tmp, tmp))
+    a.ext(trail >> 6); a.w(cmp_i(tmp, trail & 0x3F)); a.br(JRNE, no)
+
+
 def _hooks(kw=12, kws=10):
     a = _Asm(BASE + CODE_AT)
     # KGLYPH(r6 obj, r7, r8 code, r9 small flag; r1 = putstr's string pointer)
@@ -271,6 +283,12 @@ def _hooks(kw=12, kws=10):
     a.L('KA9')
     a.ext(4); a.w(lduh_rb(4, 0)); a.w(add_i(4, 9)); a.w(RET)
     a.L('KA_K')
+    _half_test(a, 1, 1, 4, 'KA_F')
+    a.w(add_i(1, 1)); a.ext(4); a.w(lduh_rb(4, 0))
+    a.w(cmp_i(6, 0)); a.br(JRNE, 'KAH'); a.w(add_i(4, kw // 2)); a.w(RET)
+    a.L('KAH')
+    a.w(add_i(4, kws // 2)); a.w(RET)
+    a.L('KA_F')
     a.w(add_i(1, 1)); a.ext(4); a.w(lduh_rb(4, 0))
     a.w(cmp_i(6, 0)); a.br(JRNE, 'KAS'); a.w(add_i(4, kw)); a.w(RET)
     a.L('KAS')
@@ -290,6 +308,12 @@ def _hooks(kw=12, kws=10):
     a.L('KC_N9')
     a.w(add_i(8, 9)); a.br(JP, 'KC_NX')
     a.L('KC_K')
+    _half_test(a, 4, 1, 7, 'KC_F')
+    a.w(add_i(4, 2)); a.w(cmp_i(1, 0)); a.br(JRNE, 'KC_H9')
+    a.w(add_i(8, kw // 2)); a.br(JP, 'KC_NX')
+    a.L('KC_H9')
+    a.w(add_i(8, kws // 2)); a.br(JP, 'KC_NX')
+    a.L('KC_F')
     a.w(add_i(4, 2)); a.w(cmp_i(1, 0)); a.br(JRNE, 'KC_K9')
     a.w(add_i(8, kw)); a.br(JP, 'KC_NX')
     a.L('KC_K9')
