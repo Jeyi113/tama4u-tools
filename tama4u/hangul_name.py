@@ -173,7 +173,10 @@ def _code(a, tab, pitch):
     li(8, len(H.GLYPHS) - 1); w(H.RET)
     L('G_DEC')                                         # r7 = lead index
     ldub_off(8, 5, 1); w(H.sub_i(8, 1))
+    ext(0xD7 >> 6); w(H.cmp_i(8, 0xD7 & 0x3F)); br(H.JRULT, 'G_T'); w(H.sub_i(8, 8))
+    L('G_T')                                           # + lead * 246
     w(H.ldw_rs(4, 7)); w(H.sll_i(4, 8)); w(H.add_rs(8, 4))
+    w(H.ldw_rs(4, 7)); w(H.sll_i(4, 3)); w(H.sub_rs(8, 4))
     w(H.ldw_rs(4, 7)); w(H.sll_i(4, 1)); w(H.sub_rs(8, 4)); w(H.RET)
 
     # ---- PAIROFF -> r5 = &LIST[PAIR[ci*21+ji]], r4 = that offset -----------
@@ -199,8 +202,8 @@ def _code(a, tab, pitch):
     br(H.CALL, 0x02401E1C, x=True)
     w(H.ldw_rs(8, 1)); li(5, 0)
     L('D_DIV')
-    ext(254 >> 6); w(H.cmp_i(8, 254 & 0x3F)); br(H.JRULT, 'D_GO')
-    ext(254 >> 6); w(H.sub_i(8, 254 & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'D_DIV')
+    ext(H.PER >> 6); w(H.cmp_i(8, H.PER & 0x3F)); br(H.JRULT, 'D_GO')
+    ext(H.PER >> 6); w(H.sub_i(8, H.PER & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'D_DIV')
     L('D_GO')
     w(H.sll_i(5, 2)); a.li(4, H.BASE + H.TBL_AT); w(H.add_rs(5, 4)); w(H.ldw_rb(9, 5))
     w(H.ldw_rs(6, 2)); li(7, 0x20)
@@ -331,15 +334,18 @@ def _code(a, tab, pitch):
     local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # r8 = glyph
     li(5, 0)
     L('B_DIV')
-    ext(254 >> 6); w(H.cmp_i(8, 254 & 0x3F)); br(H.JRULT, 'B_ENC')
-    ext(254 >> 6); w(H.sub_i(8, 254 & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'B_DIV')
+    ext(H.PER >> 6); w(H.cmp_i(8, H.PER & 0x3F)); br(H.JRULT, 'B_ENC')
+    ext(H.PER >> 6); w(H.sub_i(8, H.PER & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'B_DIV')
     L('B_ENC')                                         # lead = LEADS[r5]
     w(H.cmp_i(5, 9)); br(H.JRULT, 'B_L1'); ext(0xD9 - 9 >> 6); w(H.add_i(5, (0xD9 - 9) & 0x3F)); br(H.JP, 'B_L2')
     L('B_L1')
     ext(0xC7 >> 6); w(H.add_i(5, 0xC7 & 0x3F))
     L('B_L2')
     local(6, 0); li(7, NAME); w(H.add_rs(7, 6)); w(H.add_rs(7, 6))
-    stb(7, 5); w(H.add_i(8, 1)); stb(7, 8, 1)
+    stb(7, 5); w(H.add_i(8, 1))
+    ext(0xD0 >> 6); w(H.cmp_i(8, 0xD0 & 0x3F)); br(H.JRULT, 'B_T'); w(H.add_i(8, 8))
+    L('B_T')
+    stb(7, 8, 1)
     li(4, 0); setl(1, 4)
     L('NEXTSLOT')
     local(4, 0); w(H.cmp_i(4, 2)); br(H.JRUGE, 'NS_END')

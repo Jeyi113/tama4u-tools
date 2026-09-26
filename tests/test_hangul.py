@@ -11,22 +11,24 @@ CS = json.load(open(os.path.join(os.path.dirname(__file__), '..', 'tama4u', 'cha
 
 def test_encode():
     assert hangul.encode('가', CS) == b'\xc7\x01'
-    assert hangul.encode('힝', CS) == bytes([0xD9, 2350 - 9 * 254])
-    # the device-verified boot menu pair
-    assert hangul.encode('이어12', CS).hex() == 'cd18cc7c6e6f'
-    assert hangul.encode('지우けす', CS).hex() == 'cda0ccd8090d'
+    assert hangul.encode('힝', CS) == bytes([0xD9, 2349 - 9 * 246 + 1])
+    # trails skip 0xD0-0xD7: glyph 206 is the last before the gap, 207 after
+    assert hangul.code(206) == b'\xc7\xcf' and hangul.code(207) == b'\xc7\xd8'
+    assert hangul.code(245) == b'\xc7\xfe' and hangul.code(246) == b'\xc8\x01'
 
 
 def test_jamo_after_syllables():
     assert hangul.encode('ㄱ', CS) == hangul.code(2350)
     assert hangul.encode('ㅄ', CS) == hangul.code(2350 + 50)
-    assert len(hangul.GLYPHS) <= 16 * 254
+    assert len(hangul.GLYPHS) <= 16 * hangul.PER
 
 
 def test_codes_avoid_terminators():
     for g in range(len(hangul.GLYPHS)):
-        lead, trail = hangul.LEADS[g // 254], g % 254 + 1
-        assert trail not in (0x00, 0xFF) and lead not in (0x00, 0xFF)
+        lead, trail = hangul.code(g)
+        assert trail not in (0x00, 0xFF) and not 0xD0 <= trail <= 0xD7
+        assert lead in hangul.LEADS
+    assert len({hangul.code(g) for g in range(len(hangul.GLYPHS))}) == len(hangul.GLYPHS)
 
 
 def test_hooks_disassemble():
@@ -42,7 +44,7 @@ def test_hooks_disassemble():
         d = ((e & 0x1FFF) << 8 | j & 0xFF)
         d -= (1 << 21) if d & (1 << 20) else 0
         assert j >> 8 == 0x1E and src + 2 + 2 * d == dst
-    assert lab['KADV'] - lab['KGLYPH'] == 0x48
+    assert lab['KGLYPH'] < lab['KADV'] < lab['KCENT']
     assert hangul.TBL_AT + 128 <= hangul.CODE_AT
     assert 'sra %r5,0x1' in text          # KCENT's centring tail
 

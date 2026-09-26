@@ -11,7 +11,9 @@ strips.  A range table maps its 2-byte big-endian codes (EUC-KR for the
 The P's text engine is one byte per character (0x00 ends, 0xFF breaks a
 line) with no spare room for 2,350 syllables, so Hangul goes in as two
 bytes: a lead from the codes the glyph lookup never uses (0xC7-0xCF,
-0xD9-0xDF) and a trail 0x01-0xFE.  Existing kana/Latin/symbol codes are
+0xD9-0xDF) and a trail 0x01-0xFE minus 0xD0-0xD7 -- an unpatched P's shows
+a received Hangul name byte by byte, and those trails would be its 8-colour
+icons, whose palette repaints the speech bubble.  246 glyphs per lead.  Existing kana/Latin/symbol codes are
 untouched, so Japanese names and downloads keep working.
 
 Patched (P's, CPU addresses; file offset = addr - 0x02000000):
@@ -29,6 +31,7 @@ import struct
 
 BASE = 0x02000000
 LEADS = list(range(0xC7, 0xD0)) + list(range(0xD9, 0xE0))
+PER = 246                  # glyphs per lead: trails 0x01-0xFE without 0xD0-0xD7
 KS = [(h << 8 | l) for h in range(0xB0, 0xC9) for l in range(0xA1, 0xFF)]
 # Some's standalone jamo at 0xB001-0xB033, in its font order; shown while a
 # syllable is being composed on the name screen.  Appended after KS so the
@@ -87,7 +90,8 @@ def embolden(w, h, g):
 
 def code(g):
     """Glyph number (index into GLYPHS) -> P's 2-byte code."""
-    return bytes([LEADS[g // 254], g % 254 + 1])
+    t = g % PER + 1
+    return bytes([LEADS[g // PER], t + 8 if t >= 0xD0 else t])
 
 
 class BdfFont:
@@ -241,6 +245,9 @@ def _hooks(kw=12, kws=10):
     _lead_test(a, 4, 'KG_K', 'KG_NO')
     a.L('KG_K')
     a.w(ldw_rs(4, 1)); a.w(add_i(4, 1)); a.w(ldub_rb(8, 4)); a.w(sub_i(8, 1))
+    a.ext(0xD7 >> 6); a.w(cmp_i(8, 0xD7 & 0x3F)); a.br(JRULT, 'KG_T')  # trails past
+    a.w(sub_i(8, 8))                                    # the skipped 0xD0-0xD7
+    a.L('KG_T')
     a.w(sll_i(5, 2)); a.li(4, BASE + TBL_AT); a.w(add_rs(5, 4))
     a.w(ldub_rs(9, 9)); a.w(cmp_i(9, 0)); a.br(JREQ, 'KG_BIG')
     a.ext(1); a.w(add_i(5, 0))                          # xadd r5,64 -> small strips
@@ -331,7 +338,7 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=(),
     # strips, biggest first, first fit; each record 4-aligned after 2 zero bytes
     recs = []
     for k in range(16):
-        part = slice(k * 254, (k + 1) * 254)
+        part = slice(k * PER, (k + 1) * PER)
         if big[part]:
             recs.append((k, _record(big[part])))
             if small:
