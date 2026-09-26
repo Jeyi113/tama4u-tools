@@ -20,8 +20,9 @@ untouched, so Japanese names and downloads keep working.
 Patched (P's, CPU addresses; file offset = addr - 0x02000000):
   0x2401D02  putstr's glyph call -> KGLYPH (2-byte aware, else original)
   0x2401D2C  putstr's advance    -> KADV (Hangul pitch per font, skips trail)
-The character limit putstr/drawstr take is a byte budget: a Hangul syllable
-spends two, so fixed buffers (the 5-byte user name) never over-read.
+The character limit putstr/drawstr take stays a character count (a syllable
+is one): menus pass 8 and would cut Hangul at four if it spent two.  The
+5-byte user name is followed by 0x130C, never written (0), which ends it.
   0x2401DBC  drawstr's centring  -> KCENT (pixel width, not strlen bytes)
 Everything new lives in SAFE: 0xFF padding after the firmware image segments
 that the data reset never erases (0x2D0000-0x37FFFF and 0x570000- are save
@@ -270,14 +271,11 @@ def _hooks(kw=12, kws=10):
     a.L('KA9')
     a.ext(4); a.w(lduh_rb(4, 0)); a.w(add_i(4, 9)); a.w(RET)
     a.L('KA_K')
-    a.w(cmp_i(2, 2)); a.br(JRULT, 'KA_B')              # r2 = putstr's budget:
-    a.w(sub_i(2, 1))                                    # a syllable spends 2
-    a.L('KA_B')
     a.w(add_i(1, 1)); a.ext(4); a.w(lduh_rb(4, 0))
     a.w(cmp_i(6, 0)); a.br(JRNE, 'KAS'); a.w(add_i(4, kw)); a.w(RET)
     a.L('KAS')
     a.w(add_i(4, kws)); a.w(RET)
-    # KCENT(r9 str, r0 byte budget, r1 small) -> r6 = budget for putstr, r5 = x.
+    # KCENT(r9 str, r0 max chars, r1 small) -> r6 = chars for putstr, r5 = x.
     # Non-Hangul keeps drawstr's own 12/9px per character, so old layouts hold.
     a.L('KCENT')
     a.w(ldw_rs(4, 9)); a.w(ld_i(6, 0)); a.w(ld_i(8, 0))
@@ -292,7 +290,6 @@ def _hooks(kw=12, kws=10):
     a.L('KC_N9')
     a.w(add_i(8, 9)); a.br(JP, 'KC_NX')
     a.L('KC_K')
-    a.w(add_i(6, 1))                                    # 2 bytes of budget
     a.w(add_i(4, 2)); a.w(cmp_i(1, 0)); a.br(JRNE, 'KC_K9')
     a.w(add_i(8, kw)); a.br(JP, 'KC_NX')
     a.L('KC_K9')
