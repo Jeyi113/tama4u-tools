@@ -114,11 +114,13 @@ class BdfFont:
                 cur['rows'].append((int(p[0], 16), len(p[0]) * 4))
 
     def cell(self, ch, w, h, base):
-        """4bpp cell w x h, glyph bottom on row `base` (the kana baseline)."""
+        """4bpp cell w x h, glyph bottom on row `base` (the kana baseline),
+        centred across the cell: Galmuri sits its 10-11px Hangul flush left in
+        a 12px advance, which pulls centred text a pixel left."""
         px = bytearray(w * h)
         if ch:
             bw, bh, bx, by = self.g[ord(ch)]['bbx']
-            top = base - by - bh + 1
+            top, bx = base - by - bh + 1, (w - bw) // 2
             for r, (bits, nb) in enumerate(self.g[ord(ch)]['rows']):
                 for x in range(bw):
                     if bits >> (nb - 1 - x) & 1:

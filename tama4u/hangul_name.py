@@ -33,19 +33,22 @@ END = 0xFFFF
 
 def tables():
     """PAIR[19*21] u16 offsets into LIST (END = no syllable), LIST u16 glyph
-    numbers per (cho, jung), jong order, END-terminated."""
+    numbers per (cho, jung), jong order, END-terminated; DECOMP[2350] u16 =
+    cho | jung << 5 | jong-position << 10, to resume editing a syllable."""
     ks = {bytes([h, l]).decode('euc-kr'): g
           for g, (h, l) in enumerate((c >> 8, c & 0xFF) for c in H.KS)}
-    pair, lst = [], []
-    for c in CHO_U:
-        for j in JUNG_U:
+    pair, lst, dec = [], [], [0] * len(H.KS)
+    for ci, c in enumerate(CHO_U):
+        for ji, j in enumerate(JUNG_U):
             gs = [ks[s] for t in JONG_U
                   if (s := chr(0xAC00 + (c * 21 + j) * 28 + t)) in ks]
             if gs:
                 pair.append(len(lst)); lst += gs + [END]
+                for ti, g in enumerate(gs):
+                    dec[g] = ci | ji << 5 | ti << 10
             else:
                 pair.append(END)
-    return pair, lst
+    return pair, lst, dec
 
 
 def _code(a, tab, pitch):
@@ -233,14 +236,37 @@ def _code(a, tab, pitch):
 
     L('KEY_B')
     local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'B_1')
-    li(4, 1); setl(1, 4); li(4, 0); setl(2, 4); w(H.RET)
+    # start: resume from the syllable already in the slot, else from ㄱ/ㅏ/none
+    local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # st 0 -> stored glyph
+    li(4, 0); setl(2, 4); setl(3, 4); setl(4, 4)
+    ext(len(H.KS) >> 6); w(H.cmp_i(8, len(H.KS) & 0x3F)); br(H.JRUGE, 'B_0S')
+    a.li(5, tab.get('DECOMP', 0)); w(H.add_rs(5, 8)); w(H.add_rs(5, 8)); w(H.lduh_rb(4, 5))
+    w(H.ldw_rs(5, 4)); w(0x7000 | 31 << 4 | 5); setl(2, 5)          # and r5,31
+    w(H.ldw_rs(5, 4)); w(0x8800 | 5 << 4 | 5); w(0x7000 | 31 << 4 | 5); setl(3, 5)
+    w(H.ldw_rs(5, 4)); w(0x8800 | 10 << 4 | 5); setl(4, 5)
+    L('B_0S')
+    li(4, 1); setl(1, 4); w(H.RET)
     L('B_1')
     w(H.cmp_i(4, 1)); br(H.JRNE, 'B_2')
-    li(4, 2); setl(1, 4); li(4, 20); setl(3, 4)        # A_2N steps to the first valid
+    li(4, 2); setl(1, 4)
+    br(H.CALL, 'PAIRRAW', x=True)                      # keep ji if still valid
+    ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'B_1R')
+    w(H.RET)
+    L('B_1R')
+    li(4, 20); setl(3, 4)                              # A_2N steps to the first valid
     br(H.JP, 'A_2N', x=True)
     L('B_2')
     w(H.cmp_i(4, 2)); br(H.JRNE, 'B_3')
-    li(4, 3); setl(1, 4); li(4, 0); setl(4, 4); w(H.RET)
+    li(4, 3); setl(1, 4)
+    br(H.CALL, 'PAIROFF', x=True); local(7, 4)         # keep ti if inside this list
+    L('B_2L')
+    w(H.lduh_rb(4, 5)); ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'B_2R')
+    w(H.cmp_i(7, 0)); br(H.JREQ, 'B_2K')
+    w(H.sub_i(7, 1)); w(H.add_i(5, 2)); br(H.JP, 'B_2L')
+    L('B_2R')
+    li(4, 0); setl(4, 4)
+    L('B_2K')
+    w(H.RET)
     L('B_3')                                           # commit syllable
     local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # r8 = glyph
     li(5, 0)
@@ -268,12 +294,15 @@ def _code(a, tab, pitch):
     li(4, 0); setl(0, 4); w(H.RET)
 
     # ---- tables -------------------------------------------------------------
-    pair, lst = tables()
+    pair, lst, dec = tables()
     L('PAIR')
     for v in pair:
         w(v)
     L('LIST')
     for v in lst:
+        w(v)
+    L('DECOMP')
+    for v in dec:
         w(v)
 
 

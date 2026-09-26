@@ -56,6 +56,10 @@ def test_safe_regions_avoid_storage():
 
 def test_name_tables():
     from tama4u import hangul_name as N
-    pair, lst = N.tables()
+    pair, lst, dec = N.tables()
     assert len(pair) == 19 * 21 and sum(p != N.END for p in pair) == 354
     assert lst.count(N.END) == 354 and len(lst) - 354 == 2350
+    # DECOMP round-trips every syllable through PAIR/LIST
+    for g, v in enumerate(dec):
+        ci, ji, ti = v & 31, v >> 5 & 31, v >> 10
+        assert lst[pair[ci * 21 + ji] + ti] == g
