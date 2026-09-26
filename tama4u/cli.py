@@ -97,10 +97,12 @@ def cmd_hangul(args):
                    (0x557618, 8, hangul.encode('기다려', cs)),
                    (0x557620, 8, hangul.encode('이어12', cs)),
                    (0x557628, 8, hangul.encode('지우けす', cs))]
-    rom = hangul.build_ps(open(args.ps, 'rb').read(), open(args.some, 'rb').read(),
-                          bold=not args.thin, strings=strings)
+    some = open(args.some, 'rb').read() if args.some else None
+    rom = hangul.build_ps(open(args.ps, 'rb').read(), some, font=args.font,
+                          bold=not args.thin, strings=strings, name_ui=args.name_ui,
+                          galmuri=args.galmuri)
     open(args.out, 'wb').write(rom)
-    print(args.out, 'thin' if args.thin else 'bold')
+    print(args.out, args.font)
 
 
 def main(argv=None):
@@ -111,8 +113,12 @@ def main(argv=None):
     p = sub.add_parser('export'); p.add_argument('file')
     p.add_argument('-o', '--out', default='sprites'); p.set_defaults(fn=cmd_export)
     p = sub.add_parser('charset'); p.add_argument('corpus'); p.set_defaults(fn=cmd_charset)
-    p = sub.add_parser('hangul'); p.add_argument('ps'); p.add_argument('some')
-    p.add_argument('-o', '--out', required=True); p.add_argument('--thin', action='store_true')
+    p = sub.add_parser('hangul'); p.add_argument('ps'); p.add_argument('some', nargs='?')
+    p.add_argument('-o', '--out', required=True)
+    p.add_argument('--font', default='galmuri11', choices=['galmuri11', 'galmuri11-bold', 'some'])
+    p.add_argument('--galmuri', default='~/Downloads/galmuri', help='folder with Galmuri*.bdf')
+    p.add_argument('--thin', action='store_true', help='font=some: keep 1px strokes')
+    p.add_argument('--name-ui', action='store_true', help='Hangul user-name entry (unverified)')
     p.add_argument('--demo', action='store_true'); p.set_defaults(fn=cmd_hangul)
     p = sub.add_parser('edit'); p.add_argument('-p', '--port', type=int, default=8477)
     p.set_defaults(fn=lambda a: __import__('tama4u.editor', fromlist=['serve']).serve(a.port))

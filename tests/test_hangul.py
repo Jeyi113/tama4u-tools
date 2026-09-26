@@ -32,7 +32,7 @@ def test_codes_avoid_terminators():
 def test_hooks_disassemble():
     code, lab = hangul._hooks()
     text = s1c33.text(code, base=hangul.BASE + hangul.CODE_AT)
-    assert 'xld.w %r4,0x2311000' in text
+    assert f'xld.w %r4,{hangul.BASE + hangul.TBL_AT:#x}' in text
     assert 'xsub %r5,0xc7' in text and 'xsub %r5,0xd9' in text
     assert '.word' not in text
     # far tail jumps back into the firmware (ext + jp, raw displacement)
@@ -43,5 +43,19 @@ def test_hooks_disassemble():
         d -= (1 << 21) if d & (1 << 20) else 0
         assert j >> 8 == 0x1E and src + 2 + 2 * d == dst
     assert lab['KADV'] - lab['KGLYPH'] == 0x48
-    assert hangul.CODE_AT + len(code) <= hangul.TBL_AT
+    assert hangul.TBL_AT + 128 <= hangul.CODE_AT
     assert 'sra %r5,0x1' in text          # KCENT's centring tail
+
+
+def test_safe_regions_avoid_storage():
+    # data reset erases 0x2D0000-0x37FFFF and 0x570000-; downloads live there
+    for lo, hi in hangul.SAFE:
+        assert hi <= 0x2D0000 or (0x380000 <= lo and hi <= 0x570000)
+    assert hangul.SAFE[2][0] <= hangul.TBL_AT < hangul.SAFE[2][1]
+
+
+def test_name_tables():
+    from tama4u import hangul_name as N
+    pair, lst = N.tables()
+    assert len(pair) == 19 * 21 and sum(p != N.END for p in pair) == 354
+    assert lst.count(N.END) == 354 and len(lst) - 354 == 2350

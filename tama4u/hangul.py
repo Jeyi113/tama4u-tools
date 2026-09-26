@@ -1,4 +1,7 @@
-"""Korean (Hangul) patch for the P's firmware, glyphs taken from Tamagotchi Some.
+"""Korean (Hangul) patch for the P's firmware.
+
+Glyphs: Galmuri11 / Galmuri9 (SIL OFL, BDF from the `galmuri` npm package) at
+the kana pitch -- 12x14 cells, 10x9 small -- or Tamagotchi Some's own font.
 
 Some (the Korean Meets, ARM, load base 0x20000000) stores its font in the
 same loose-sprite codec as the colour family: 14x14 and 10x10 two-colour
@@ -13,12 +16,14 @@ untouched, so Japanese names and downloads keep working.
 
 Patched (P's, CPU addresses; file offset = addr - 0x02000000):
   0x2401D02  putstr's glyph call -> KGLYPH (2-byte aware, else original)
-  0x2401D2C  putstr's advance    -> KADV (Hangul 14px/small 10px, skips trail)
+  0x2401D2C  putstr's advance    -> KADV (Hangul pitch per font, skips trail)
 The character limit putstr/drawstr take is a byte budget: a Hangul syllable
 spends two, so fixed buffers (the 5-byte user name) never over-read.
   0x2401DBC  drawstr's centring  -> KCENT (pixel width, not strlen bytes)
-New code at 0x2310E00, pointer table + strips from 0x2311000 (free 0xFF run).
-Real-device verified on P's (thin and bold, 2026-09-26).
+Everything new lives in SAFE: 0xFF padding after the firmware image segments
+that the data reset never erases (0x2D0000-0x37FFFF and 0x570000- are save
+and download storage; an early prototype sat there and got wiped).  Pointer
+table at 0x55CA00, code after it, strips packed into whatever fits.
 """
 import struct
 
@@ -31,9 +36,10 @@ KS = [(h << 8 | l) for h in range(0xB0, 0xC9) for l in range(0xA1, 0xFF)]
 CHO = 'ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎㄲㄸㅃㅆㅉ'
 JUNG = 'ㅏㅑㅓㅕㅗㅛㅜㅠㅡㅣㅐㅒㅔㅖㅘㅙㅚㅝㅞㅟㅢ'
 JAMO = CHO + JUNG + 'ㄳㄵㄶㄺㄻㄼㄽㄾㄿㅀㅄ'
-GLYPHS = KS + [0xB001 + i for i in range(len(JAMO))]
-CODE_AT, TBL_AT, FREE_END = 0x310E00, 0x311000, 0x380000
-KW, KWS = 14, 10
+GLYPHS = KS + [0xB001 + i for i in range(len(JAMO))] + [0]   # 0 = empty cell
+SAFE = [(0x2AE600, 0x2D0000), (0x3DD800, 0x400000), (0x55CA00, 0x570000)]
+TBL_AT, CODE_AT = 0x55CA00, 0x55CA80
+GALMURI = '~/Downloads/galmuri'
 
 # glyph weight per model (user's call): bold on P's/iD/iDL, thin on 4U
 BOLD = {'ps': True, 'id': True, 'idl': True, '4u': False}
@@ -82,6 +88,70 @@ def embolden(w, h, g):
 def code(g):
     """Glyph number (index into GLYPHS) -> P's 2-byte code."""
     return bytes([LEADS[g // 254], g % 254 + 1])
+
+
+class BdfFont:
+    """Just the BDF bits the glyphs need: bbx, offsets, bitmap rows."""
+
+    def __init__(self, path):
+        import os
+        self.g, cur = {}, None
+        for line in open(os.path.expanduser(path), encoding='utf-8'):
+            p = line.split()
+            if not p:
+                continue
+            if p[0] == 'ENCODING':
+                cur = {'rows': None}; enc = int(p[1])
+            elif cur is None:
+                continue
+            elif p[0] == 'BBX':
+                cur['bbx'] = tuple(map(int, p[1:5]))
+            elif p[0] == 'BITMAP':
+                cur['rows'] = []
+            elif p[0] == 'ENDCHAR':
+                self.g[enc] = cur; cur = None
+            elif cur['rows'] is not None:
+                cur['rows'].append((int(p[0], 16), len(p[0]) * 4))
+
+    def cell(self, ch, w, h, base):
+        """4bpp cell w x h, glyph bottom on row `base` (the kana baseline)."""
+        px = bytearray(w * h)
+        if ch:
+            bw, bh, bx, by = self.g[ord(ch)]['bbx']
+            top = base - by - bh + 1
+            for r, (bits, nb) in enumerate(self.g[ord(ch)]['rows']):
+                for x in range(bw):
+                    if bits >> (nb - 1 - x) & 1:
+                        yy, xx = top + r, bx + x
+                        assert 0 <= yy < h and 0 <= xx < w, (ch, yy, xx)
+                        px[yy * w + xx] = 1
+        return bytes(px[i] | px[i + 1] << 4 for i in range(0, w * h, 2))
+
+
+def glyph_char(c):
+    """GLYPHS entry -> the character it draws ('' for the empty cell)."""
+    if not c:
+        return ''
+    if c >= 0xB0A1:
+        return bytes([c >> 8, c & 0xFF]).decode('euc-kr')
+    return JAMO[c - 0xB001]
+
+
+def glyph_sets(font, some_rom=None, bold=True, galmuri=GALMURI):
+    """(big, small, kw, kws): per-GLYPHS (w, h, 4bpp) lists and advances.
+    small None = draw the big glyphs for small text too."""
+    if font == 'some':
+        f = SomeFont(some_rom)
+        w0, h0, _ = f.glyph(KS[0])
+        big = [f.glyph(c) if c else (w0, h0, bytes((w0 * h0 + 1) // 2)) for c in GLYPHS]
+        if bold:
+            big = [(w, h, embolden(w, h, g)) for w, h, g in big]
+        return big, None, 14, 14
+    name = {'galmuri11': 'Galmuri11', 'galmuri11-bold': 'Galmuri11-Bold'}[font]
+    b, sm = BdfFont(f'{galmuri}/{name}.bdf'), BdfFont(f'{galmuri}/Galmuri9.bdf')
+    big = [(12, 14, b.cell(glyph_char(c), 12, 14, 13)) for c in GLYPHS]
+    small = [(10, 9, sm.cell(glyph_char(c), 10, 9, 8)) for c in GLYPHS]
+    return big, small, 12, 10
 
 
 def encode(text, charset):
@@ -161,7 +231,7 @@ def _lead_test(a, reg, yes, no):
     a.br(JRUGT, no); a.w(add_i(5, 9)); a.br(JP, yes)
 
 
-def _hooks():
+def _hooks(kw=12, kws=10):
     a = _Asm(BASE + CODE_AT)
     # KGLYPH(r6 obj, r7, r8 code, r9 small flag; r1 = putstr's string pointer)
     a.L('KGLYPH')
@@ -193,9 +263,9 @@ def _hooks():
     a.w(sub_i(2, 1))                                    # a syllable spends 2
     a.L('KA_B')
     a.w(add_i(1, 1)); a.ext(4); a.w(lduh_rb(4, 0))
-    a.w(cmp_i(6, 0)); a.br(JRNE, 'KAS'); a.w(add_i(4, KW)); a.w(RET)
+    a.w(cmp_i(6, 0)); a.br(JRNE, 'KAS'); a.w(add_i(4, kw)); a.w(RET)
     a.L('KAS')
-    a.w(add_i(4, KWS)); a.w(RET)
+    a.w(add_i(4, kws)); a.w(RET)
     # KCENT(r9 str, r0 byte budget, r1 small) -> r6 = budget for putstr, r5 = x.
     # Non-Hangul keeps drawstr's own 12/9px per character, so old layouts hold.
     a.L('KCENT')
@@ -213,9 +283,9 @@ def _hooks():
     a.L('KC_K')
     a.w(add_i(6, 1))                                    # 2 bytes of budget
     a.w(add_i(4, 2)); a.w(cmp_i(1, 0)); a.br(JRNE, 'KC_K9')
-    a.w(add_i(8, KW)); a.br(JP, 'KC_NX')
+    a.w(add_i(8, kw)); a.br(JP, 'KC_NX')
     a.L('KC_K9')
-    a.w(add_i(8, KWS))
+    a.w(add_i(8, kws))
     a.L('KC_NX')
     a.w(add_i(6, 1)); a.br(JP, 'KC_L')
     a.L('KC_D')
@@ -230,32 +300,54 @@ def _hooks():
     return a.build(), a.labels
 
 
-def build_ps(ps_rom, some_rom, bold=True, strings=()):
-    """Patched P's image.  `strings` = [(file offset, slot bytes, P's bytes)]."""
-    rom = bytearray(ps_rom)
-    assert all(b == 0xFF for b in rom[CODE_AT:FREE_END - 1]), 'free area not blank'
-    font = SomeFont(some_rom)
-    code, lab = _hooks()
-    assert CODE_AT + len(code) <= TBL_AT
-    rom[CODE_AT:CODE_AT + len(code)] = code
+def _record(gs):
+    w, h, _ = gs[0]
+    return bytes([w, h, 2, 0, len(gs), 0xFF]) + b'\x07\xe0\x60\x00' + b''.join(g for *_, g in gs)
 
-    p, ptrs = TBL_AT + 32 * 4, [0] * 32
-    for big in (True, False):
-        for k in range(16):
-            gs = [font.glyph(c, big) for c in GLYPHS[k * 254:(k + 1) * 254]]
-            if not gs:
-                continue
-            if bold:
-                gs = [(w, h, embolden(w, h, g)) for w, h, g in gs]
-            w, h, _ = gs[0]
-            p = (p + 5) & ~3
-            rec = bytes([w, h, 2, 0, len(gs), 0xFF]) + b'\x07\xe0\x60\x00' + b''.join(g for *_, g in gs)
-            rom[p - 2:p] = b'\0\0'
-            rom[p:p + len(rec)] = rec
-            ptrs[k + (0 if big else 16)] = BASE + p
-            p += len(rec)
-    assert p < FREE_END, hex(p)
+
+def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=(),
+             name_ui=False, galmuri=GALMURI):
+    """Patched P's image.  `strings` = [(file offset, slot bytes, P's bytes)].
+    `font`: galmuri11 | galmuri11-bold | some (bold = Some glyphs widened).
+    `name_ui` swaps the user-name screen for Hangul jamo entry (hangul_name)."""
+    rom = bytearray(ps_rom)
+    for lo, hi in SAFE:
+        assert all(b == 0xFF for b in rom[lo:hi]), f'{lo:#x} not blank'
+    big, small, kw, kws = glyph_sets(font, some_rom, bold, galmuri)
+
+    code, lab = _hooks(kw, kws)
+    blocks = [code]
+    if name_ui:
+        from . import hangul_name
+        norg = BASE + CODE_AT + (len(code) + 3 & ~3)
+        nb, nlab = hangul_name.assemble(norg, pitch=kw)
+        blocks.append(b'\0' * (norg - BASE - CODE_AT - len(code)) + nb)
+    fixed = b''.join(blocks)
+    cursor = [lo for lo, _ in SAFE]
+    cursor[2] = CODE_AT + len(fixed)
+
+    # strips, biggest first, first fit; each record 4-aligned after 2 zero bytes
+    recs = []
+    for k in range(16):
+        part = slice(k * 254, (k + 1) * 254)
+        if big[part]:
+            recs.append((k, _record(big[part])))
+            if small:
+                recs.append((16 + k, _record(small[part])))
+    ptrs = [0] * 32
+    for slot, rec in sorted(recs, key=lambda r: -len(r[1])):
+        for i, (lo, hi) in enumerate(SAFE):
+            p = (cursor[i] + 5) & ~3
+            if p + len(rec) <= hi:
+                rom[p - 2:p] = b'\0\0'; rom[p:p + len(rec)] = rec
+                ptrs[slot] = BASE + p; cursor[i] = p + len(rec)
+                break
+        else:
+            raise ValueError(f'no room for strip {slot} ({len(rec)} B)')
+    if not small:
+        ptrs[16:] = ptrs[:16]
     rom[TBL_AT:TBL_AT + 128] = struct.pack('<32I', *ptrs)
+    rom[CODE_AT:CODE_AT + len(fixed)] = fixed
 
     h = _Asm(0x02401D02); h.br(CALL, lab['KGLYPH'], x=True)
     b = h.build(); rom[0x401D02:0x401D02 + len(b)] = b
@@ -267,6 +359,10 @@ def build_ps(ps_rom, some_rom, bold=True, strings=()):
     h = _Asm(0x02401DBC); h.br(CALL, lab['KCENT'], x=True); h.br(JP, 0x02401DF0)
     b = h.build()
     rom[0x401DBC:0x401DF0] = b.ljust(0x34, b'\0')
+    if name_ui:
+        h = _Asm(0x025251BE); h.br(JP, nlab['KNAME'], x=True)
+        b = h.build(); rom[0x5251BE:0x5251BE + len(b)] = b
+        hangul_name.patch_bg(rom, kw)
 
     for off, slot, data in strings:
         assert len(data) < slot, (hex(off), len(data))
