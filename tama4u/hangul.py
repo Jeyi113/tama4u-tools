@@ -452,3 +452,16 @@ def debug_menu(rom):
     assert rom[0x4FFC92:0x4FFC96] == b'\x03\x1f\x65\x6c'
     rom[0x4FFC92:0x4FFC94] = struct.pack('<H', 0x1F00 | (0x2FFC88 - 0x2FFC92) // 2 & 0xFF)
     return bytes(rom)
+
+
+def all_jobs(rom):
+    """Test builds: every part-time job open.  0x2413016(job) checks the
+    job's counter (park/cafe >9 at 0x13A9/0x13AC, depa/shop >1 at 0x13AA/
+    0x13AB) -> return 1; 0x2413118 then also wants stage >3 and two flags
+    before the 'recruiting' line -> jump straight to it (0x2413190)."""
+    rom = bytearray(rom)
+    assert rom[0x413016:0x41301A] == b'\x66\xa5\x16\x68'
+    assert rom[0x413130:0x413132] == b'\x44\xa5'
+    rom[0x413016:0x41301A] = struct.pack('<2H', 0x6C14, 0x0640)          # ld.w r4,1; ret
+    rom[0x413130:0x413132] = struct.pack('<H', 0x1E00 | (0x413190 - 0x413130) // 2)
+    return bytes(rom)
