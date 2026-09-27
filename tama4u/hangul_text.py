@@ -40,6 +40,14 @@ def item_names(rom, lo=0, hi=0x400000):
     return out
 
 
+# Fixed-stride text arrays, written in place (no pointers to move):
+# the activity diary, 75 entries x 40 bytes from 0x558370.  An entry is
+# copied into the save's diary record, whose text field holds 36 bytes + NUL
+# (the next bytes are the record's date etc.), so the text limit is 36.
+# The diary page wraps it 6 characters a line (a Hangul syllable is one).
+SLOTS = {0x558370 + 40 * k: 40 for k in range(75)}
+SLOT_TEXT = 36
+
 ASCII = {'!': '！', '?': '？', '(': '（', ')': '）', '~': '～', '&': '＆',
          '.': '．', ',': '、', '"': '」'}
 
@@ -109,6 +117,12 @@ def apply(rom, texts, alloc, refs=None):
     items = item_names(rom)
     done = [0, 0]
     for addr, data in sorted(texts.items()):
+        if addr in SLOTS:                              # fixed-stride array entry
+            if len(data) > SLOT_TEXT:
+                raise ValueError(f'{addr:#x}: {len(data)} B > diary text {SLOT_TEXT} B')
+            rom[addr:addr + SLOTS[addr]] = data.ljust(SLOTS[addr], b'\0')
+            done[0] += 1
+            continue
         if addr in items:                              # fixed item name field
             if len(data) > ITEM_NAME_LEN or rom[addr + ITEM_NAME_LEN]:
                 raise ValueError(f'{addr:#x} {items[addr]}: {len(data)} B > item name {ITEM_NAME_LEN} B')
