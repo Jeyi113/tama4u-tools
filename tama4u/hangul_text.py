@@ -44,7 +44,7 @@ def item_names(rom, lo=0, hi=0x400000):
 # the activity diary, 75 entries x 40 bytes from 0x558370.  An entry is
 # copied into the save's diary record, whose text field holds 36 bytes + NUL
 # (the next bytes are the record's date etc.), so the text limit is 36.
-# The diary page wraps it 6 characters a line (a Hangul syllable is one).
+# The diary page wraps it by pixel width (diary_lines).
 SLOTS = {0x558370 + 40 * k: 40 for k in range(75)}
 SLOT_TEXT = 36
 
@@ -151,3 +151,17 @@ def apply(rom, texts, alloc, refs=None):
 def load(path):
     rev = charmap()
     return {int(k, 16): encode(v, rev) for k, v in json.load(open(path)).items()}
+
+
+def diary_lines(text, width=72):
+    """How the diary page breaks `text`: it fills 72px lines with the putstr
+    advances (Hangul/kana/symbols 12, digits 9, the half-pitch space 6).
+    The firmware's 1-byte space 0x6C is no use there: recording a diary entry
+    drops it."""
+    lines, line, w = [], '', 0
+    for ch in text:
+        cw = 6 if ch == ' ' else 9 if ch.isdigit() else 12
+        if w + cw > width:
+            lines.append(line); line, w = '', 0
+        line += ch; w += cw
+    return lines + [line] if line else lines

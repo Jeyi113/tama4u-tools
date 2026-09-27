@@ -131,3 +131,10 @@ def test_item_name_fixed_field():
         pass
     else:
         raise AssertionError('over-long item name accepted')
+
+
+
+def test_diary_lines():
+    from tama4u import hangul_text as T
+    # seen on the emulator: 공원 순찰을 / 했어! 오늘 / 도 평화로웠 / 어♪
+    assert T.diary_lines('공원 순찰을했어! 오늘도 평화로웠어♪') == ['공원 순찰을', '했어! 오늘', '도 평화로웠', '어♪']
