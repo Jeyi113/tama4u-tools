@@ -465,3 +465,18 @@ def all_jobs(rom):
     rom[0x413016:0x41301A] = struct.pack('<2H', 0x6C14, 0x0640)          # ld.w r4,1; ret
     rom[0x413130:0x413132] = struct.pack('<H', 0x1E00 | (0x413190 - 0x413130) // 2)
     return bytes(rom)
+
+
+def all_outings(rom):
+    """Test builds: every outing destination open.  0x2415e3c(idx) gives a
+    destination's menu state (-1 hidden, 2 '???????', 1 greyed, 0 open).
+    Secret base / amusement park / beach / fountain / outlook are gated on
+    0x24081f8 = how many of flags 0x1A-0x39 are set (>0, >3, >9, >14, >19)
+    -> pretend all 31; Eco Town wants flag 0x15 -> pretend set.  Life-stage
+    and opening-hour checks stay."""
+    rom = bytearray(rom)
+    assert rom[0x415E52:0x415E56] == b'\x91\xdf\xd2\x1c'                 # scall 0x24081f8
+    assert rom[0x415F62:0x415F66] == b'\x8c\xdf\xab\x1d'                 # scall.d 0x24078ba
+    rom[0x415E52:0x415E56] = struct.pack('<2H', 0x6DF4, 0)              # ld.w r4,31; nop
+    rom[0x415F62:0x415F66] = struct.pack('<2H', 0x6C14, 0)              # ld.w r4,1; nop
+    return bytes(rom)
