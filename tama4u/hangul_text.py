@@ -109,18 +109,29 @@ def _retarget(rom, kind, off, addr):
                          0xC000 | v >> 6 & 0x1FFF, op & 0xFC0F | (v & 0x3F) << 4)
 
 
-def apply(rom, texts, alloc, refs=None):
+def apply(rom, texts, alloc, refs=None, diary=None):
     """Write {offset: bytes} into rom; alloc(n) -> SAFE offset for n bytes.
-    `refs`: scan_refs of the unpatched image.  Returns (in place, relocated)."""
+    `refs`: scan_refs of the unpatched image.  `diary`: file offset of the
+    moved 80-byte sentence array (hangul_diary), else the 36-byte originals.
+    Returns (in place, relocated)."""
     refs = refs if refs is not None else scan_refs(rom)
     targets = sorted(refs)
     items = item_names(rom)
     done = [0, 0]
     for addr, data in sorted(texts.items()):
         if addr in SLOTS:                              # fixed-stride array entry
-            if len(data) > SLOT_TEXT:
-                raise ValueError(f'{addr:#x}: {len(data)} B > diary text {SLOT_TEXT} B')
-            rom[addr:addr + SLOTS[addr]] = data.ljust(SLOTS[addr], b'\0')
+            if diary is not None:
+                from . import hangul_diary as hd
+                if len(data) > hd.TEXT:
+                    raise ValueError(f'{addr:#x}: {len(data)} B > diary text {hd.TEXT} B')
+                if diary_rows(data) > hd.LINES:             # a 7th row overwrites the picture
+                    raise ValueError(f'{addr:#x}: {diary_rows(data)} diary lines > {hd.LINES}')
+                at = diary + hd.NEW * ((addr - 0x558370) // 40)
+                rom[at:at + hd.NEW] = data.ljust(hd.NEW, b'\0')
+            else:
+                if len(data) > SLOT_TEXT:
+                    raise ValueError(f'{addr:#x}: {len(data)} B > diary text {SLOT_TEXT} B')
+                rom[addr:addr + SLOTS[addr]] = data.ljust(SLOTS[addr], b'\0')
             done[0] += 1
             continue
         if addr in items:                              # fixed item name field
@@ -153,15 +164,18 @@ def load(path):
     return {int(k, 16): encode(v, rev) for k, v in json.load(open(path)).items()}
 
 
-def diary_lines(text, width=72):
-    """How the diary page breaks `text`: it fills 72px lines with the putstr
-    advances (Hangul/kana/symbols 12, digits 9, the half-pitch space 6).
-    The firmware's 1-byte space 0x6C is no use there: recording a diary entry
-    drops it."""
-    lines, line, w = [], '', 0
-    for ch in text:
-        cw = 6 if ch == ' ' else 9 if ch.isdigit() else 12
-        if w + cw > width:
-            lines.append(line); line, w = '', 0
-        line += ch; w += cw
-    return lines + [line] if line else lines
+def diary_rows(data, per=6):
+    """diary_lines' row count for encoded bytes."""
+    n, i = 0, 0
+    while i < len(data):
+        i += 2 if data[i] in hangul.LEADS else 1
+        n += 1
+    return max(1, -(-n // per))
+
+
+def diary_lines(text, per=6):
+    """How the diary page breaks `text`: putstr's character limit, 6 a line;
+    a syllable, the half-pitch space and a symbol are one character each (the
+    v53 screen: '오늘은 공원' / ' 순찰을 했' / ...).  The firmware's 1-byte
+    space 0x6C is no use there: recording a diary entry drops it."""
+    return [text[i:i + per] for i in range(0, len(text), per)]

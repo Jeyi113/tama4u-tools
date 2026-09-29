@@ -359,6 +359,11 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         norg = BASE + CODE_AT + (len(code) + 3 & ~3)
         nb, nlab = hangul_name.assemble(norg, pitch=kw)
         blocks.append(b'\0' * (norg - BASE - CODE_AT - len(code)) + nb)
+    if strings:                                         # long diary entries
+        from . import hangul_diary
+        dorg = BASE + CODE_AT + (len(b''.join(blocks)) + 3 & ~3)
+        db, dlab = hangul_diary.assemble(dorg)
+        blocks.append(b'\0' * (dorg - BASE - CODE_AT - len(b''.join(blocks))) + db)
     fixed = b''.join(blocks)
     cursor = [lo for lo, _ in SAFE]
     cursor[2] = CODE_AT + len(fixed)
@@ -419,7 +424,10 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
                     cursor[i] += n
                     return cursor[i] - n
             raise ValueError(f'no room for {n} B of text')
-        hangul_text.apply(rom, strings, alloc, hangul_text.scan_refs(ps_rom))
+        refs = hangul_text.scan_refs(ps_rom)
+        array = alloc(hangul_diary.COUNT * hangul_diary.NEW + 3) + 3 & ~3
+        hangul_diary.patch(rom, dlab, array)
+        hangul_text.apply(rom, strings, alloc, refs, diary=array)
     return bytes(rom)
 
 

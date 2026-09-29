@@ -138,3 +138,28 @@ def test_diary_lines():
     from tama4u import hangul_text as T
     # seen on the emulator: 공원 순찰을 / 했어! 오늘 / 도 평화로웠 / 어♪
     assert T.diary_lines('공원 순찰을했어! 오늘도 평화로웠어♪') == ['공원 순찰을', '했어! 오늘', '도 평화로웠', '어♪']
+
+
+def test_diary_hooks_assemble():
+    from tama4u import hangul_diary as D
+    code, lab = D.assemble(0x02560000)
+    assert lab['DWRAP'] == 0x02560000 and lab['DVIEW'] > lab['DWRAP']
+    words = struct.unpack(f'<{len(code) // 2}H', code)
+    assert words[0] == 0x0203 and words[1] == 0x8400 | D.FRAME      # pushn r3; 128-byte buffer
+    assert D.OLD * D.COUNT <= D.NEW * D.COUNT and D.TAIL >= 0x17FC  # tail after the link export
+
+
+def test_diary_long_entries():
+    from tama4u import hangul_diary as D
+    T = __import__('tama4u.hangul_text', fromlist=['apply'])
+    rom = bytearray(0x560000)
+    arr = 0x500000
+    long = T.encode('가' * 36)                                     # 6 lines, 72 bytes: fits
+    assert T.apply(rom, {0x558370 + 40 * 3: long}, None, {}, diary=arr) == (1, 0)
+    assert rom[arr + 80 * 3:arr + 80 * 4] == long.ljust(80, b'\0')
+    for bad in (T.encode('가' * 37), bytes(range(1, 81))):        # 7th line / > 79 bytes
+        try:
+            T.apply(rom, {0x558370: bad}, None, {}, diary=arr)
+            assert False
+        except ValueError:
+            pass
