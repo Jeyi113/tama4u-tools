@@ -142,11 +142,15 @@ def test_diary_lines():
 
 def test_diary_hooks_assemble():
     from tama4u import hangul_diary as D
-    code, lab = D.assemble(0x02560000)
-    assert lab['DWRAP'] == 0x02560000 and lab['DVIEW'] > lab['DWRAP']
-    words = struct.unpack(f'<{len(code) // 2}H', code)
-    assert words[0] == 0x0203 and words[1] == 0x8400 | D.FRAME      # pushn r3; 128-byte buffer
-    assert D.OLD * D.COUNT <= D.NEW * D.COUNT and D.TAIL >= 0x17FC  # tail after the link export
+    blk, lab, arr = D.block(0x02560000)
+    assert lab['DFIX'] == 0x02560000 and lab['DVIEW'] > lab['DFIX']
+    assert arr % 4 == 0 and arr + D.COUNT * D.NEW == 0x02560000 + len(blk)
+    wrap = blk[:len(D.assemble(0x02560000, arr)[0])]
+    words = struct.unpack(f'<{len(wrap) // 2}H', wrap)
+    # no stack at all: no pushn/popn, sub/add %sp, call
+    assert not any(w & 0xFFF0 in (0x0200, 0x0240) or w & 0xFC00 in (0x8400, 0x8000) or w >> 8 == 0x1C
+                   for w in words)
+    assert D.KEEP + 3 <= 36                                        # text + NUL + MARK + index
 
 
 def test_diary_long_entries():

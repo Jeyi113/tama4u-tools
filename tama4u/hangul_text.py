@@ -57,7 +57,9 @@ def charmap():
     return {v: int(k, 16) for k, v in fw.items() if not v.startswith('[')}
 
 
-def encode(text, rev=None):
+def encode(text, rev=None, bold=None):
+    """`bold`: hangul.bold_map for a bold text (its syllables use the bold
+    glyphs; spaces, symbols and jamo stay as they are)."""
     rev = rev or charmap()
     out = bytearray()
     for ch in text:
@@ -67,6 +69,8 @@ def encode(text, rev=None):
             out += hangul.code(hangul.HALF)
         elif ch == '\u3000':                            # full kana cell (0x6C)
             out.append(0x6C)
+        elif bold and ch in bold:
+            out += hangul.code(bold[ch])
         elif '가' <= ch <= '힣':
             out += hangul.code(hangul.KS.index(int.from_bytes(ch.encode('euc-kr'), 'big')))
         elif ch in hangul.JAMO:
@@ -159,9 +163,21 @@ def apply(rom, texts, alloc, refs=None, diary=None):
     return tuple(done)
 
 
-def load(path):
+def load(path, bold_addrs=(), bold=None):
+    """{offset: bytes}; texts at `bold_addrs` ("0x..." keys) encoded with `bold`."""
     rev = charmap()
-    return {int(k, 16): encode(v, rev) for k, v in json.load(open(path)).items()}
+    return {int(k, 16): encode(v, rev, bold if k in bold_addrs else None)
+            for k, v in json.load(open(path)).items()}
+
+
+def bold_chars(paths, bold_addrs):
+    """Hangul syllables used by the bold texts in the translation files."""
+    out = set()
+    for path in paths:
+        for k, v in json.load(open(path)).items():
+            if k in bold_addrs:
+                out.update(ch for ch in v if '가' <= ch <= '힣')
+    return out
 
 
 def diary_rows(data, per=6):

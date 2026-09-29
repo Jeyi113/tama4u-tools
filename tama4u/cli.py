@@ -6,6 +6,7 @@
     python -m tama4u charset <corpus-dir>
 """
 import argparse
+import json
 import struct
 import glob
 import os
@@ -89,9 +90,12 @@ def cmd_charset(args):
 
 def cmd_hangul(args):
     from . import hangul, hangul_text
+    bold_addrs = set(json.load(open(args.bold))) if args.bold else set()
+    chars = hangul_text.bold_chars(args.text or (), bold_addrs)
+    bmap = hangul.bold_map(chars) if chars else None
     strings = {}
     for path in args.text or ():
-        strings.update(hangul_text.load(path))
+        strings.update(hangul_text.load(path, bold_addrs, bmap))
     if args.demo:       # boot: centred wait text (drawstr) + menu (putstr, mixed)
         enc = hangul_text.encode
         strings.update({0x557610: enc('잠깐만'), 0x557618: enc('기다려'),
@@ -99,7 +103,8 @@ def cmd_hangul(args):
     some = open(args.some, 'rb').read() if args.some else None
     rom = hangul.build_ps(open(args.ps, 'rb').read(), some, font=args.font,
                           bold=not args.thin, strings=strings, name_ui=args.name_ui,
-                          galmuri=args.galmuri)
+                          galmuri=args.galmuri, bold_chars=chars,
+                          long_diary=not args.short_diary)
     if args.debug_menu:     # test builds: show the download menu's debug set
         rom = hangul.debug_menu(rom)
     if args.all_jobs:       # test builds: every part-time job recruiting
@@ -135,6 +140,10 @@ def main(argv=None):
     p.add_argument('--thin', action='store_true', help='font=some: keep 1px strokes')
     p.add_argument('--name-ui', action='store_true', help='Hangul user-name entry (unverified)')
     p.add_argument('--text', action='append', help='translations JSON {"0xADDR": "텍스트"}')
+    p.add_argument('--short-diary', action='store_true',
+                   help='test builds: no long-diary hooks (diary texts must fit 36 bytes)')
+    p.add_argument('--bold', metavar='JSON',
+                   help='["0xADDR", ...]: texts drawn with Galmuri11-Bold syllables')
     p.add_argument('--carry-save', metavar='OLD_ROM',
                    help="tamaemu: start OUT with OLD_ROM's save data (not its flash image)")
     p.add_argument('--debug-menu', action='store_true',

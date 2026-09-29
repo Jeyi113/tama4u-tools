@@ -154,9 +154,19 @@ def glyph_char(c):
     return JAMO[c - 0xB001]
 
 
-def glyph_sets(font, some_rom=None, bold=True, galmuri=GALMURI):
+def bold_map(chars):
+    """Bold copies of the syllables `chars` in the free glyph numbers after
+    GLYPHS (16 leads hold 16 * PER): {syllable: glyph number}."""
+    m = {ch: len(GLYPHS) + i for i, ch in enumerate(sorted(set(chars)))}
+    assert len(GLYPHS) + len(m) <= 16 * PER, f'{len(m)} bold syllables: no room'
+    return m
+
+
+def glyph_sets(font, some_rom=None, bold=True, galmuri=GALMURI, bold_chars=()):
     """(big, small, kw, kws): per-GLYPHS (w, h, 4bpp) lists and advances.
-    small None = draw the big glyphs for small text too."""
+    small None = draw the big glyphs for small text too.  `bold_chars` get
+    Galmuri11-Bold glyphs after GLYPHS (bold_map order; small text keeps
+    Galmuri9)."""
     if font == 'some':
         f = SomeFont(some_rom)
         w0, h0, _ = f.glyph(KS[0])
@@ -168,6 +178,11 @@ def glyph_sets(font, some_rom=None, bold=True, galmuri=GALMURI):
     b, sm = BdfFont(f'{galmuri}/{name}.bdf'), BdfFont(f'{galmuri}/Galmuri9.bdf')
     big = [(12, 14, b.cell(glyph_char(c), 12, 14, 13)) for c in GLYPHS]
     small = [(10, 9, sm.cell(glyph_char(c), 10, 9, 8)) for c in GLYPHS]
+    if bold_chars:
+        bb = BdfFont(f'{galmuri}/Galmuri11-Bold.bdf')
+        for ch in bold_map(bold_chars):
+            big.append((12, 14, bb.cell(ch, 12, 14, 13)))
+            small.append((10, 9, sm.cell(ch, 10, 9, 8)))
     return big, small, 12, 10
 
 
@@ -342,7 +357,7 @@ def _record(gs):
 
 
 def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
-             name_ui=False, galmuri=GALMURI):
+             name_ui=False, galmuri=GALMURI, bold_chars=(), long_diary=True):
     """Patched P's image.  `strings` = {file offset: P's bytes} (hangul_text:
     in place when it fits, else moved to SAFE with its references).
     `font`: galmuri11 | galmuri11-bold | some (bold = Some glyphs widened).
@@ -350,7 +365,7 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
     rom = bytearray(ps_rom)
     for lo, hi in SAFE:
         assert all(b == 0xFF for b in rom[lo:hi]), f'{lo:#x} not blank'
-    big, small, kw, kws = glyph_sets(font, some_rom, bold, galmuri)
+    big, small, kw, kws = glyph_sets(font, some_rom, bold, galmuri, bold_chars)
 
     code, lab = _hooks(kw, kws)
     blocks = [code]
@@ -359,10 +374,11 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         norg = BASE + CODE_AT + (len(code) + 3 & ~3)
         nb, nlab = hangul_name.assemble(norg, pitch=kw)
         blocks.append(b'\0' * (norg - BASE - CODE_AT - len(code)) + nb)
-    if strings:                                         # long diary entries
+    long_diary = bool(strings) and long_diary
+    if long_diary:                                      # long diary entries
         from . import hangul_diary
         dorg = BASE + CODE_AT + (len(b''.join(blocks)) + 3 & ~3)
-        db, dlab = hangul_diary.assemble(dorg)
+        db, dlab, darray = hangul_diary.block(dorg)
         blocks.append(b'\0' * (dorg - BASE - CODE_AT - len(b''.join(blocks))) + db)
     fixed = b''.join(blocks)
     cursor = [lo for lo, _ in SAFE]
@@ -425,9 +441,9 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
                     return cursor[i] - n
             raise ValueError(f'no room for {n} B of text')
         refs = hangul_text.scan_refs(ps_rom)
-        array = alloc(hangul_diary.COUNT * hangul_diary.NEW + 3) + 3 & ~3
-        hangul_diary.patch(rom, dlab, array)
-        hangul_text.apply(rom, strings, alloc, refs, diary=array)
+        if long_diary:
+            hangul_diary.patch(rom, dlab, darray - BASE)
+        hangul_text.apply(rom, strings, alloc, refs, diary=darray - BASE if long_diary else None)
     return bytes(rom)
 
 
