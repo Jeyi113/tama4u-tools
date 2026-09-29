@@ -130,6 +130,12 @@ def apply(rom, texts, alloc, refs=None, diary=None):
                     raise ValueError(f'{addr:#x}: {len(data)} B > diary text {hd.TEXT} B')
                 if diary_rows(data) > hd.LINES:             # a 7th row overwrites the picture
                     raise ValueError(f'{addr:#x}: {diary_rows(data)} diary lines > {hd.LINES}')
+                cells = name_cells(data)
+                if cells:                                   # names go in at the original's offsets
+                    want = name_cells(rom[addr:addr + SLOTS[addr]].split(b'\0')[0])
+                    if cells != want or len(data) > SLOT_TEXT:
+                        raise ValueError(f'{addr:#x}: name cells {cells} / {len(data)} B, '
+                                         f'need {want} within {SLOT_TEXT} B')
                 at = diary + hd.NEW * ((addr - 0x558370) // 40)
                 rom[at:at + hd.NEW] = data.ljust(hd.NEW, b'\0')
             else:
@@ -163,10 +169,27 @@ def apply(rom, texts, alloc, refs=None, diary=None):
     return tuple(done)
 
 
+def encode_diary(text, rev=None, bold=None):
+    """A diary sentence: runs of 3+ spaces are name cells, the firmware's
+    1-byte 0x6C the composer pastes a name over (hangul_diary); the rest as
+    encode()."""
+    out = b''
+    for part in re.split(r'( {3,})', text):
+        if part:
+            out += b'\x6c' * len(part) if re.fullmatch(r' {3,}', part) else encode(part, rev, bold)
+    return out
+
+
+def name_cells(data):
+    """(offset, length) of the 3+ runs of 0x6C in a diary sentence."""
+    return [(m.start(), m.end() - m.start()) for m in re.finditer(rb'\x6c{3,}', data)]
+
+
 def load(path, bold_addrs=(), bold=None):
     """{offset: bytes}; texts at `bold_addrs` ("0x..." keys) encoded with `bold`."""
     rev = charmap()
-    return {int(k, 16): encode(v, rev, bold if k in bold_addrs else None)
+    return {int(k, 16): (encode_diary if int(k, 16) in SLOTS else encode)(
+                v, rev, bold if k in bold_addrs else None)
             for k, v in json.load(open(path)).items()}
 
 

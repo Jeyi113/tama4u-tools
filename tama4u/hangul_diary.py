@@ -16,9 +16,10 @@ Patched:
              that took stack there (a call, a buffer) corrupted the sprites the
              diary picture is saved from.  The composer writes the text into
              the recorder's frame (84 bytes; beyond the 36-byte field is
-             scratch); DFIX drops 0x6C, cuts the text to <= 33 bytes at a
-             character boundary + NUL and, when it is one of the array's
-             sentences, puts MARK + its index after that NUL (the link and
+             scratch); DFIX drops 0x6C and, when the text is one of the array's
+             sentences, cuts it to <= 33 bytes at a character boundary + NUL
+             and puts MARK + its index after that NUL; other texts (names
+             pasted in: the template fits 36 bytes) keep the whole field (the link and
              unpatched readers stop at the NUL)
   0x241c790  diary page's text pointer -> jp DVIEW: the array sentence when the
              sector's text carries MARK + index, else the 36-byte copy (names
@@ -74,7 +75,8 @@ def assemble(org, array=0):
     _cmpx(a, 10, COUNT); a.br(JRULT, 'D_FIND')
     a.ext(0xFF >> 6); a.w(ld_i(10, 0xFF & 0x3F))
     a.L('D_KEEP')                                       # r4 = cut: whole chars, <= KEEP bytes
-    a.w(ldw_rs(4, 9)); a.ext(0); a.w(ld_i(7, KEEP))
+    a.w(ldw_rs(4, 9)); a.ext(0); a.w(ld_i(7, KEEP))     # (no index to add: the whole field)
+    _cmpx(a, 10, 0xFF); a.br(JRNE, 'D_CHR'); a.ext(0); a.w(ld_i(7, 36))
     a.L('D_CHR')
     a.w(ldub_rb(6, 4)); a.w(cmp_i(6, 0)); a.br(JREQ, 'D_CUT')
     a.w(ldw_rs(11, 6)); _xsub(a, 11, 0xC7); a.w(ldub_rs(11, 11)); a.w(cmp_i(11, 8)); a.br(JRULE, 'D_TWO')
