@@ -101,6 +101,12 @@ class _Ops:
         s.br(H.JRUGT, no); w(H.add_i(7, 9)); s.br(H.JP, yes)
 
 
+def slot_y(o, y):
+    """Object r2's y = `y` (r4, r5 scratch)."""
+    o.li(4, 0x1470); o.w(H.ldw_rs(5, 2)); o.w(H.ldub_rs(5, 5)); o.w(H.sll_i(5, 4)); o.w(H.add_rs(5, 4))
+    o.li(4, y); o.ext(6); o.w(0x3800 | 5 << 4 | 4)       # ld.h [r5+6],r4
+
+
 def _engine1(o, tab, nh, base, term, blank=(BLANK_SLOT, BLANK_SLOT), sym=True):
     """NORM, GLYPH_OF, PAIROFF.  Text = nh Hangul pairs from `base(rd)`, then
     one symbol byte; `term`: also NUL the byte after it (profile field);
@@ -299,7 +305,7 @@ def _engine2(o, tab, nh, base, back, sym=True):
     w(H.RET)
 
 
-def _code(a, tab, pitch):
+def _code(a, tab, pitch, trim=0):
     """KNAME and helpers into _Asm `a`; `tab` = addresses of PAIR/LIST from a
     first pass (a.li is fixed-size, so the layout does not move)."""
     o = _Ops(a)
@@ -391,6 +397,7 @@ def _code(a, tab, pitch):
     w(H.sll_i(5, 2)); a.li(4, H.BASE + H.TBL_AT); w(H.add_rs(5, 4)); w(H.ldw_rb(9, 5))
     w(H.ldw_rs(6, 2)); li(7, 0x20)
     br(H.CALL, 0x024019C6, x=True)
+    slot_y(o, SLOT_Y + trim)                            # (trimmed glyph: lower)
     w(0x0242)                                          # popn %r2
     w(H.RET)
 
@@ -412,6 +419,8 @@ def _code(a, tab, pitch):
     L('E_POS')
     w(H.ldw_rs(6, 2)); li(7, 0x20); w(H.ldw_rs(8, 1)); li(9, 0)
     br(H.CALL, 0x02401BDC, x=True)
+    if trim:
+        slot_y(o, SLOT_Y)                               # (a stock glyph: as placed)
     w(0x0242)                                          # popn %r2
     w(H.RET)
 
@@ -644,8 +653,9 @@ def patch_bg(rom, pitch):
                 put(x, y, BOX_COLOUR)
 
 
-def assemble(org, pitch=12):
-    """(bytes, labels) for KNAME + tables at CPU address `org`."""
-    a = H._Asm(org); _code(a, {}, pitch); a.build()
-    b = H._Asm(org); _code(b, a.labels, pitch)
+def assemble(org, pitch=12, trim=0):
+    """(bytes, labels) for KNAME + tables at CPU address `org`; `trim`: rows
+    cut off the top of the big glyphs (the slot is drawn that much lower)."""
+    a = H._Asm(org); _code(a, {}, pitch, trim); a.build()
+    b = H._Asm(org); _code(b, a.labels, pitch, trim)
     return b.build(), b.labels

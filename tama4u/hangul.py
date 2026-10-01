@@ -165,6 +165,15 @@ def bold_map(chars):
     return m
 
 
+TRIM = 3                   # Galmuri11's 12x14 cells never use their top 3 rows: stored
+                           # 12x11, drawn 3px lower (KGLYPH/KADV, the name slots)
+
+
+def _trim(g, w=12):
+    assert not any(g[:w // 2 * TRIM]), 'a glyph uses the trimmed rows'
+    return (w, 14 - TRIM, g[w // 2 * TRIM:])
+
+
 def glyph_sets(font, some_rom=None, bold=True, galmuri=GALMURI, bold_chars=()):
     """(big, small, kw, kws): per-GLYPHS (w, h, 4bpp) lists and advances.
     small None = draw the big glyphs for small text too.  `bold_chars` get
@@ -179,12 +188,12 @@ def glyph_sets(font, some_rom=None, bold=True, galmuri=GALMURI, bold_chars=()):
         return big, None, 14, 14
     name = {'galmuri11': 'Galmuri11', 'galmuri11-bold': 'Galmuri11-Bold'}[font]
     b, sm = BdfFont(f'{galmuri}/{name}.bdf'), BdfFont(f'{galmuri}/Galmuri9.bdf')
-    big = [(12, 14, b.cell(glyph_char(c), 12, 14, 13)) for c in GLYPHS]
+    big = [_trim(b.cell(glyph_char(c), 12, 14, 13)) for c in GLYPHS]
     small = [(10, 9, sm.cell(glyph_char(c), 10, 9, 8)) for c in GLYPHS]
     if bold_chars:
         bb = BdfFont(f'{galmuri}/Galmuri11-Bold.bdf')
         for ch in bold_map(bold_chars):                 # small text: KGLYPH draws the plain one
-            big.append((12, 14, bb.cell(ch, 12, 14, 13)))
+            big.append(_trim(bb.cell(ch, 12, 14, 13)))
     return big, small, 12, 10
 
 
@@ -277,7 +286,7 @@ def _half_test(a, ptr, off, tmp, no):
     a.ext(trail >> 6); a.w(cmp_i(tmp, trail & 0x3F)); a.br(JRNE, no)
 
 
-def _hooks(kw=12, kws=10, bold_src=(), bold_at=0):
+def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0):
     """`bold_src`: per bold glyph (bold_map order) the glyph number of its
     plain syllable -- small text draws that (no small bold strips); its
     (lead index, trail index) bytes go at CPU address `bold_at`."""
@@ -303,7 +312,12 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0):
         a.w(ldub_rb(5, 4)); a.ext(1); a.w(ldub_rb(8, 4))
     a.L('KG_S')
     a.w(sll_i(5, 2)); a.li(4, BASE + TBL_AT); a.w(add_rs(5, 4))
-    a.w(cmp_i(9, 0)); a.br(JREQ, 'KG_BIG')
+    a.w(cmp_i(9, 0)); a.br(JRNE, 'KG_SM')
+    if trim:                                            # big: the object 3px lower
+        a.w(ldw_rs(4, 6)); a.w(ldub_rs(4, 4)); a.w(sll_i(4, 4)); a.ext(0x1470 >> 6); a.w(add_i(4, 0x1470 & 0x3F))
+        a.ext(6); a.w(lduh_rb(9, 4)); a.w(add_i(9, trim)); a.ext(6); a.w(0x3800 | 4 << 4 | 9)   # ld.h [r4+6],r9
+    a.br(JP, 'KG_BIG')
+    a.L('KG_SM')
     a.ext(1); a.w(add_i(5, 0))                          # xadd r5,64 -> small strips
     a.L('KG_BIG')
     a.w(ldw_rb(9, 5)); a.w(ldub_rs(6, 6)); a.w(ldub_rs(7, 7))
@@ -322,6 +336,11 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0):
     a.L('KA9')
     a.ext(4); a.w(lduh_rb(4, 0)); a.w(add_i(4, 9)); a.w(RET)
     a.L('KA_K')
+    if trim:
+        a.w(cmp_i(6, 0)); a.br(JRNE, 'KA_K2')
+        a.ext(6); a.w(lduh_rb(4, 0)); a.w(sub_i(4, trim)); a.ext(6); a.w(0x3800 | 0 << 4 | 4)   # ld.h [r0+6],r4
+        a.w(ld_i(4, 14)); a.ext(9); a.w(0x3400 | 0 << 4 | 4)                       # ld.b [r0+9],r4: box 14 high
+        a.L('KA_K2')
     _half_test(a, 1, 1, 4, 'KA_F')
     a.w(add_i(1, 1)); a.ext(4); a.w(lduh_rb(4, 0))
     a.w(cmp_i(6, 0)); a.br(JRNE, 'KAH'); a.w(add_i(4, kw // 2)); a.w(RET)
@@ -332,6 +351,16 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0):
     a.w(cmp_i(6, 0)); a.br(JRNE, 'KAS'); a.w(add_i(4, kw)); a.w(RET)
     a.L('KAS')
     a.w(add_i(4, kws)); a.w(RET)
+    if trim:
+        # KRECT (putstr 0x2401D06, after the glyph call): r6..r7 = the rows
+        # to redraw, y..y+h -- a trimmed glyph (h = 14 - trim) sits trim
+        # lower, so from y - trim: the whole 14-row cell, as before
+        a.L('KRECT')
+        a.ext(6); a.w(ldub_rb(6, 0)); a.ext(9); a.w(ldub_rb(4, 0))
+        a.w(ldw_rs(7, 6)); a.w(add_rs(7, 4)); a.w(ldub_rs(7, 7))
+        a.w(cmp_i(4, 14 - trim)); a.br(JRNE, 'KR_X'); a.w(sub_i(6, trim))
+        a.L('KR_X')
+        a.w(RET)
     # KCENT(r9 str, r0 max chars, r1 small) -> r6 = chars for putstr, r5 = x.
     # Non-Hangul keeps drawstr's own 12/9px per character, so old layouts hold.
     a.L('KCENT')
@@ -389,16 +418,17 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
 
     bsrc = [GLYPHS.index(int.from_bytes(ch.encode('euc-kr'), 'big'))
             for ch in sorted(bold_map(bold_chars))] if bold_chars and small else []
-    n = len(_hooks(kw, kws, bsrc, BASE)[0]) if bsrc else 0
+    trim = TRIM if big[0][1] == 14 - TRIM else 0
+    n = len(_hooks(kw, kws, bsrc, BASE, trim)[0]) if bsrc else 0
     bold_at = BASE + CODE_AT + (n + 1 & ~1)
-    code, lab = _hooks(kw, kws, bsrc, bold_at)
+    code, lab = _hooks(kw, kws, bsrc, bold_at, trim)
     if bsrc:
         code += b'\0' * (bold_at - BASE - CODE_AT - len(code)) + bytes(b for g in bsrc for b in divmod(g, PER))
     blocks = [code]
     if name_ui:
         from . import hangul_name
         norg = BASE + CODE_AT + (len(code) + 3 & ~3)
-        nb, nlab = hangul_name.assemble(norg, pitch=kw)
+        nb, nlab = hangul_name.assemble(norg, pitch=kw, trim=trim)
         blocks.append(b'\0' * (norg - BASE - CODE_AT - len(code)) + nb)
     long_diary = bool(strings) and long_diary
     if long_diary:                                      # long diary entries
@@ -440,6 +470,10 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
     h.br(CALL, lab['KADV'], x=True); h.br(JP, 0x02401D4C)
     b = h.build()
     rom[0x401D2C:0x401D4C] = b.ljust(0x20, b'\0')
+    if 'KRECT' in lab:
+        assert rom[0x401D06:0x401D16] == bytes.fromhex('06c0062406c0072409c00424472277a5'), 'putstr rect'
+        h = _Asm(0x02401D06); h.br(CALL, lab['KRECT'], x=True)
+        rom[0x401D06:0x401D16] = h.build().ljust(0x10, b'\0')
     h = _Asm(0x02401DBC); h.br(CALL, lab['KCENT'], x=True); h.br(JP, 0x02401DF0)
     b = h.build()
     rom[0x401DBC:0x401DF0] = b.ljust(0x34, b'\0')
