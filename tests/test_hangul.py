@@ -198,3 +198,22 @@ def test_diary_cell_table_terminated():
         e = t[D.CELL * k:D.CELL * (k + 1)]
         assert e[1 + 3 * e[0]] == 0xFF
         assert all(e[2 + 3 * i] > 0 for i in range(e[0]))
+
+
+def test_diary_words():
+    """Game/food name pairs fit the original array's non-template slots and
+    leave every name template (J_TRY, T_HIT read those) untouched."""
+    from tama4u import hangul_diary as D
+    path = os.path.expanduser('~/Downloads/TMGC_PS.BIN')
+    if not os.path.exists(path):
+        return
+    ps = open(path, 'rb').read()
+    rom = bytearray(ps)
+    hide = bytes.fromhex('06082a2e4b')                              # かくれんぼ
+    pairs = D.words(rom, ps, {0x5390B0: bytes.fromhex('cbf8caa8c7e5cde3')})
+    assert pairs == [(hide, bytes.fromhex('cbf8caa8c7e5cde3'))]
+    for k in range(D.COUNT):
+        old = ps[D.ARRAY + D.OLD * k:D.ARRAY + D.OLD * (k + 1)]
+        new = rom[D.ARRAY + D.OLD * k:D.ARRAY + D.OLD * (k + 1)]
+        assert new == old if D.name_cells(old.split(b'\0')[0]) else new[0] == D.WORDS
+    assert hide + b'\0' in rom[D.ARRAY:D.ARRAY + D.OLD * D.COUNT]

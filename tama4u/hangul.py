@@ -447,6 +447,8 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         if long_diary:
             hangul_diary.patch(rom, dlab, darray - BASE, dcells - BASE)
         hangul_text.apply(rom, strings, alloc, refs, diary=darray - BASE if long_diary else None)
+        if long_diary:
+            hangul_diary.words(rom, ps_rom, strings)
     return bytes(rom)
 
 

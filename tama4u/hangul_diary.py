@@ -29,7 +29,9 @@ Name templates (link diaries): a link diary may be composed by either device
 and sent as is, so DFIX stores it in the unpatched form (the original
 sentence with the names, 0x6C dropped) and DVIEW's J_TRY finds which sentence
 such a field was made from, lays the Korean template out with its names
-(DNEXT).  Fields in the v64-v65 form (MARK2) still draw.
+(DNEXT).  Fields in the v64-v65 form (MARK2) still draw.  A game/food cell
+(>= WORD bytes) is stored with the Japanese name and drawn with the Korean
+one, through the pairs words() puts in the original array's free slots.
 """
 import struct
 
@@ -45,6 +47,8 @@ MARK2 = 0xF6                    # name template: F[14] MARK2, F[15] k, names fro
 TOKEN = 0xFD                    # name token in a Korean template: TOKEN, j (1-3)
 NAMES = 16                      # field offset of the stored names (<= 20 bytes)
 CELL = 12                       # name-cell table entry: n, (o, l, s) x 3, pad
+WORDS = 0xFE                    # original-array slot holding game/food names: WORDS, (jp NUL ko NUL)..., NUL
+WORD = 8                        # cells this long hold a game/food name (shorter: a tamagotchi's)
 SECTORS = 0x570000
 FIX_AT, VIEW_AT = 0x41CBD6, 0x41C790   # after the composer call; the page's text
 NEXT_AT, LOOP_AT, END_AT = 0x41C7F2, 0x41C79E, 0x41C7FA   # the page's line loop
@@ -115,7 +119,7 @@ def assemble(org, array=0, cells=0):
     a.w(add_i(4, 1)); a.w(add_i(5, 1)); a.br(JP, 'T_CMP')
     a.L('T_NK')
     a.w(add_i(11, 1)); _cmpx(a, 11, COUNT); a.br(JRULT, 'T_K', x=True)
-    a.br(JP, 'D_STRIP')
+    a.br(JP, 'D_STRIP', x=True)
     a.L('T_HIT')
     # k = r11: rebuild the ORIGINAL sentence around the pasted names, so the
     # field is what an unpatched P's stores (a link partner may be one; the
@@ -126,6 +130,52 @@ def assemble(org, array=0, cells=0):
     a.L('T_W')
     a.w(ldub_rb(10, 9)); a.w(ldw_rs(7, 6)); a.w(add_rs(7, 10))
     a.w(cmp_rs(5, 7)); a.br(JRNE, 'T_WL')
+    # a game/food cell (>= WORD bytes) holding a WORDS Korean name: the
+    # Japanese one instead.  r4 = the cell, r11 = its end; r12-r14 kept in
+    # the frame's scratch (past the text, which is <= 40 bytes now)
+    ldub_d(a, 8, 9, 1); a.w(cmp_i(8, WORD)); a.br(JRULT, 'T_WK', x=True)
+    a.w(0x5D0C); a.w(0x5D1D); a.w(0x5D2E)               # ld.w [sp+0x40/44/48],r12-r14
+    a.w(ldw_rs(11, 4)); a.w(add_rs(11, 8)); a.li(7, BASE + ARRAY)
+    a.L('F_S')
+    a.w(ldub_rb(10, 7)); _cmpx(a, 10, WORDS); a.br(JRNE, 'F_NS', x=True)
+    a.w(ldw_rs(10, 7)); a.w(add_i(10, 1))
+    a.L('F_E')
+    a.w(ldub_rb(12, 10)); a.w(cmp_i(12, 0)); a.br(JREQ, 'F_NS', x=True)
+    a.w(ldw_rs(14, 10))                                 # r14 = Japanese, r10 -> Korean
+    a.L('F_J')
+    a.w(ldub_pi(12, 10)); a.w(cmp_i(12, 0)); a.br(JRNE, 'F_J')
+    a.w(ldw_rs(5, 4)); a.w(ldw_rs(8, 10))
+    a.L('F_C')
+    a.w(cmp_rs(5, 11)); a.br(JREQ, 'F_HIT', x=True)    # cell full: a cut name matches
+    a.w(ldub_rb(12, 5)); a.w(cmp_i(12, 0)); a.br(JREQ, 'F_END')
+    _cmpx(a, 12, 0x6C); a.br(JREQ, 'F_END')
+    a.w(ldub_rb(13, 8)); a.w(cmp_rs(12, 13)); a.br(JRNE, 'F_NE')
+    a.w(add_i(5, 1)); a.w(add_i(8, 1)); a.br(JP, 'F_C')
+    a.L('F_END')
+    a.w(cmp_rs(5, 4)); a.br(JREQ, 'F_NE')
+    a.w(ldub_rb(13, 8)); a.w(cmp_i(13, 0)); a.br(JREQ, 'F_HIT')
+    a.L('F_NE')
+    a.w(ldub_pi(12, 10)); a.w(cmp_i(12, 0)); a.br(JRNE, 'F_NE')
+    a.br(JP, 'F_E', x=True)
+    a.L('F_NS')
+    a.ext(0); a.w(add_i(7, OLD)); a.li(12, BASE + ARRAY + OLD * COUNT)
+    a.w(cmp_rs(7, 12)); a.br(JRULT, 'F_S', x=True)
+    a.w(0x510C); a.w(0x511D); a.w(0x512E)               # (no match) restore
+    a.w(ldw_rs(5, 4)); a.w(ldw_sp(12)); a.w(sub_rs(5, 12)); a.w(add_rs(5, 6))
+    a.w(0x510C)
+    ldub_d(a, 8, 9, 1); a.br(JP, 'T_WC')
+    a.L('F_HIT')                                        # Japanese name, 0x6C after it
+    a.L('F_W')
+    a.w(cmp_rs(4, 11)); a.br(JREQ, 'F_WD')
+    a.w(ldub_rb(12, 14)); a.w(cmp_i(12, 0)); a.br(JRNE, 'F_WC')
+    a.ext(0x6C >> 6); a.w(ld_i(12, 0x6C & 0x3F)); a.w(stb_pi(4, 12)); a.br(JP, 'F_W')
+    a.L('F_WC')
+    a.w(stb_pi(4, 12)); a.w(add_i(14, 1)); a.br(JP, 'F_W')
+    a.L('F_WD')
+    a.w(ldw_rs(5, 4)); a.w(ldw_sp(12)); a.w(sub_rs(5, 12)); a.w(add_rs(5, 6))
+    a.w(0x510C); a.w(0x511D); a.w(0x512E)
+    a.w(add_i(9, 3)); a.br(JP, 'T_W', x=True)
+    a.L('T_WK')
     ldub_d(a, 8, 9, 1)                                  # a cell: keep the name, NUL -> 0x6C
     a.L('T_WC')
     a.w(ldub_rb(10, 4)); a.w(cmp_i(10, 0)); a.br(JRNE, 'T_WS')
@@ -134,7 +184,7 @@ def assemble(org, array=0, cells=0):
     a.w(add_i(4, 1)); a.w(add_i(5, 1)); a.w(sub_i(8, 1)); a.w(cmp_i(8, 0)); a.br(JRNE, 'T_WC')
     a.w(add_i(9, 3)); a.br(JP, 'T_W')
     a.L('T_WL')
-    a.w(ldub_pi(10, 5)); a.w(stb_pi(4, 10)); a.w(cmp_i(10, 0)); a.br(JRNE, 'T_W')
+    a.w(ldub_pi(10, 5)); a.w(stb_pi(4, 10)); a.w(cmp_i(10, 0)); a.br(JRNE, 'T_W', x=True)
 
     a.L('D_STRIP')
     a.w(ldw_sp(9))                                      # r9 = the text
@@ -253,6 +303,10 @@ def assemble(org, array=0, cells=0):
     a.w(add_rs(7, 10))
     ldub_d(a, 6, 7, 3); ldub_d(a, 10, 7, 2)
     a.w(add_rs(6, 11)); a.w(ldw_rs(7, 6)); a.w(add_rs(7, 10))
+    a.w(ldub_rb(10, 6)); _cmpx(a, 10, WORDS); a.br(JRNE, 'E_NEXT', x=True)
+    ldub_d(a, 10, 6, 1); ldub_d(a, 7, 6, 2)             # WORDS, slot, offset: its Korean
+    _mul(a, 10, 6, 5); a.w(sll_i(10, 3)); _xadd(a, 10, BASE + ARRAY); a.w(add_rs(10, 7))
+    a.w(ldw_rs(6, 10)); a.w(ldw_rs(7, 6)); a.ext(0); a.w(add_i(7, OLD))
     a.br(JP, 'E_NEXT', x=True)
     a.L('E_NAME')
     a.w(cmp_rs(6, 7)); a.br(JRUGE, 'E_NDONE')
@@ -354,8 +408,38 @@ def assemble(org, array=0, cells=0):
     a.L('M_PAD')
     a.w(ld_i(4, 0))
     a.L('M_PZ')
-    a.w(cmp_i(7, 0)); a.br(JREQ, 'M_NX')
+    a.w(cmp_i(7, 0)); a.br(JREQ, 'M_W')
     a.w(stb_pi(5, 4)); a.w(sub_i(7, 1)); a.br(JP, 'M_PZ')
+    # a game/food cell holding a WORDS Japanese name: [WORDS][slot][offset]
+    # of its Korean (r4 = the name in F, r1 = its end, r7 = slot, r3 = its number)
+    a.L('M_W')
+    ldub_d(a, 8, 9, 1); a.w(cmp_i(8, WORD)); a.br(JRULT, 'M_NX', x=True)
+    a.w(ldw_sp(4)); a.w(add_i(4, 0xC)); ldub_d(a, 10, 9, 2); a.w(add_rs(4, 10))
+    a.w(ldw_rs(1, 4)); a.w(add_rs(1, 8)); a.li(7, BASE + ARRAY); a.w(ld_i(3, 0))
+    a.L('W_S')
+    a.w(ldub_rb(10, 7)); _cmpx(a, 10, WORDS); a.br(JRNE, 'W_NS', x=True)
+    a.w(ldw_rs(10, 7)); a.w(add_i(10, 1))
+    a.L('W_E')
+    a.w(ldub_rb(8, 10)); a.w(cmp_i(8, 0)); a.br(JREQ, 'W_NS', x=True)
+    a.w(ldw_rs(5, 4))
+    a.L('W_C')
+    a.w(ldub_rb(8, 10)); a.w(cmp_rs(5, 1)); a.br(JRNE, 'W_C1')
+    a.w(cmp_i(8, 0)); a.br(JREQ, 'W_HIT', x=True); a.br(JP, 'W_NE')
+    a.L('W_C1')
+    a.w(ldub_rb(6, 5)); a.w(cmp_rs(6, 8)); a.br(JRNE, 'W_NE')
+    a.w(cmp_i(8, 0)); a.br(JREQ, 'W_HIT', x=True)
+    a.w(add_i(5, 1)); a.w(add_i(10, 1)); a.br(JP, 'W_C')
+    a.L('W_NE')                                         # past this Japanese, then its Korean
+    a.w(ldub_pi(8, 10)); a.w(cmp_i(8, 0)); a.br(JRNE, 'W_NE')
+    a.L('W_NK')
+    a.w(ldub_pi(8, 10)); a.w(cmp_i(8, 0)); a.br(JRNE, 'W_NK')
+    a.br(JP, 'W_E', x=True)
+    a.L('W_NS')
+    a.ext(0); a.w(add_i(7, OLD)); a.w(add_i(3, 1)); _cmpx(a, 3, COUNT); a.br(JRULT, 'W_S', x=True)
+    a.br(JP, 'M_NX', x=True)
+    a.L('W_HIT')
+    a.w(add_i(10, 1)); a.w(sub_rs(10, 7))
+    a.ext(WORDS >> 6); a.w(ld_i(8, WORDS & 0x3F)); a.w(stb_pi(4, 8)); a.w(stb_pi(4, 3)); a.w(stb_pi(4, 10))
     a.L('M_NX')
     a.w(ldw_rs(10, 11)); a.w(add_i(10, 1)); a.w(cmp_rs(9, 10)); a.br(JREQ, 'M_END')
     a.w(sub_i(9, 3)); a.br(JP, 'M_J', x=True)
@@ -401,6 +485,33 @@ def cell_table(rom):
         e += [0xFF, 0, 0] * (3 - len(cl)) + [0xFF]      # always ends in a 0xFF offset
         out += bytes(e).ljust(CELL, b'\0')
     return bytes(out)
+
+
+GAMES = (0x5390B0, 0x5390B8, 0x5390C0, 0x5390CC,       # the link play menu's games, and
+         0x539108, 0x539EC4, 0x539ECC)                  # the names its results use
+FOODS = (0x3CF000, 0x3DE000)                            # built-in food names
+
+
+def words(rom, ps_rom, strings):
+    """Japanese/Korean pairs of the names a link diary's game/food cell gets
+    (whichever device composed it) into the original array's slots that
+    are no name template (nothing reads those since patch()): WORDS, then
+    jp NUL ko NUL ..., NUL.  Returns the pairs written."""
+    pairs, seen = [], set()
+    for a in sorted(strings):
+        if a in GAMES or FOODS[0] <= a < FOODS[1]:
+            jp, ko = ps_rom[a:a + 40].split(b'\0')[0], strings[a].split(b'\0')[0]
+            if jp and ko and jp != ko and len(jp) <= 9 and jp not in seen:
+                seen.add(jp); pairs.append((jp, ko))
+    slots = [k for k in range(COUNT) if not name_cells(ps_rom[ARRAY + OLD * k:ARRAY + OLD * (k + 1)].split(b'\0')[0])]
+    todo = list(pairs)
+    for k in slots:
+        b = bytearray([WORDS])
+        while todo and len(b) + len(todo[0][0]) + len(todo[0][1]) + 3 <= OLD:
+            jp, ko = todo.pop(0); b += jp + b'\0' + ko + b'\0'
+        rom[ARRAY + OLD * k:ARRAY + OLD * (k + 1)] = bytes(b).ljust(OLD, b'\0')
+    assert not todo, f'{len(todo)} names left over'
+    return pairs
 
 
 def patch(rom, lab, array, cells):
