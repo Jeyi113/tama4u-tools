@@ -122,6 +122,7 @@ def apply(rom, texts, alloc, refs=None, diary=None):
     targets = sorted(refs)
     items = item_names(rom)
     done = [0, 0]
+    moved, holes = [], []
     for addr, data in sorted(texts.items()):
         if addr in SLOTS:                              # fixed-stride array entry
             if diary is not None:
@@ -164,8 +165,20 @@ def apply(rom, texts, alloc, refs=None, diary=None):
             continue
         if addr not in refs:
             raise ValueError(f'{addr:#x}: {len(data)} B > slot {slot} and no reference to move')
-        new = alloc(len(data) + 1)
-        rom[new:new + len(data) + 1] = data + b'\0'
+        moved.append((addr, data))
+        if not shared:                                 # nothing points into it once moved
+            holes.append([addr, addr + slot])
+    # moved texts: the longest first into the best-fitting hole the moved
+    # originals left, else SAFE
+    for addr, data in sorted(moved, key=lambda m: -len(m[1])):
+        need = len(data) + 1
+        fit = [h for h in holes if h[1] - h[0] >= need]
+        if fit:
+            h = min(fit, key=lambda h: h[1] - h[0])
+            new, h[0] = h[0], h[0] + need
+        else:
+            new = alloc(need)
+        rom[new:new + need] = data + b'\0'
         for kind, off in refs[addr]:
             _retarget(rom, kind, off, new)
         done[1] += 1

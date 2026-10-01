@@ -35,7 +35,7 @@ one, through the pairs words() puts in the original array's free slots.
 """
 import struct
 
-from .hangul import BASE, _Asm, _xsub, JP, JREQ, JRNE, JRULE, JRUGT, JRULT, JRUGE, \
+from .hangul import BASE, HALF, code as _code, _Asm, _xsub, JP, JREQ, JRNE, JRULE, JRUGT, JRULT, JRUGE, \
     ldub_rs, ldub_rb, ldw_rs, ldw_rb, add_i, add_rs, sub_i, cmp_i, cmp_rs, sub_rs, sll_i, ld_i
 
 ARRAY, COUNT, OLD, NEW = 0x558370, 75, 40, 80
@@ -50,6 +50,7 @@ CELL = 12                       # name-cell table entry: n, (o, l, s) x 3, pad
 WORDS = 0xFE                    # original-array slot holding game/food names: WORDS, (jp NUL ko NUL)..., NUL
 WORD = 8                        # cells this long hold a game/food name (shorter: a tamagotchi's)
 SECTORS = 0x570000
+HALF_CODE = _code(HALF)            # the Hangul space (lead, trail)
 FIX_AT, VIEW_AT = 0x41CBD6, 0x41C790   # after the composer call; the page's text
 NEXT_AT, LOOP_AT, END_AT = 0x41C7F2, 0x41C79E, 0x41C7FA   # the page's line loop
 
@@ -86,6 +87,38 @@ def _lead(a, rd, two, one):                             # Hangul lead byte in rd
 
 stb_d = lambda a, rb, rs, off: (a.ext(off), a.w(0x3400 | rb << 4 | rs))   # ld.b [rb+off],rs
 ldub_d = lambda a, rd, rb, off: (a.ext(off), a.w(ldub_rb(rd, rb)))        # ld.ub rd,[rb+off]
+
+
+def _emit(a, at, p, n):
+    """DNEXT: the n-byte character at [rp] (first byte in r10).  Lines before
+    the one drawn (r9 left to skip) only count, 6 a line in r1; a Hangul space
+    starting a line is dropped (as the sheet's diary rows drop it)."""
+    if n == 2:
+        lead, trail = HALF_CODE
+        a.L(at)
+        _cmpx(a, 10, lead); a.br(JRNE, at + 'C')
+        ldub_d(a, 10, p, 1); _cmpx(a, 10, trail); a.br(JRNE, at + 'R')
+        a.w(cmp_i(9, 0)); a.br(JREQ, at + 'E')
+        a.w(cmp_i(1, 0)); a.br(JRNE, at + 'R')
+        a.L(at + 'D')                                   # dropped
+        a.w(add_i(p, 2)); a.br(JP, 'E_NEXT', x=True)
+        a.L(at + 'E')
+        a.w(cmp_i(8, 0)); a.br(JREQ, at + 'D')
+        a.L(at + 'R')
+        a.w(ldub_rb(10, p))
+    else:
+        a.L(at)
+    a.L(at + 'C')
+    a.w(cmp_i(9, 0)); a.br(JREQ, at + 'O')
+    a.w(add_i(1, 1)); a.w(cmp_i(1, 6)); a.br(JRNE, at + 'A')
+    a.w(ld_i(1, 0)); a.w(sub_i(9, 1))
+    a.L(at + 'A')
+    a.w(add_i(p, n)); a.br(JP, 'E_NEXT', x=True)
+    a.L(at + 'O')
+    a.w(stb_pi(4, 10))
+    if n == 2:
+        ldub_d(a, 10, p, 1); a.w(stb_pi(4, 10))
+    a.w(add_i(p, n)); a.br(JP, 'E_EMIT', x=True)
 
 
 def assemble(org, array=0, cells=0):
@@ -279,7 +312,7 @@ def assemble(org, array=0, cells=0):
     a.w(ldw_sp(11)); a.w(add_i(11, 0xC))
     ldub_d(a, 9, 11, NAMES - 3); a.w(add_i(9, 1)); a.w(ldub_rs(9, 9))
     a.w(cmp_i(9, LINES)); a.br(JRUGE, 'N_END', x=True)
-    stb_d(a, 11, 9, NAMES - 3); _mul(a, 9, 10, 6)       # r9 = characters to skip
+    stb_d(a, 11, 9, NAMES - 3); a.w(ld_i(1, 0))         # r9 = lines to skip, r1 = their column
     ldub_d(a, 10, 11, NAMES - 1)
     a.w(ldw_rs(5, 10)); _mul(a, 5, 10, 5); a.w(sll_i(5, 4)); _xadd(a, 5, array)
     a.w(ld_i(6, 0)); a.w(ldw_rs(4, 11)); a.w(ld_i(8, 0))
@@ -288,14 +321,8 @@ def assemble(org, array=0, cells=0):
     a.w(ldub_rb(10, 5)); a.w(cmp_i(10, 0)); a.br(JREQ, 'E_DONE', x=True)
     _cmpx(a, 10, TOKEN); a.br(JREQ, 'E_ENTER')
     _lead(a, 10, 'E_T2', 'E_T1')
-    a.L('E_T1')
-    a.w(cmp_i(9, 0)); a.br(JREQ, 'E_T1C'); a.w(sub_i(9, 1)); a.w(add_i(5, 1)); a.br(JP, 'E_NEXT', x=True)
-    a.L('E_T1C')
-    a.w(stb_pi(4, 10)); a.w(add_i(5, 1)); a.br(JP, 'E_EMIT', x=True)
-    a.L('E_T2')
-    a.w(cmp_i(9, 0)); a.br(JREQ, 'E_T2C'); a.w(sub_i(9, 1)); a.w(add_i(5, 2)); a.br(JP, 'E_NEXT', x=True)
-    a.L('E_T2C')
-    a.w(stb_pi(4, 10)); ldub_d(a, 10, 5, 1); a.w(stb_pi(4, 10)); a.w(add_i(5, 2)); a.br(JP, 'E_EMIT', x=True)
+    _emit(a, 'E_T1', 5, 1)
+    _emit(a, 'E_T2', 5, 2)
     a.L('E_ENTER')                                      # TOKEN j: r6..r7 = name j in F
     ldub_d(a, 10, 5, 1)
     ldub_d(a, 7, 11, NAMES - 1); _mul(a, 7, 6, 12); _xadd(a, 7, cells)
@@ -312,14 +339,8 @@ def assemble(org, array=0, cells=0):
     a.w(cmp_rs(6, 7)); a.br(JRUGE, 'E_NDONE')
     a.w(ldub_rb(10, 6)); a.w(cmp_i(10, 0)); a.br(JREQ, 'E_NDONE')
     _lead(a, 10, 'E_N2', 'E_N1')
-    a.L('E_N1')
-    a.w(cmp_i(9, 0)); a.br(JREQ, 'E_N1C'); a.w(sub_i(9, 1)); a.w(add_i(6, 1)); a.br(JP, 'E_NEXT', x=True)
-    a.L('E_N1C')
-    a.w(stb_pi(4, 10)); a.w(add_i(6, 1)); a.br(JP, 'E_EMIT', x=True)
-    a.L('E_N2')
-    a.w(cmp_i(9, 0)); a.br(JREQ, 'E_N2C'); a.w(sub_i(9, 1)); a.w(add_i(6, 2)); a.br(JP, 'E_NEXT', x=True)
-    a.L('E_N2C')
-    a.w(stb_pi(4, 10)); ldub_d(a, 10, 6, 1); a.w(stb_pi(4, 10)); a.w(add_i(6, 2)); a.br(JP, 'E_EMIT', x=True)
+    _emit(a, 'E_N1', 6, 1)
+    _emit(a, 'E_N2', 6, 2)
     a.L('E_NDONE')
     a.w(ld_i(6, 0)); a.w(add_i(5, 2)); a.br(JP, 'E_NEXT', x=True)  # past TOKEN j
     a.L('E_EMIT')

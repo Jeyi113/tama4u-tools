@@ -183,9 +183,8 @@ def glyph_sets(font, some_rom=None, bold=True, galmuri=GALMURI, bold_chars=()):
     small = [(10, 9, sm.cell(glyph_char(c), 10, 9, 8)) for c in GLYPHS]
     if bold_chars:
         bb = BdfFont(f'{galmuri}/Galmuri11-Bold.bdf')
-        for ch in bold_map(bold_chars):
+        for ch in bold_map(bold_chars):                 # small text: KGLYPH draws the plain one
             big.append((12, 14, bb.cell(ch, 12, 14, 13)))
-            small.append((10, 9, sm.cell(ch, 10, 9, 8)))
     return big, small, 12, 10
 
 
@@ -255,6 +254,10 @@ sub_rs = lambda rd, rs: 0x2600 | rs << 4 | rd
 ld_i = lambda rd, i: 0x6C00 | (i & 0x3F) << 4 | rd
 
 
+def _xadd3(a, rd, v):                                   # add rd,imm32
+    a.ext(v >> 19); a.ext(v >> 6); a.w(add_i(rd, v & 0x3F))
+
+
 def _xsub(a, rd, v):
     a.ext(v >> 6); a.w(sub_i(rd, v))
 
@@ -274,7 +277,10 @@ def _half_test(a, ptr, off, tmp, no):
     a.ext(trail >> 6); a.w(cmp_i(tmp, trail & 0x3F)); a.br(JRNE, no)
 
 
-def _hooks(kw=12, kws=10):
+def _hooks(kw=12, kws=10, bold_src=(), bold_at=0):
+    """`bold_src`: per bold glyph (bold_map order) the glyph number of its
+    plain syllable -- small text draws that (no small bold strips); its
+    (lead index, trail index) bytes go at CPU address `bold_at`."""
     a = _Asm(BASE + CODE_AT)
     # KGLYPH(r6 obj, r7, r8 code, r9 small flag; r1 = putstr's string pointer)
     a.L('KGLYPH')
@@ -285,8 +291,19 @@ def _hooks(kw=12, kws=10):
     a.ext(0xCF + GAP >> 6); a.w(cmp_i(8, 0xCF + GAP & 0x3F)); a.br(JRULT, 'KG_T')  # trails past
     a.w(sub_i(8, GAP))                                  # the skipped 0xD0-0xD8
     a.L('KG_T')
+    a.w(ldub_rs(9, 9))
+    if bold_src:                                        # small bold -> the plain glyph
+        a.w(cmp_i(9, 0)); a.br(JREQ, 'KG_S')
+        a.w(ldw_rs(4, 5)); a.w(sll_i(4, 8))             # r4 = lead * 245 + trail
+        for _ in range(256 - PER):
+            a.w(sub_rs(4, 5))
+        a.w(add_rs(4, 8))
+        _xsub(a, 4, len(GLYPHS)); a.br(JRULT, 'KG_S')   # (borrow: a plain glyph)
+        a.w(sll_i(4, 1)); _xadd3(a, 4, bold_at)
+        a.w(ldub_rb(5, 4)); a.ext(1); a.w(ldub_rb(8, 4))
+    a.L('KG_S')
     a.w(sll_i(5, 2)); a.li(4, BASE + TBL_AT); a.w(add_rs(5, 4))
-    a.w(ldub_rs(9, 9)); a.w(cmp_i(9, 0)); a.br(JREQ, 'KG_BIG')
+    a.w(cmp_i(9, 0)); a.br(JREQ, 'KG_BIG')
     a.ext(1); a.w(add_i(5, 0))                          # xadd r5,64 -> small strips
     a.L('KG_BIG')
     a.w(ldw_rb(9, 5)); a.w(ldub_rs(6, 6)); a.w(ldub_rs(7, 7))
@@ -370,7 +387,13 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         assert all(b == 0xFF for b in rom[lo:hi]), f'{lo:#x} not blank'
     big, small, kw, kws = glyph_sets(font, some_rom, bold, galmuri, bold_chars)
 
-    code, lab = _hooks(kw, kws)
+    bsrc = [GLYPHS.index(int.from_bytes(ch.encode('euc-kr'), 'big'))
+            for ch in sorted(bold_map(bold_chars))] if bold_chars and small else []
+    n = len(_hooks(kw, kws, bsrc, BASE)[0]) if bsrc else 0
+    bold_at = BASE + CODE_AT + (n + 1 & ~1)
+    code, lab = _hooks(kw, kws, bsrc, bold_at)
+    if bsrc:
+        code += b'\0' * (bold_at - BASE - CODE_AT - len(code)) + bytes(b for g in bsrc for b in divmod(g, PER))
     blocks = [code]
     if name_ui:
         from . import hangul_name
@@ -393,7 +416,7 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         part = slice(k * PER, (k + 1) * PER)
         if big[part]:
             recs.append((k, _record(big[part])))
-            if small:
+            if small and small[part]:                   # (bold-only leads: none, see KGLYPH)
                 recs.append((16 + k, _record(small[part])))
     ptrs = [0] * 32
     for slot, rec in sorted(recs, key=lambda r: -len(r[1])):
