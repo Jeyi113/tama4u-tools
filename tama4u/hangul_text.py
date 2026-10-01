@@ -128,14 +128,17 @@ def apply(rom, texts, alloc, refs=None, diary=None):
                 from . import hangul_diary as hd
                 if len(data) > hd.TEXT:
                     raise ValueError(f'{addr:#x}: {len(data)} B > diary text {hd.TEXT} B')
-                if diary_rows(data) > hd.LINES:             # a 7th row overwrites the picture
+                if diary_rows(data) > hd.LINES and hd.TOKEN not in data:   # a 7th row overwrites the picture
                     raise ValueError(f'{addr:#x}: {diary_rows(data)} diary lines > {hd.LINES}')
-                cells = name_cells(data)
-                if cells:                                   # names go in at the original's offsets
-                    want = name_cells(rom[addr:addr + SLOTS[addr]].split(b'\0')[0])
-                    if cells != want or len(data) > SLOT_TEXT:
-                        raise ValueError(f'{addr:#x}: name cells {cells} / {len(data)} B, '
-                                         f'need {want} within {SLOT_TEXT} B')
+                cells = hd.name_cells(rom[addr:addr + SLOTS[addr]].split(b'\0')[0])
+                if cells:                                   # a name template (tokens)
+                    chars, used = template_chars(data, cells)
+                    if sorted(set(used)) != sorted(used) or not set(used) <= set(range(1, len(cells) + 1)):
+                        raise ValueError(f'{addr:#x}: names {used}, the original has {len(cells)}')
+                    if chars > 6 * hd.LINES:
+                        raise ValueError(f'{addr:#x}: ~{chars} characters with names > {6 * hd.LINES}')
+                elif hd.TOKEN in data:
+                    raise ValueError(f'{addr:#x}: name marks in a sentence without names')
                 at = diary + hd.NEW * ((addr - 0x558370) // 40)
                 rom[at:at + hd.NEW] = data.ljust(hd.NEW, b'\0')
             else:
@@ -169,20 +172,42 @@ def apply(rom, texts, alloc, refs=None, diary=None):
     return tuple(done)
 
 
+NAME_MARKS = '①②③'
+
+
 def encode_diary(text, rev=None, bold=None):
-    """A diary sentence: runs of 3+ spaces are name cells, the firmware's
-    1-byte 0x6C the composer pastes a name over (hangul_diary); the rest as
-    encode()."""
-    out = b''
-    for part in re.split(r'( {3,})', text):
-        if part:
-            out += b'\x6c' * len(part) if re.fullmatch(r' {3,}', part) else encode(part, rev, bold)
+    """A diary sentence.  Name templates mark the names with ①②③ (the
+    original's name cells in order; a run of 3+ spaces counts as the next
+    one): each becomes hangul_diary.TOKEN + its number, anywhere in the text
+    and in any order.  The rest as encode()."""
+    from . import hangul_diary as hd
+    out, nxt = b'', 1
+    for part in re.split(r'([①②③]| {3,})', text):
+        if not part:
+            continue
+        if part in NAME_MARKS:
+            out += bytes([hd.TOKEN, NAME_MARKS.index(part) + 1])
+        elif re.fullmatch(r' {3,}', part):
+            out += bytes([hd.TOKEN, nxt]); nxt += 1
+        else:
+            out += encode(part, rev, bold)
     return out
 
 
-def name_cells(data):
-    """(offset, length) of the 3+ runs of 0x6C in a diary sentence."""
-    return [(m.start(), m.end() - m.start()) for m in re.finditer(rb'\x6c{3,}', data)]
+def template_chars(data, cells):
+    """Characters a name template shows with typical names: a 5-byte cell
+    (a pet's name: 2 syllables + a symbol) 3, a longer one (a play or an
+    item) 5.  Returns (characters, [name numbers used])."""
+    from . import hangul_diary as hd
+    n, used, i = 0, [], 0
+    while i < len(data):
+        if data[i] == hd.TOKEN:
+            j = data[i + 1]; used.append(j)
+            n += 3 if cells[j - 1][1] <= 5 else 5
+            i += 2; continue
+        i += 2 if data[i] in hangul.LEADS else 1
+        n += 1
+    return n, used
 
 
 def load(path, bold_addrs=(), bold=None):

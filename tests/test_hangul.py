@@ -142,10 +142,11 @@ def test_diary_lines():
 
 def test_diary_hooks_assemble():
     from tama4u import hangul_diary as D
-    blk, lab, arr = D.block(0x02560000)
-    assert lab['DFIX'] == 0x02560000 and lab['DVIEW'] > lab['DFIX']
-    assert arr % 4 == 0 and arr + D.COUNT * D.NEW == 0x02560000 + len(blk)
-    wrap = blk[:len(D.assemble(0x02560000, arr)[0])]
+    blk, lab, arr, cells = D.block(0x02560000)
+    assert lab['DFIX'] == 0x02560000 and lab['DVIEW'] > lab['DFIX'] and lab['DNEXT'] > lab['DVIEW']
+    assert arr % 4 == 0 and cells == arr + D.COUNT * D.NEW
+    assert cells + D.COUNT * D.CELL == 0x02560000 + len(blk)
+    wrap = blk[:len(D.assemble(0x02560000, arr, cells)[0])]
     words = struct.unpack(f'<{len(wrap) // 2}H', wrap)
     # no stack at all: no pushn/popn, sub/add %sp, call
     assert not any(w & 0xFFF0 in (0x0200, 0x0240) or w & 0xFC00 in (0x8400, 0x8000) or w >> 8 == 0x1C
@@ -167,3 +168,33 @@ def test_diary_long_entries():
             assert False
         except ValueError:
             pass
+
+
+def test_diary_name_marks():
+    from tama4u import hangul_text as T, hangul_diary as D
+    b = T.encode_diary('①＆②함께 웃었어♪')
+    assert b[:2] == bytes([D.TOKEN, 1]) and bytes([D.TOKEN, 2]) in b and b'\x6c' not in b
+    assert T.encode_diary('     ＆     함께') == T.encode_diary('①＆②함께')   # old aligned form
+    chars, used = T.template_chars(b, [(0, 5), (6, 5)])
+    assert used == [1, 2] and chars == 3 + 1 + 3 + 7          # names count 3 each
+    tab = D.cell_table(open(os.path.expanduser('~/Downloads/TMGC_PS.BIN'), 'rb').read()) \
+        if os.path.exists(os.path.expanduser('~/Downloads/TMGC_PS.BIN')) else None
+    if tab:
+        k = [i for i in range(D.COUNT) if tab[D.CELL * i]][0]
+        e = tab[D.CELL * k:D.CELL * (k + 1)]
+        assert e[0] in (1, 2, 3) and e[3] == D.NAMES                 # first name stored at NAMES
+
+
+def test_diary_cell_table_terminated():
+    """Every name-cell entry ends in a 0xFF offset and has no 0-length cell:
+    the recorder's copy loop runs a cell's length down to 0 (a 3-name entry
+    without the terminator once read a 0 length and wrote through memory)."""
+    from tama4u import hangul_diary as D
+    path = os.path.expanduser('~/Downloads/TMGC_PS.BIN')
+    if not os.path.exists(path):
+        return
+    t = D.cell_table(open(path, 'rb').read())
+    for k in range(D.COUNT):
+        e = t[D.CELL * k:D.CELL * (k + 1)]
+        assert e[1 + 3 * e[0]] == 0xFF
+        assert all(e[2 + 3 * i] > 0 for i in range(e[0]))

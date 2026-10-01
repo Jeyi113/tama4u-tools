@@ -127,13 +127,16 @@ class BdfFont:
                 cur['rows'].append((int(p[0], 16), len(p[0]) * 4))
 
     def cell(self, ch, w, h, base):
-        """4bpp cell w x h, glyph bottom on row `base` (the kana baseline),
-        centred across the cell: Galmuri sits its 10-11px Hangul flush left in
-        a 12px advance, which pulls centred text a pixel left."""
+        """4bpp cell w x h, glyph bottom on row `base` (the kana baseline).
+        Hangul syllables keep Galmuri's own placement (flush left in the 12px
+        advance): centring each one by its 10 or 11px box shifted the narrow
+        ones a pixel right, so lines starting with them looked indented.
+        Jamo and the cursor stay centred."""
         px = bytearray(w * h)
         if ch:
             bw, bh, bx, by = self.g[ord(ch)]['bbx']
-            top, bx = base - by - bh + 1, (w - bw) // 2
+            top = base - by - bh + 1
+            bx = max(0, bx) if '가' <= ch <= '힣' else (w - bw) // 2
             for r, (bits, nb) in enumerate(self.g[ord(ch)]['rows']):
                 for x in range(bw):
                     if bits >> (nb - 1 - x) & 1:
@@ -378,7 +381,7 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
     if long_diary:                                      # long diary entries
         from . import hangul_diary
         dorg = BASE + CODE_AT + (len(b''.join(blocks)) + 3 & ~3)
-        db, dlab, darray = hangul_diary.block(dorg)
+        db, dlab, darray, dcells = hangul_diary.block(dorg)
         blocks.append(b'\0' * (dorg - BASE - CODE_AT - len(b''.join(blocks))) + db)
     fixed = b''.join(blocks)
     cursor = [lo for lo, _ in SAFE]
@@ -442,7 +445,7 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
             raise ValueError(f'no room for {n} B of text')
         refs = hangul_text.scan_refs(ps_rom)
         if long_diary:
-            hangul_diary.patch(rom, dlab, darray - BASE)
+            hangul_diary.patch(rom, dlab, darray - BASE, dcells - BASE)
         hangul_text.apply(rom, strings, alloc, refs, diary=darray - BASE if long_diary else None)
     return bytes(rom)
 
