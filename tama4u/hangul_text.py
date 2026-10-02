@@ -124,6 +124,8 @@ def apply(rom, texts, alloc, refs=None, diary=None):
     done = [0, 0]
     moved, holes = [], []
     for addr, data in sorted(texts.items()):
+        if diary is not None and addr not in SLOTS and 0x558370 <= addr < 0x558370 + 40 * 75:
+            raise ValueError(f'{addr:#x}: inside a diary sentence (the original array is read by the hooks)')
         if addr in SLOTS:                              # fixed-stride array entry
             if diary is not None:
                 from . import hangul_diary as hd
@@ -152,6 +154,12 @@ def apply(rom, texts, alloc, refs=None, diary=None):
             if len(data) > ITEM_NAME_LEN or rom[addr + ITEM_NAME_LEN]:
                 raise ValueError(f'{addr:#x} {items[addr]}: {len(data)} B > item name {ITEM_NAME_LEN} B')
             rom[addr:addr + ITEM_NAME_LEN] = data.ljust(ITEM_NAME_LEN, b'\0')
+            done[0] += 1
+            continue
+        if addr in PROPOSE:                            # fixed 50-byte field, read by index
+            if len(data) > PROPOSE_LEN - 1:
+                raise ValueError(f'{addr:#x}: {len(data)} B > proposal field {PROPOSE_LEN - 1} B')
+            rom[addr:addr + PROPOSE_LEN] = data.ljust(PROPOSE_LEN, b'\0')
             done[0] += 1
             continue
         if len(data) > FIELDS.get(addr, len(data)):
@@ -184,6 +192,11 @@ def apply(rom, texts, alloc, refs=None, diary=None):
         done[1] += 1
     return tuple(done)
 
+
+# link proposal lines: 38 records of 100 bytes at 0x538000, two 50-byte text
+# fields each (+0, +0x32), picked by index -- no pointer to move them by
+PROPOSE_LEN = 50
+PROPOSE = {0x538000 + 100 * i + f for i in range(38) for f in (0, PROPOSE_LEN)}
 
 NAME_MARKS = '①②③'
 
