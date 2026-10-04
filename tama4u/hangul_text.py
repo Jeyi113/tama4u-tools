@@ -27,7 +27,7 @@ FIELDS.update({0x5580EC + 12 * k: 7 for k in range(12)})  # zodiac: 8-byte field
 # Built-in item records ("idn_gh15001_1\0" ...): the name is a fixed 10-byte
 # field at record+0x2A, then a u16 kind (0x0002 ...) whose high byte is 0 and
 # ends a full 10-byte name; written in place.
-ITEM_ID = re.compile(rb'idn_[a-z]+\d+_\d\x00')
+ITEM_ID = re.compile(rb'idn_[a-z]+\d+_[a-z]?\d\x00')   # clothes end _a1, _a2 ...
 ITEM_NAME, ITEM_NAME_LEN = 0x2A, 10
 
 
@@ -35,7 +35,7 @@ def item_names(rom, lo=0, hi=0x400000):
     """{name field offset: item id} for the item records in rom[lo:hi]."""
     out = {}
     for m in ITEM_ID.finditer(rom, lo, hi):
-        if rom[m.start() + 0x26] == 0x3A:
+        if rom[m.start() + 0x26] in (0x3A, 0x3C):     # 0x3C: the coupons (ni155xx)
             out[m.start() + ITEM_NAME] = m.group()[:-1].decode()
     return out
 
