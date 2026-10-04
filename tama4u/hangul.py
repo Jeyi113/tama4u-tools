@@ -49,6 +49,9 @@ GLYPHS = KS + [0xB001 + i for i in range(len(JAMO))] + [0, 0, 1]  # empty x2, cu
 HALF = len(KS) + len(JAMO)
 FULLB = HALF + 1           # full-pitch blank: an empty profile slot mid-text
 CURSOR = HALF + 2          # '_': the idle empty slot blinks with it (profile editor)
+# putstr calls of the profile/message page routine's common tail and of the
+# message editor's line routine (call.d: its delay slot stays) -> KSUFX
+KSUFX_AT = {0x0252810C: 'f8dfcdd6cf1c', 0x025260CE: 'f8dfddd6ee1d'}
 SAFE = [(0x2AE600, 0x2D0000), (0x3DD800, 0x400000), (0x55CA00, 0x570000)]
 TBL_AT, CODE_AT = 0x55CA00, 0x55CA80
 GALMURI = '~/Downloads/galmuri'
@@ -131,12 +134,18 @@ class BdfFont:
         Hangul syllables keep Galmuri's own placement (flush left in the 12px
         advance): centring each one by its 10 or 11px box shifted the narrow
         ones a pixel right, so lines starting with them looked indented.
-        Jamo and the cursor stay centred."""
+        Jamo and the cursor stay centred.  In the 12px cell Galmuri11 leaves
+        the two right columns empty, so every syllable moves 1px right
+        (HANGUL_SHIFT): centred, and still one placement for all."""
         px = bytearray(w * h)
         if ch:
             bw, bh, bx, by = self.g[ord(ch)]['bbx']
             top = base - by - bh + 1
-            bx = max(0, bx) if '가' <= ch <= '힣' else (w - bw) // 2
+            if '가' <= ch <= '힣':                       # one uniform shift, not per glyph
+                bx = max(0, bx)
+                bx += HANGUL_SHIFT.get(w, 0) if bx + bw + HANGUL_SHIFT.get(w, 0) <= w else 0
+            else:
+                bx = (w - bw) // 2
             for r, (bits, nb) in enumerate(self.g[ord(ch)]['rows']):
                 for x in range(bw):
                     if bits >> (nb - 1 - x) & 1:
@@ -246,7 +255,9 @@ class _Asm:
 
 
 JRULE, JRUGT, JREQ, JRNE, CALL, JP, RET = 0x16, 0x10, 0x18, 0x1A, 0x1C, 0x1E, 0x0640
-JRGE, JRULT, JRUGE = 0x0A, 0x14, 0x12
+JRGE, JRULT, JRUGE, JRLE = 0x0A, 0x14, 0x12, 0x0E
+BLANK = 0x6C               # the firmware's full-cell space
+HANGUL_SHIFT = {12: 1}     # big cell: syllables 1px right (see BdfFont.cell)
 ldub_rb = lambda rd, rb: 0x2400 | rb << 4 | rd
 ldub_rs = lambda rd, rs: 0xA500 | rs << 4 | rd
 ldw_rs = lambda rd, rs: 0x2E00 | rs << 4 | rd
@@ -397,6 +408,54 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0):
     a.w(add_i(5, 1))                                    # round toward zero
     a.L('KC_P')
     a.w(sra_i(5, 1)); a.w(RET)
+
+
+    # KSUFX: putstr (same registers and stack words) on a copy of the string
+    # (<= 8 bytes) in which a trailing name + へ reads name + 께 and name + より
+    # reads ー + name + ー: the message rows keep the stored kana suffixes, which a
+    # Japanese partner reads from the same record.
+    glead, gtrail = code(KS.index(int.from_bytes('께'.encode('euc-kr'), 'big')))
+    a.L('KSUFX')
+    a.w(0x0203); a.w(0x8406)                            # pushn %r3; sub %sp,6
+    for k in range(3):                                  # caller words 0-2 (now at 11-13)
+        a.w(0x5000 | (11 + k) << 4 | 4); a.w(0x5C00 | k << 4 | 4)
+    a.w(0x5000 | 0 << 4 | 0)                            # r0 = str
+    a.w(0xA411); a.w(add_i(1, 12)); a.w(0x5C00 | 0 << 4 | 1)   # r1 = buffer (sp+12) -> word 0
+    a.w(ld_i(2, 0))
+    a.L('KS_C')                                         # copy up to 8 bytes / NUL
+    a.w(ldw_rs(4, 0)); a.w(add_rs(4, 2)); a.w(ldub_rb(4, 4))
+    a.w(ldw_rs(5, 1)); a.w(add_rs(5, 2)); a.w(0x3400 | 5 << 4 | 4)
+    a.w(cmp_i(4, 0)); a.br(JREQ, 'KS_E')
+    a.w(add_i(2, 1)); a.w(cmp_i(2, 8)); a.br(JRULT, 'KS_C')
+    a.w(ld_i(4, 0)); a.w(ldw_rs(5, 1)); a.w(add_rs(5, 2)); a.w(0x3400 | 5 << 4 | 4)
+    a.L('KS_E')                                         # r3 -> last ink; r2 = changed
+    a.w(ldw_rs(3, 1)); a.w(add_rs(3, 2)); a.w(ld_i(2, 0))
+    a.L('KS_B')
+    a.w(cmp_rs(3, 1)); a.br(JREQ, 'KS_GO')
+    a.w(sub_i(3, 1)); a.w(ldub_rb(4, 3)); a.ext(BLANK >> 6); a.w(cmp_i(4, BLANK & 0x3F)); a.br(JREQ, 'KS_B')
+    a.w(cmp_rs(3, 1)); a.br(JREQ, 'KS_GO')              # one character: no name
+    a.w(cmp_i(4, 0x1D)); a.br(JRNE, 'KS_Y')            # ...へ -> ...께 (room: up to index 6)
+    a.w(ldw_rs(5, 1)); a.w(add_i(5, 6)); a.w(cmp_rs(3, 5)); a.br(JRUGT, 'KS_GO')
+    a.ext(glead >> 6); a.w(ld_i(4, glead & 0x3F)); a.w(0x3400 | 3 << 4 | 4)
+    a.ext(gtrail >> 6); a.w(ld_i(4, gtrail & 0x3F)); a.ext(1); a.w(0x3400 | 3 << 4 | 4)
+    a.w(ld_i(4, 0)); a.ext(2); a.w(0x3400 | 3 << 4 | 4)
+    a.w(ld_i(2, 1)); a.br(JP, 'KS_GO')
+    a.L('KS_Y')
+    a.ext(0); a.w(cmp_i(4, 0x28)); a.br(JRNE, 'KS_GO')           # ...より -> ー...
+    a.w(ldw_rs(5, 3)); a.w(sub_i(5, 1)); a.w(ldub_rb(4, 5)); a.ext(0); a.w(cmp_i(4, 0x26)); a.br(JRNE, 'KS_GO')
+    a.w(cmp_rs(5, 1)); a.br(JREQ, 'KS_GO')
+    a.ext(0x51 >> 6); a.w(ld_i(4, 0x51 & 0x3F)); a.w(0x3400 | 3 << 4 | 4)   # り -> ー
+    a.w(ld_i(4, 0)); a.ext(1); a.w(0x3400 | 3 << 4 | 4)                      # ... NUL
+    a.L('KS_S')                                         # shift the name right over よ
+    a.w(sub_i(5, 1)); a.w(ldub_rb(4, 5)); a.ext(1); a.w(0x3400 | 5 << 4 | 4)
+    a.w(cmp_rs(5, 1)); a.br(JRNE, 'KS_S')
+    a.ext(0x51 >> 6); a.w(ld_i(4, 0x51 & 0x3F)); a.w(0x3400 | 1 << 4 | 4)
+    a.w(ld_i(2, 1))
+    a.L('KS_GO')                                        # unchanged: the caller's own string
+    a.w(cmp_i(2, 0)); a.br(JRNE, 'KS_CALL'); a.w(0x5C00 | 0 << 4 | 0)    # ld.w [sp+0],r0
+    a.L('KS_CALL')
+    a.br(CALL, 0x02401CAE, x=True)
+    a.w(0x8006); a.w(0x0243); a.w(RET)                  # add %sp,6; popn %r3
     return a.build(), a.labels
 
 
@@ -474,6 +533,15 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         assert rom[0x401D06:0x401D16] == bytes.fromhex('06c0062406c0072409c00424472277a5'), 'putstr rect'
         h = _Asm(0x02401D06); h.br(CALL, lab['KRECT'], x=True)
         rom[0x401D06:0x401D16] = h.build().ljust(0x10, b'\0')
+    for at, old_b in KSUFX_AT.items():                  # message rows: へ/より read 께/ー
+        assert rom[at - BASE:at - BASE + 6] == bytes.fromhex(old_b), hex(at)
+        op = 0x1D if old_b[-2:] == '1d' else CALL       # call.d keeps its delay slot
+        for pad in (0, 2):                              # end exactly at at+6
+            h = _Asm(at + pad); h.br(op, lab['KSUFX'], x=True); b = h.build()
+            if pad + len(b) == 6:
+                break
+        assert pad + len(b) == 6, hex(at)
+        rom[at - BASE:at - BASE + 6] = b'\0' * pad + b
     h = _Asm(0x02401DBC); h.br(CALL, lab['KCENT'], x=True); h.br(JP, 0x02401DF0)
     b = h.build()
     rom[0x401DBC:0x401DF0] = b.ljust(0x34, b'\0')
@@ -481,6 +549,10 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         h = _Asm(0x025251BE); h.br(JP, nlab['KNAME'], x=True)
         b = h.build(); rom[0x5251BE:0x5251BE + len(b)] = b
         hangul_name.patch_bg(rom, kw)
+        m = hangul_name.MSG_EDIT - BASE                 # message editor -> HMSG
+        assert rom[m:m + 4] == bytes.fromhex('03020684'), 'message editor'
+        h = _Asm(hangul_name.MSG_EDIT); h.br(JP, nlab['HMSG'], x=True)
+        b = h.build(); rom[m:m + len(b)] = b
         for f in hangul_name.PROF_FIELDS:              # profile text fields -> HPROF
             struct.pack_into('<I', rom, hangul_name.PROF_TABLE + 4 * f, nlab['HPROF'])
         for off, old, new in hangul_name.PROF_DRAW:

@@ -448,6 +448,225 @@ def _code(a, tab, pitch, trim=0):
         w(v)
 
     _profile(a, tab)
+    _message(a, tab)
+
+
+# ---- message to a friend -----------------------------------------------------
+# 0x2525946 copies the message record to a work buffer (text at +8: 4 lines of
+# 8 bytes), draws the page and calls the character editor 0x2525B30(r6 buffer,
+# r7 record) -- up/down through kana a byte at a time; it returns 0 (keep the
+# text), -1 (asks whether to stop editing) or -2 (screen off).  Each line is
+# drawn by 0x252603A(r6 line 1-4, r7 buffer, r8 record) through putstr.
+# HMSG replaces 0x2525B30: 16 two-byte cells (4 a line, so no syllable crosses
+# a line), composed as on the name screen; after the 19 initials the candidate
+# list offers a symbol (the name screen's 0x51-0x6B, stored as [sym][0x6C]) and
+# 끝 (finish).  Empty cells in the middle are FULLB; trailing ones end as NUL.
+MSG_EDIT, MSG_LINE, MSG_FLUSH = 0x02525B30, 0x0252603A, 0xA18
+MSG_SLEEP = (0x025290DC, 0x025290E6)
+MSG_CELLS = 16
+M_SYM, M_END = 19, 20                    # stage-1 candidates after the initials
+
+
+def _message(a, tab):
+    o = _Ops(a, 'M_')
+    w, L, br, ext, li, local, setl, stb = o.w, o.L, o.br, o.ext, o.li, o.local, o.setl, o.stb
+    nh = MSG_CELLS
+    lead, trail = H.code(H.FULLB)
+    clead, ctrail = H.code(H.CURSOR)
+    klead, ktrail = H.code(H.KS.index(int.from_bytes('끝'.encode('euc-kr'), 'big')))
+    base = lambda rd: w(H.ldw_rs(rd, 2))              # r2 = the text (buffer + 8)
+
+    def slotptr(rd):                                   # rd = &text[2*slot]
+        local(6, 0); base(rd); w(H.add_rs(rd, 6)); w(H.add_rs(rd, 6))
+
+    def put(rd, b0, b1):                               # [rd] = b0 b1 (r4)
+        li(4, b0); stb(rd, 4); li(4, b1); stb(rd, 4, 1)
+
+    a.L('HMSG')
+    w(0x0203)                                          # pushn %r3
+    w(0x8403)                                          # sub %sp,3 (12 bytes of locals)
+    w(0xA413)                                          # ld.w %r3,%sp
+    w(H.ldw_rs(1, 6)); w(H.ldw_rs(2, 6)); w(H.add_i(2, 8)); w(H.ldw_rs(0, 7))
+    li(4, 0)
+    for k in range(12):
+        setl(k, 4)
+    for f in (EV_A, EV_B, EV_C):
+        li(5, f); stb(5, 4)
+    li(5, 0x145C); li(4, 0x1E); stb(5, 4)
+    li(4, 1); setl(10, 4)
+    br(H.CALL, 'NORM2', x=True)
+
+    L('LOOP')
+    li(5, 0x146C); w(H.ldub_rb(4, 5)); w(H.cmp_i(4, 0)); br(H.JRNE, 'SLEEPX', x=True)
+    br(H.CALL, 0x0240A5B4, x=True)                     # idle until the next interrupt
+    li(5, EV_T); w(H.ldub_rb(4, 5)); ext(0); w(0x7000 | 0x20 << 4 | 4)   # xand r4,0x20
+    w(H.cmp_i(4, 0)); br(H.JREQ, 'K_A')
+    local(4, 5); w(H.add_i(4, 1)); setl(5, 4)
+    w(0xAC55)                                          # bclr [%r5],0x5
+    li(4, 1); setl(10, 4)
+    for flag, name, nxt in ((EV_A, 'MA', 'K_B'), (EV_B, 'MB', 'K_C'), (EV_C, 'MC', 'K_R')):
+        L({'MA': 'K_A', 'MB': 'K_B', 'MC': 'K_C'}[name])
+        li(5, flag); w(H.ldub_rb(4, 5)); w(H.cmp_i(4, 0)); br(H.JREQ, nxt)
+        li(4, 0); stb(5, 4)
+        li(5, 0x145C); li(4, 0x1E); stb(5, 4)          # keep the idle timer up
+        li(4, 1); setl(10, 4); setl(5, 4)              # redraw, blink phase: cursor first
+        br(H.CALL, name, x=True)
+    L('K_R')
+    local(4, 10); w(H.cmp_i(4, 0)); br(H.JREQ, 'NODRAW')
+    li(4, 0); setl(10, 4)
+    br(H.CALL, 'REFRESH', x=True)
+    o.far('call', MSG_FLUSH)
+    L('NODRAW')
+    local(4, 6); w(H.cmp_i(4, 0)); br(H.JRNE, 'OUT', x=True)
+    br(H.JP, 'LOOP', x=True)
+
+    L('OUT')                                           # done 1: keep (0), 2: back (-1)
+    br(H.CALL, 'TRIM2', x=True)
+    for line in range(1, 5):
+        li(6, line); br(H.CALL, 'LINE', x=True)
+    o.far('call', MSG_FLUSH)
+    local(5, 6); li(4, 0); w(H.cmp_i(5, 2)); br(H.JRNE, 'RET'); li(4, -1)
+    L('RET')
+    w(0x8003)                                          # add %sp,3
+    w(0x0243)                                          # popn %r3
+    w(H.RET)
+    L('SLEEPX')                                        # screen off: as the stock editor
+    br(H.CALL, 'TRIM2', x=True)
+    li(6, 0); br(H.CALL, MSG_SLEEP[0], x=True); br(H.CALL, MSG_SLEEP[1], x=True)
+    li(4, -2); br(H.JP, 'RET')
+
+    L('LINE')                                          # draw line r6 (1-4)
+    w(H.ldw_rs(7, 1)); w(H.ldw_rs(8, 0)); br(H.JP, MSG_LINE, x=True)
+
+    # ---- REFRESH: preview the cell in the text, draw its line, put it back --
+    L('REFRESH')
+    slotptr(7)
+    o.ldub_off(4, 7, 0); setl(8, 4); o.ldub_off(4, 7, 1); setl(9, 4)
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'R_BL')
+    w(H.cmp_i(4, 5)); br(H.JRNE, 'R_1')
+    local(4, 7); ext(0x51 >> 6); w(H.add_i(4, 0x51 & 0x3F)); stb(7, 4); li(4, BLANK_SLOT); stb(7, 4, 1)
+    br(H.JP, 'R_DRAW')
+    L('R_1')
+    w(H.cmp_i(4, 1)); br(H.JRNE, 'R_G')
+    local(4, 2); w(H.cmp_i(4, M_SYM)); br(H.JRNE, 'R_1E')
+    put(7, 0x51, BLANK_SLOT); br(H.JP, 'R_DRAW')
+    L('R_1E')
+    w(H.cmp_i(4, M_END)); br(H.JRNE, 'R_G')
+    put(7, klead, ktrail); br(H.JP, 'R_DRAW')
+    L('R_G')
+    local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)
+    slotptr(7); br(H.CALL, 'ENC', x=True); br(H.JP, 'R_DRAW')
+    L('R_BL')                                          # idle: blink on odd phases
+    local(4, 5); w(0x7000 | 1 << 4 | 4); w(H.cmp_i(4, 0)); br(H.JREQ, 'R_DRAW')
+    br(H.CALL, 'BLANK', x=True); w(H.cmp_i(4, 0)); br(H.JREQ, 'R_HIDE')
+    slotptr(7); put(7, clead, ctrail); br(H.JP, 'R_DRAW')
+    L('R_HIDE')
+    slotptr(7); put(7, lead, trail)
+    L('R_DRAW')
+    local(6, 0); w(H.sra_i(6, 2) if hasattr(H, 'sra_i') else 0x8C26); w(H.add_i(6, 1))
+    br(H.CALL, 'LINE', x=True)
+    slotptr(7); local(4, 8); stb(7, 4); local(4, 9); stb(7, 4, 1)
+    w(H.RET)
+
+    # ---- BLANK: r4 = 1 if the cell at slot is empty (FULLB, 0x6C or NUL) ----
+    L('BLANK')
+    slotptr(5); w(H.ldub_rb(6, 5)); li(4, 1)
+    w(H.cmp_i(6, 0)); br(H.JREQ, 'BL_R')
+    li(7, BLANK_SLOT); w(H.cmp_rs(6, 7)); br(H.JREQ, 'BL_R')
+    li(7, lead); w(H.cmp_rs(6, 7)); br(H.JRNE, 'BL_N')
+    o.ldub_off(6, 5, 1); li(7, trail); w(H.cmp_rs(6, 7)); br(H.JREQ, 'BL_R')
+    L('BL_N')
+    li(4, 0)
+    L('BL_R')
+    w(H.RET)
+
+    # ---- ENC(r8 glyph, r7 dest): the 2-byte code --------------------------
+    L('ENC')
+    li(5, 0)
+    L('E_DIV')
+    ext(H.PER >> 6); w(H.cmp_i(8, H.PER & 0x3F)); br(H.JRULT, 'E_ENC')
+    ext(H.PER >> 6); w(H.sub_i(8, H.PER & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'E_DIV')
+    L('E_ENC')
+    w(H.cmp_i(5, 9)); br(H.JRULT, 'E_L1'); ext(0xD9 - 9 >> 6); w(H.add_i(5, (0xD9 - 9) & 0x3F)); br(H.JP, 'E_L2')
+    L('E_L1')
+    ext(0xC7 >> 6); w(H.add_i(5, 0xC7 & 0x3F))
+    L('E_L2')
+    stb(7, 5); w(H.add_i(8, 1))
+    ext(0xD0 >> 6); w(H.cmp_i(8, 0xD0 & 0x3F)); br(H.JRULT, 'E_T'); w(H.add_i(8, H.GAP))
+    L('E_T')
+    stb(7, 8, 1); w(H.RET)
+
+    # ---- NORM2: cells -> syllable, [symbol][0x6C] or FULLB -----------------
+    L('NORM2')
+    base(5); li(6, nh)
+    L('N2')
+    w(H.ldub_rb(4, 5)); o.lead_idx(4, 'N2_NX', 'N2_S')
+    L('N2_S')
+    w(H.ldw_rs(7, 4)); H._xsub(a, 7, 0x51); w(H.ldub_rs(7, 7)); w(H.cmp_i(7, 0x1A)); br(H.JRUGT, 'N2_B')
+    o.ldub_off(4, 5, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'N2_SP')
+    li(7, BLANK_SLOT); w(H.cmp_rs(4, 7)); br(H.JRNE, 'N2_B')
+    L('N2_SP')
+    li(4, BLANK_SLOT); stb(5, 4, 1); br(H.JP, 'N2_NX')
+    L('N2_B')
+    put(5, lead, trail)
+    L('N2_NX')
+    w(H.add_i(5, 2)); w(H.sub_i(6, 1)); w(H.cmp_i(6, 0)); br(H.JRNE, 'N2')
+    w(H.RET)
+
+    # ---- TRIM2: trailing empty cells -> NUL NUL ----------------------------
+    L('TRIM2')
+    li(4, nh - 1); setl(0, 4)
+    L('T2')
+    br(H.CALL, 'BLANK', x=True); w(H.cmp_i(4, 0)); br(H.JREQ, 'T2_E')
+    slotptr(5); put(5, 0, 0)
+    local(4, 0); w(H.cmp_i(4, 0)); br(H.JREQ, 'T2_E'); w(H.sub_i(4, 1)); setl(0, 4); br(H.JP, 'T2')
+    L('T2_E')
+    w(H.RET)
+
+    # ---- keys: the symbol / 끝 candidates around the jamo engine ------------
+    L('MA')
+    local(4, 1); w(H.cmp_i(4, 5)); br(H.JRNE, 'MA1')
+    local(4, 7); w(H.add_i(4, 1)); w(H.cmp_i(4, len(EMO))); br(H.JRULT, 'MA_S'); li(4, 0)
+    L('MA_S')
+    setl(7, 4); w(H.RET)
+    L('MA1')
+    w(H.cmp_i(4, 1)); br(H.JRNE, 'KEY_A', x=True)
+    local(4, 2)
+    for k, nxt in ((18, M_SYM), (M_SYM, M_END), (M_END, 0)):
+        w(H.cmp_i(4, k)); br(H.JRNE, f'MA_{k}'); li(4, nxt); setl(2, 4); w(H.RET)
+        L(f'MA_{k}')
+    br(H.JP, 'KEY_A', x=True)
+
+    L('MB')
+    local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'MB1')
+    slotptr(5); w(H.ldub_rb(4, 5)); H._xsub(a, 4, 0x51); w(H.ldub_rs(4, 4)); w(H.cmp_i(4, 0x1A))
+    br(H.JRUGT, 'KEY_B', x=True)
+    li(4, 1); setl(1, 4); li(4, M_SYM); setl(2, 4); w(H.RET)   # a symbol cell: at 기호
+    L('MB1')
+    w(H.cmp_i(4, 1)); br(H.JRNE, 'MB5')
+    local(4, 2); w(H.cmp_i(4, M_SYM)); br(H.JRNE, 'MB_E')
+    slotptr(5); w(H.ldub_rb(4, 5)); H._xsub(a, 4, 0x51); w(H.ldub_rs(4, 4)); w(H.cmp_i(4, 0x1A))
+    br(H.JRULE, 'MB_SI'); li(4, 0)
+    L('MB_SI')
+    setl(7, 4); li(4, 5); setl(1, 4); w(H.RET)
+    L('MB_E')
+    w(H.cmp_i(4, M_END)); br(H.JRNE, 'KEY_B', x=True)
+    li(4, 0); setl(1, 4); li(4, 1); setl(6, 4); w(H.RET)        # 끝: keep the text
+    L('MB5')
+    w(H.cmp_i(4, 5)); br(H.JRNE, 'KEY_B', x=True)
+    slotptr(5); local(4, 7); ext(0x51 >> 6); w(H.add_i(4, 0x51 & 0x3F)); stb(5, 4)
+    li(4, BLANK_SLOT); stb(5, 4, 1)
+    li(4, 0); setl(1, 4); br(H.JP, 'NEXTSLOT', x=True)
+
+    L('MC')
+    local(4, 1); w(H.cmp_i(4, 5)); br(H.JRNE, 'KEY_C', x=True)
+    li(4, 1); setl(1, 4); w(H.RET)
+
+    _engine1(o, tab, nh, base, False, blank=(lead, trail), sym=False)
+    _engine2(o, tab, nh, base, True, sym=False)
+
+
+
 
 
 # ---- profile free-text fields ------------------------------------------------
