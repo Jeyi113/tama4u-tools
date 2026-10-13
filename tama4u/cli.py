@@ -105,6 +105,10 @@ def cmd_hangul(args):
                           bold=not args.thin, strings=strings, name_ui=args.name_ui,
                           galmuri=args.galmuri, bold_chars=chars,
                           long_diary=not args.short_diary)
+    if args.sprites:        # picture text redrawn in Korean, in place
+        from . import hangul_sprites
+        rom = hangul_sprites.apply(rom, hangul_sprites.load(args.sprites),
+                                   orig=open(args.ps, 'rb').read())
     if args.debug_menu:     # test builds: show the download menu's debug set
         rom = hangul.debug_menu(rom)
     if args.all_jobs:       # test builds: every part-time job recruiting
@@ -144,6 +148,8 @@ def main(argv=None):
                    help='test builds: no long-diary hooks (diary texts must fit 36 bytes)')
     p.add_argument('--bold', metavar='JSON',
                    help='["0xADDR", ...]: texts drawn with Galmuri11-Bold syllables')
+    p.add_argument('--sprites', metavar='JSON',
+                   help='{"P###": {"addr", "pixels"}}: sprite pixels replaced in place')
     p.add_argument('--carry-save', metavar='OLD_ROM',
                    help="tamaemu: start OUT with OLD_ROM's save data (not its flash image)")
     p.add_argument('--debug-menu', action='store_true',
