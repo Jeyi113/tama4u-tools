@@ -35,23 +35,32 @@ JUNG_U = [0, 2, 4, 6, 8, 12, 13, 17, 18, 20, 1, 3, 5, 7, 9, 10, 11, 14, 15, 16, 
 JONG_U = [0, 1, 4, 7, 8, 16, 17, 19, 21, 22, 23, 24, 25, 26, 27, 2, 20,
           3, 5, 6, 9, 10, 11, 12, 13, 14, 15, 18]
 END = 0xFFFF
+FRESH = 31            # [4] while composing into an empty slot: no final to keep
+
+
+def srl10(o, r):
+    """r >>= 10 (S1C33 shift immediates go up to 8 only)."""
+    o.w(0x8800 | 8 << 4 | r); o.w(0x8800 | 2 << 4 | r)
 
 
 def tables():
     """PAIR[19*21] u16 offsets into LIST (END = no syllable), LIST u16 glyph
     numbers per (cho, jung), jong order, END-terminated; DECOMP[2350] u16 =
-    cho | jung << 5 | jong-position << 10, to resume editing a syllable."""
+    cho | jung << 5 | jong << 10 (the final, 0-27), to resume editing a
+    syllable: entering the final stage looks that final up in the (possibly
+    new) cho/jung list, so changing the initial or medial keeps the final."""
     ks = {bytes([h, l]).decode('euc-kr'): g
           for g, (h, l) in enumerate((c >> 8, c & 0xFF) for c in H.KS)}
     pair, lst, dec = [], [], [0] * len(H.KS)
     for ci, c in enumerate(CHO_U):
         for ji, j in enumerate(JUNG_U):
-            gs = [ks[s] for t in JONG_U
+            gt = [(ks[s], t) for t in JONG_U
                   if (s := chr(0xAC00 + (c * 21 + j) * 28 + t)) in ks]
+            gs = [g for g, _ in gt]
             if gs:
                 pair.append(len(lst)); lst += gs + [END]
-                for ti, g in enumerate(gs):
-                    dec[g] = ci | ji << 5 | ti << 10
+                for g, t in gt:                         # the final itself, not its
+                    dec[g] = ci | ji << 5 | t << 10     # place in this pair's list
             else:
                 pair.append(END)
     return pair, lst, dec
@@ -136,14 +145,33 @@ def _engine1(o, tab, nh, base, term, blank=(BLANK_SLOT, BLANK_SLOT), sym=True):
     L('GLYPH_OF')
     local(4, 0); w(H.cmp_rs(4, 6)); br(H.JRNE, 'G_STORED')
     local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'G_STORED')
+    # initial stage: the initial alone; medial stage of a stored syllable
+    # ([4] = its final, not FRESH): the syllable with that final kept
     w(H.cmp_i(4, 1)); br(H.JRNE, 'G_JUNG')
     local(8, 2); ext(len(H.KS) >> 6); w(H.add_i(8, len(H.KS) & 0x3F)); w(H.RET)
     L('G_JUNG')
     br(H.CALL, 'PAIROFF', x=True)                      # r5 = &LIST[off]
-    local(4, 1); w(H.cmp_i(4, 2)); br(H.JREQ, 'G_LIST')
+    local(4, 1); w(H.cmp_i(4, 2)); br(H.JRNE, 'G_TI')
+    local(4, 4); w(H.cmp_i(4, FRESH)); br(H.JREQ, 'G_LIST')
+    br(H.JP, 'FINDJ')
+    L('G_TI')
     local(4, 4); w(H.sll_i(4, 1)); w(H.add_rs(5, 4))
     L('G_LIST')
     w(H.lduh_rb(8, 5)); w(H.RET)
+
+    # ---- FINDJ(r5 = &LIST[off]) -> r8 = that list's syllable with final [4],
+    # else its first (no final) ----------------------------------------------
+    L('FINDJ')
+    local(7, 4); w(H.lduh_rb(8, 5))
+    L('FJ_L')
+    w(H.lduh_rb(4, 5)); ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'FJ_R')
+    o.a.li(9, tab.get('DECOMP', 0)); w(H.add_rs(9, 4)); w(H.add_rs(9, 4)); w(H.lduh_rb(9, 9))
+    srl10(o, 9); w(H.cmp_rs(9, 7)); br(H.JREQ, 'FJ_F')
+    w(H.add_i(5, 2)); br(H.JP, 'FJ_L')
+    L('FJ_F')
+    w(H.ldw_rs(8, 4))
+    L('FJ_R')
+    w(H.RET)
     L('G_STORED')                                      # decode text[2*slot]
     base(5); w(H.add_rs(5, 6)); w(H.add_rs(5, 6))
     w(H.ldub_rb(4, 5)); o.lead_idx(4, 'G_DEC', 'G_BLANK')
@@ -238,12 +266,12 @@ def _engine2(o, tab, nh, base, back, sym=True):
     local(4, 1); w(H.cmp_i(4, 0)); br(H.JRNE, 'B_1')
     # start: resume from the syllable already in the slot, else from ㄱ/ㅏ/none
     local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # st 0 -> stored glyph
-    li(4, 0); setl(2, 4); setl(3, 4); setl(4, 4)
+    li(4, 0); setl(2, 4); setl(3, 4); li(4, FRESH); setl(4, 4)   # empty: FRESH
     ext(len(H.KS) >> 6); w(H.cmp_i(8, len(H.KS) & 0x3F)); br(H.JRUGE, 'B_0S')
     o.a.li(5, tab.get('DECOMP', 0)); w(H.add_rs(5, 8)); w(H.add_rs(5, 8)); w(H.lduh_rb(4, 5))
     w(H.ldw_rs(5, 4)); w(0x7000 | 31 << 4 | 5); setl(2, 5)          # and r5,31
     w(H.ldw_rs(5, 4)); w(0x8800 | 5 << 4 | 5); w(0x7000 | 31 << 4 | 5); setl(3, 5)
-    w(H.ldw_rs(5, 4)); w(0x8800 | 10 << 4 | 5); setl(4, 5)
+    w(H.ldw_rs(5, 4)); srl10(o, 5); setl(4, 5)
     L('B_0S')
     li(4, 1); setl(1, 4); w(H.RET)
     L('B_1')
@@ -258,15 +286,16 @@ def _engine2(o, tab, nh, base, back, sym=True):
     L('B_2')
     w(H.cmp_i(4, 2)); br(H.JRNE, 'B_3')
     li(4, 3); setl(1, 4)
-    br(H.CALL, 'PAIROFF', x=True); local(7, 4)         # keep ti if inside this list
-    L('B_2L')
+    br(H.CALL, 'PAIROFF', x=True); local(7, 4); li(6, 0)   # [4] = the final: find it
+    L('B_2L')                                          # in this list -> its place
     w(H.lduh_rb(4, 5)); ext(END >> 6); w(H.cmp_i(4, END & 0x3F)); br(H.JREQ, 'B_2R')
-    w(H.cmp_i(7, 0)); br(H.JREQ, 'B_2K')
-    w(H.sub_i(7, 1)); w(H.add_i(5, 2)); br(H.JP, 'B_2L')
+    o.a.li(9, tab.get('DECOMP', 0)); w(H.add_rs(9, 4)); w(H.add_rs(9, 4)); w(H.lduh_rb(9, 9))
+    srl10(o, 9); w(H.cmp_rs(9, 7)); br(H.JREQ, 'B_2K')
+    w(H.add_i(6, 1)); w(H.add_i(5, 2)); br(H.JP, 'B_2L')
     L('B_2R')
-    li(4, 0); setl(4, 4)
+    li(6, 0)                                           # no such final here: none
     L('B_2K')
-    w(H.RET)
+    setl(4, 6); w(H.RET)
     L('B_3')                                           # commit syllable
     local(6, 0); br(H.CALL, 'GLYPH_OF', x=True)        # r8 = glyph
     li(5, 0)
@@ -292,6 +321,12 @@ def _engine2(o, tab, nh, base, back, sym=True):
 
     L('KEY_C')
     local(4, 1); w(H.cmp_i(4, 0)); br(H.JREQ, 'C_0')
+    w(H.cmp_i(4, 3)); br(H.JRNE, 'C_1')                # leaving the final stage: [4]
+    br(H.CALL, 'PAIROFF', x=True); local(4, 4)          # back from a place to the final
+    w(H.sll_i(4, 1)); w(H.add_rs(5, 4)); w(H.lduh_rb(4, 5))
+    o.a.li(9, tab.get('DECOMP', 0)); w(H.add_rs(9, 4)); w(H.add_rs(9, 4)); w(H.lduh_rb(9, 9))
+    srl10(o, 9); setl(4, 9); li(4, 3)
+    L('C_1')
     w(H.sub_i(4, 1)); setl(1, 4); w(H.RET)
     L('C_0')
     local(4, 0); w(H.cmp_i(4, 0)); br(H.JREQ, 'C_R')
@@ -395,9 +430,21 @@ def _code(a, tab, pitch, trim=0):
     ext(H.PER >> 6); w(H.sub_i(8, H.PER & 0x3F)); w(H.add_i(5, 1)); br(H.JP, 'D_DIV')
     L('D_GO')
     w(H.sll_i(5, 2)); a.li(4, H.BASE + H.TBL_AT); w(H.add_rs(5, 4)); w(H.ldw_rb(9, 5))
+    if trim:
+        # blink-on (the attribute set above): a full 12x14 empty cell at the
+        # slot's own y, so the highlight fills the green box -- the trimmed
+        # glyph would light only its 11 lower rows
+        local(4, 0); w(H.cmp_rs(4, 0)); br(H.JRNE, 'D_N')
+        local(4, 5); w(0x7000 | 1 << 4 | 4); w(H.cmp_i(4, 0)); br(H.JREQ, 'D_N')
+        li(9, tab.get('BLOCK', 0)); li(8, 0)
+        w(H.ldw_rs(6, 2)); li(7, 0x20)
+        br(H.CALL, 0x024019C6, x=True)
+        slot_y(o, SLOT_Y); br(H.JP, 'D_END')
+        L('D_N')
     w(H.ldw_rs(6, 2)); li(7, 0x20)
     br(H.CALL, 0x024019C6, x=True)
     slot_y(o, SLOT_Y + trim)                            # (trimmed glyph: lower)
+    L('D_END')
     w(0x0242)                                          # popn %r2
     w(H.RET)
 
@@ -446,6 +493,10 @@ def _code(a, tab, pitch, trim=0):
     L('EMO')
     for v in EMO:
         w(v)
+    L('BLOCK')                                         # 12x14 empty cell (blink-on)
+    blk = bytes([12, 14, 2, 0, 1, 0xFF]) + b'\x07\xe0\x60\x00' + bytes(12 * 14 // 2)
+    for k in range(0, len(blk), 2):
+        w(blk[k] | blk[k + 1] << 8)
 
     _profile(a, tab)
     _message(a, tab)
@@ -875,6 +926,82 @@ def patch_bg(rom, pitch):
 def assemble(org, pitch=12, trim=0):
     """(bytes, labels) for KNAME + tables at CPU address `org`; `trim`: rows
     cut off the top of the big glyphs (the slot is drawn that much lower)."""
-    a = H._Asm(org); _code(a, {}, pitch, trim); a.build()
-    b = H._Asm(org); _code(b, a.labels, pitch, trim)
-    return b.build(), b.labels
+    # table addresses are loaded with immediates whose length depends on the
+    # value: pass until the labels stop moving (two passes left DECOMP read
+    # 4 bytes early -> a stored syllable resumed as the wrong jamo)
+    tab = {}
+    for _ in range(8):
+        a = H._Asm(org); _code(a, tab, pitch, trim); out = a.build()
+        if a.labels == tab:
+            return out, a.labels
+        tab = a.labels
+    raise AssertionError('KNAME labels do not settle')
+
+
+# ---- friend card names ---------------------------------------------------------
+# The friend list card (0x241B62A..0x241B672) draws the friend's 5-byte name a
+# byte per cell: cell i is an object at x 28 + 12i, y 0x51, given its glyph by
+# the stock 1-byte lookup 0x2401BDC(r6 obj, r7 0x68, r8 code) -- a Korean
+# partner's 2-byte syllables came out as two kana.  CARD replaces that call:
+# it walks the name from the start (a Hangul pair is one cell) to find what
+# cell r1 shows, and draws a syllable with the big glyph strips (3px lower,
+# the trimmed glyphs), anything else through the stock lookup, empty cells as
+# 0x6C; an empty Hangul slot (0x6C 0x6C at byte 0 or 2) is one cell, as on
+# the name screen.  At the call r5 = name + r1 - 4 (the byte is [r5+4]).
+CARD_CALL, CARD_OLD = 0x41B668, '32dfb91d'
+
+
+def friend_card(rom, src, at, trim=H.TRIM):
+    """Write CARD at file offset `at`, hook the card's glyph call."""
+    if bytes(src[CARD_CALL:CARD_CALL + 4]).hex() != CARD_OLD:
+        raise ValueError('friend card: unexpected bytes')
+    a = H._Asm(H.BASE + at)
+    w, L, br = a.w, a.L, a.br
+    a.L('CARD')
+    w(0x0203)                                           # pushn %r3
+    w(H.ldw_rs(0, 6)); w(H.ldw_rs(2, 5)); w(H.sub_rs(2, 1)); w(H.add_i(2, 4))   # r0 obj, r2 name
+    w(H.ld_i(3, 0)); w(H.ld_i(6, 0))                    # r3 byte j, r6 cell
+    L('C_SCAN')
+    w(H.cmp_i(3, 5)); br(H.JRUGE, 'C_BLANK')
+    w(H.ldw_rs(4, 2)); w(H.add_rs(4, 3)); w(H.ldub_rb(4, 4))
+    w(H.cmp_rs(6, 1)); br(H.JREQ, 'C_AT')
+    a.ext(H.BLANK >> 6); w(H.cmp_i(4, H.BLANK & 0x3F)); br(H.JRNE, 'C_INK')
+    w(H.ldw_rs(5, 3)); w(0x7000 | 1 << 4 | 5); w(H.cmp_i(5, 0)); br(H.JRNE, 'C_S1')   # odd j
+    w(H.cmp_i(3, 4)); br(H.JRUGE, 'C_S1')
+    w(H.ldw_rs(5, 2)); w(H.add_rs(5, 3)); w(H.add_i(5, 1)); w(H.ldub_rb(5, 5))
+    a.ext(H.BLANK >> 6); w(H.cmp_i(5, H.BLANK & 0x3F)); br(H.JREQ, 'C_S2')    # empty slot: 1 cell
+    br(H.JP, 'C_S1')
+    L('C_INK')
+    H._lead_test(a, 4, 'C_S2', 'C_S1')
+    L('C_S2')
+    w(H.cmp_i(3, 4)); br(H.JRUGE, 'C_S1'); w(H.add_i(3, 1))
+    L('C_S1')
+    w(H.add_i(3, 1)); w(H.add_i(6, 1)); br(H.JP, 'C_SCAN')
+    L('C_AT')
+    w(H.ldub_rs(8, 4))
+    H._lead_test(a, 8, 'C_HAN', 'C_STOCK')
+    L('C_HAN')                                          # r5 = lead index
+    w(H.cmp_i(3, 4)); br(H.JRUGE, 'C_STOCK')
+    w(H.ldw_rs(4, 2)); w(H.add_rs(4, 3)); w(H.add_i(4, 1)); w(H.ldub_rb(8, 4)); w(H.sub_i(8, 1))
+    a.ext(0xCF + H.GAP >> 6); w(H.cmp_i(8, 0xCF + H.GAP & 0x3F)); br(H.JRULT, 'C_T')
+    w(H.sub_i(8, H.GAP))
+    L('C_T')
+    w(H.sll_i(5, 2)); a.li(4, H.BASE + H.TBL_AT); w(H.add_rs(5, 4)); w(H.ldw_rb(9, 5))
+    w(H.ldw_rs(6, 0)); a.li(7, 0x68)
+    br(H.CALL, 0x024019C6, x=True)
+    a.li(4, 0x1470); w(H.ldw_rs(5, 0)); w(H.sll_i(5, 4)); w(H.add_rs(5, 4))   # obj y += trim
+    a.ext(6); w(H.lduh_rb(4, 5)); w(H.add_i(4, trim)); a.ext(6); w(0x3800 | 5 << 4 | 4)
+    br(H.JP, 'C_END')
+    L('C_BLANK')
+    a.li(8, H.BLANK)
+    L('C_STOCK')
+    w(H.ldw_rs(6, 0)); a.li(7, 0x68); w(H.ld_i(9, 0))
+    br(H.CALL, 0x02401BDC, x=True)
+    L('C_END')
+    w(0x0243)                                           # popn %r3
+    w(H.RET)
+    code = a.build()
+    rom[at:at + len(code)] = code
+    j = H._Asm(H.BASE + CARD_CALL); j.br(H.CALL, a.labels['CARD'], x=True)
+    rom[CARD_CALL:CARD_CALL + 4] = j.build()            # its delay slot (ld.w r9,r0) now runs after
+    return len(code)

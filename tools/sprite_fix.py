@@ -229,6 +229,94 @@ def p053(s):
         s.put(pts, round(cx - bw / 2), y, white); y += bh + 1
 
 
+
+def transplant(patches, src_pid, src_addr, dst_addr, skip=None):
+    """Carry a draft's changes onto a twin picture (same layout, own palette;
+    the twin may be 8bpp).  Only pixels the draft changed are touched.  Each
+    source index maps to the twin index it most often sits on in the two
+    originals (so the window's own background index is reused), else to the
+    nearest colour."""
+    def pal_of(a):
+        nc = ROM[a + 2]
+        return [((v & 31) << 3, ((v >> 5) & 63) << 2, (v >> 11) << 3)
+                for v in (ROM[a + 6 + 2 * j] << 8 | ROM[a + 7 + 2 * j] for j in range(nc))]
+    s = Spr(src_pid, src_addr, patches); o = Spr('-', src_addr, {})
+    sp = pal_of(src_addr); dp = pal_of(dst_addr)
+    w, h, nc = ROM[dst_addr], ROM[dst_addr + 1], ROM[dst_addr + 2]
+    off = dst_addr + 6 + 2 * nc
+    eight = nc > 16
+    px = list(ROM[off:off + w * h]) if eight else [
+        (ROM[off + i // 2] >> 4) if i & 1 else ROM[off + i // 2] & 15 for i in range(w * h)]
+    from collections import Counter
+    votes = {}
+    for y in range(h):
+        for x in range(w):
+            votes.setdefault(o.f[0][y][x], Counter())[px[y * w + x]] += 1
+    same = {k: v.most_common(1)[0][0] for k, v in votes.items()}
+    for y in range(h):
+        for x in range(w):
+            c, c0 = s.f[0][y][x], o.f[0][y][x]
+            if c == c0: continue
+            if skip and skip[0] <= x < skip[2] and skip[1] <= y < skip[3]: continue
+            if c in same and dp[same[c]] == sp[c]:
+                px[y * w + x] = same[c]; continue
+            if c in same and c and same[c] == 0 and sp[c] == (248, 252, 248):
+                px[y * w + x] = 0; continue
+            if c == 0: px[y * w + x] = 0; continue
+            rgb = sp[c]
+            px[y * w + x] = min(range(1, nc), key=lambda i: sum((dp[i][j] - rgb[j]) ** 2 for j in range(3)))
+    data = bytes(px) if eight else bytes(px[i] | px[i + 1] << 4 for i in range(0, len(px), 2))
+    return dict(addr=f'0x{dst_addr:06X}', pixels=data.hex())
+
+
+
+def p059(patches):
+    """Unknown-profile window 0x15C600 (17 colours, 8bpp): gray placeholders
+    せいべつ/せいざ/しゅみ/才 -> 성별/별자리/취미/살, all three labels starting at
+    x 24 like the zodiac and hobby lines; 月/日 -> 월/일 (navy); plus P015's
+    person icon at the top left."""
+    a = 0x15C600
+    w, h, nc = ROM[a], ROM[a + 1], ROM[a + 2]
+    pal = [((v & 31) << 3, ((v >> 5) & 63) << 2, (v >> 11) << 3)
+           for v in (ROM[a + 6 + 2 * j] << 8 | ROM[a + 7 + 2 * j] for j in range(nc))]
+    off = a + 6 + 2 * nc
+    px = list(ROM[off:off + w * h])
+    gray, navy, bg = pal.index((136, 140, 136)), pal.index((0, 0, 96)), pal.index((248, 252, 248))
+    def clear(box, c):
+        x0, y0, x1, y1 = box
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                if px[y * w + x] == c: px[y * w + x] = bg
+    def put(txt, x, y, c, cx=None):
+        tw, th, pts = text(FB, txt)
+        if cx is not None: x = round(cx - tw / 2)
+        for dx, dy in pts: px[(y + dy) * w + x + dx] = c
+    FB = BdfFont(f'{G}/Galmuri11-Bold.bdf')
+    for box in ((14, 5, 66, 20), (22, 36, 62, 53), (22, 54, 62, 69), (106, 4, 125, 20)):
+        clear(box, gray)
+    for box in ((43, 21, 58, 37), (74, 21, 90, 37)):
+        clear(box, navy)
+    put('성별', 24, 7, gray); put('별자리', 24, 39, gray); put('취미', 24, 56, gray)
+    put('살', 0, 7, gray, cx=115)
+    put('월', 0, 23, navy, cx=50); put('일', 0, 23, navy, cx=82)
+    # the person (gender) icon the user drew for P015, same place (x 7..19, y 5..19)
+    s15, o15 = Spr('P015', 0x15EA28, patches), Spr('-', 0x15EA28, {})
+    n15 = ROM[0x15EA28 + 2]
+    p15 = [((v & 31) << 3, ((v >> 5) & 63) << 2, (v >> 11) << 3)
+           for v in (ROM[0x15EA28 + 6 + 2 * j] << 8 | ROM[0x15EA28 + 7 + 2 * j] for j in range(n15))]
+    for y in range(22):
+        for x in range(22):
+            c = s15.f[0][y][x]
+            if c == o15.f[0][y][x]: continue
+            rgb = p15[c]
+            px[y * w + x] = min(range(1, nc), key=lambda i: sum((pal[i][j] - rgb[j]) ** 2 for j in range(3)))
+    return dict(addr=f'0x{a:06X}', pixels=bytes(px).hex())
+
+
+# friends' profile window: P015's labels, not its person icon (own profile only)
+TWINS = {'P015-B': ('P015', 0x15EA28, 0x15A1D8, (0, 0, 22, 22)),
+         'P015-OWN': ('P015', 0x15EA28, 0x15A1D8, None)}   # own profile: with the icon (copy, see hangul_sprites)
+
 JOBS = {'P045': (0x18E3A8, p045), 'P014': (0x163764, p014), 'P034': (0x180654, p034),
         'P035': (0x18186C, p035), 'P040': (0x189724, p040), 'P054': (0x1C0678, p054),
         'P051': (0x1BE2D0, p051), 'P052': (0x1BEEC8, p052), 'P053': (0x1BF450, p053)}
@@ -236,6 +324,12 @@ JOBS = {'P045': (0x18E3A8, p045), 'P014': (0x163764, p014), 'P034': (0x180654, p
 if __name__ == '__main__':
     patches = json.load(open(JS))
     for pid in sys.argv[1:]:
+        if pid == 'P059':
+            patches[pid] = p059(patches); print(pid, 'redrawn'); continue
+        if pid in TWINS:
+            patches[pid] = transplant(patches, *TWINS[pid]); print(pid, 'transplanted')
+            if pid == 'P015-OWN': patches[pid]['copy'] = True
+            continue
         a, fn = JOBS[pid]
         s = Spr(pid, a, patches); fn(s)
         patches[pid] = dict(addr=f'0x{a:06X}', pixels=s.pixels())

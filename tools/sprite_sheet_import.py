@@ -3,9 +3,12 @@ into tama4u/sprites-ps-ko.json.
 
     python3 tools/sprite_sheet_import.py ~/Downloads/TMGC_PS_스프라이트시트.xlsx P004 P005 ...
 
-Colours: transparent pixels -> index 0, white -> index 0 when the palette's
-index 0 is the transparent green, exact palette colours keep the index the
-current draft has, anything else goes to the nearest palette colour (counted).
+Colours: transparent pixels -> index 0; pure white -> index 0 only where the
+ROM original is transparent too (editors leave 255,255,255 specks inside
+opaque art, and an index 0 there lets the scene behind show through when
+the picture is drawn over another -- P032/P033); exact palette colours keep
+the index the current draft has; anything else goes to the nearest opaque
+palette colour (counted).
 Needs openpyxl + Pillow.
 """
 import io, json, os, sys
@@ -30,14 +33,15 @@ def unpack(raw, w, h, n):
             for k in range(n)]
 
 
-def decode(img, a, ref):
+def decode(img, a, ref, orig=None):
     w, h, nc, n, pal = info(a)
+    orig = orig or ref
     sc = img.width // w; px = img.convert('RGBA').load(); out = []; off = 0
     clear = pal[0] == (0, 252, 0)
     for y in range(h):
         for x in range(w):
             r, g, b, al = px[x * sc, y * sc]; c = (r, g, b); o = ref[y * w + x]
-            if al < 128 or (clear and c == (255, 255, 255)):
+            if al < 128 or (clear and c == (255, 255, 255) and orig[y * w + x] == 0):
                 out.append(0); continue
             if pal[o] == c:
                 out.append(o); continue
@@ -64,7 +68,8 @@ if __name__ == '__main__':
         off0 = a + 6 + 2 * nc
         raw = bytes.fromhex(patches[base]['pixels']) if base in patches else ROM[off0:off0 + n * w * h // 2]
         frames = unpack(raw, w, h, n)
-        frames[k], off = decode(Image.open(io.BytesIO(im._data())), a, frames[k])
+        rom = unpack(ROM[off0:off0 + n * w * h // 2], w, h, n)[k]
+        frames[k], off = decode(Image.open(io.BytesIO(im._data())), a, frames[k], rom)
         patches[base] = dict(addr=f'0x{a:06X}', pixels=b''.join(
             bytes(f[i] | f[i + 1] << 4 for i in range(0, len(f), 2)) for f in frames).hex())
         print(pid, 'imported', f'({off} px snapped to the palette)' if off else '')

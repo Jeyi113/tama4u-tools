@@ -297,7 +297,7 @@ def _half_test(a, ptr, off, tmp, no):
     a.ext(trail >> 6); a.w(cmp_i(tmp, trail & 0x3F)); a.br(JRNE, no)
 
 
-def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0):
+def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0, labels=None):
     """`bold_src`: per bold glyph (bold_map order) the glyph number of its
     plain syllable -- small text draws that (no small bold strips); its
     (lead index, trail index) bytes go at CPU address `bold_at`."""
@@ -324,9 +324,17 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0):
     a.L('KG_S')
     a.w(sll_i(5, 2)); a.li(4, BASE + TBL_AT); a.w(add_rs(5, 4))
     a.w(cmp_i(9, 0)); a.br(JRNE, 'KG_SM')
-    if trim:                                            # big: the object 3px lower
+    if trim:                                            # highlighted (attr 0x2000, the
         a.w(ldw_rs(4, 6)); a.w(ldub_rs(4, 4)); a.w(sll_i(4, 4)); a.ext(0x1470 >> 6); a.w(add_i(4, 0x1470 & 0x3F))
-        a.ext(6); a.w(lduh_rb(9, 4)); a.w(add_i(9, trim)); a.ext(6); a.w(0x3800 | 4 << 4 | 9)   # ld.h [r4+6],r9
+        a.ext(0xC); a.w(lduh_rb(9, 4)); a.ext(0x2000 >> 6); a.w(0x7000 | 9)   # blink/selection box):
+        a.w(cmp_i(9, 0)); a.br(JREQ, 'KG_NB')           # a full 12x14 empty cell at the
+        a.br(JP, 'KG_HL', x=True)
+        a.L('KG_NB')
+    if trim:                                            # big: the object 3px lower --
+        a.w(ldw_rb(9, 5)); a.w(ldub_rs(6, 6)); a.w(ldub_rs(7, 7))           # after the glyph
+        a.br(CALL, 0x024019C6, x=True)                  # call, so the cell it replaces
+        a.ext(6); a.w(lduh_rb(4, 0)); a.w(add_i(4, trim)); a.ext(6); a.w(0x3800 | 0 << 4 | 4)   # is cleared
+        a.w(RET)                                        # where it was (r0 = putstr's object)
     a.br(JP, 'KG_BIG')
     a.L('KG_SM')
     a.ext(1); a.w(add_i(5, 0))                          # xadd r5,64 -> small strips
@@ -335,6 +343,32 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0):
     a.br(JP, 0x024019C6, x=True)
     a.L('KG_NO')
     a.br(JP, 0x02401BDC, x=True)
+    if trim:
+        a.L('KG_HL')
+        # inverted like the kana: first the empty 12x14 cell at the object's
+        # own y (it inverts to a full box) and that rect refreshed now, then
+        # the syllable itself inverted 3px lower; KRECT then leaves the box's
+        # top rows alone.  r0 = putstr's object, r1 = its string pointer.
+        a.li(9, (labels or {}).get('KBLOCK', 0))
+        a.w(ld_i(8, 0)); a.w(ldub_rs(6, 6)); a.w(ldub_rs(7, 7))
+        a.br(CALL, 0x024019C6, x=True)
+        a.ext(6); a.w(lduh_rb(6, 0)); a.w(ldw_rs(7, 6)); a.w(add_i(7, 14))
+        a.ext(4); a.w(lduh_rb(8, 0)); a.w(ldw_rs(9, 8)); a.w(add_i(9, 12))
+        a.li(4, 0x84C); a.w(0x0604)                     # call %r4: refresh rows/cols
+        a.w(ldub_rb(4, 1)); _lead_test(a, 4, 'KH_L', 'KH_X')
+        a.L('KH_X')
+        a.w(RET)
+        a.L('KH_L')
+        a.w(ldw_rs(4, 1)); a.w(add_i(4, 1)); a.w(ldub_rb(8, 4)); a.w(sub_i(8, 1))
+        a.ext(0xCF + GAP >> 6); a.w(cmp_i(8, 0xCF + GAP & 0x3F)); a.br(JRULT, 'KH_T')
+        a.w(sub_i(8, GAP))
+        a.L('KH_T')
+        a.w(sll_i(5, 2)); a.li(4, BASE + TBL_AT); a.w(add_rs(5, 4)); a.w(ldw_rb(9, 5))
+        a.w(ldw_rs(6, 0)); a.li(4, 0x1470); a.w(sub_rs(6, 4)); a.w(sra_i(6, 4))   # object id
+        a.w(0x5000 | 3 << 4 | 7)                        # r7 = putstr's word 2
+        a.br(CALL, 0x024019C6, x=True)
+        a.ext(6); a.w(lduh_rb(4, 0)); a.w(add_i(4, trim)); a.ext(6); a.w(0x3800 | 0 << 4 | 4)
+        a.w(RET)
     # KADV(r5 small flag, r1 ptr, r0 obj) -> r4 = next x; steps r1 over a trail
     a.L('KADV')
     a.w(ldw_rs(6, 5))
@@ -349,7 +383,8 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0):
     a.L('KA_K')
     if trim:
         a.w(cmp_i(6, 0)); a.br(JRNE, 'KA_K2')
-        a.ext(6); a.w(lduh_rb(4, 0)); a.w(sub_i(4, trim)); a.ext(6); a.w(0x3800 | 0 << 4 | 4)   # ld.h [r0+6],r4
+        a.ext(9); a.w(ldub_rb(4, 0)); a.w(cmp_i(4, 14 - trim)); a.br(JRNE, 'KA_K2')   # the full-height
+        a.ext(6); a.w(lduh_rb(4, 0)); a.w(sub_i(4, trim)); a.ext(6); a.w(0x3800 | 0 << 4 | 4)   # box: y kept
         a.w(ld_i(4, 14)); a.ext(9); a.w(0x3400 | 0 << 4 | 4)                       # ld.b [r0+9],r4: box 14 high
         a.L('KA_K2')
     _half_test(a, 1, 1, 4, 'KA_F')
@@ -369,7 +404,10 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0):
         a.L('KRECT')
         a.ext(6); a.w(ldub_rb(6, 0)); a.ext(9); a.w(ldub_rb(4, 0))
         a.w(ldw_rs(7, 6)); a.w(add_rs(7, 4)); a.w(ldub_rs(7, 7))
-        a.w(cmp_i(4, 14 - trim)); a.br(JRNE, 'KR_X'); a.w(sub_i(6, trim))
+        a.w(cmp_i(4, 14 - trim)); a.br(JRNE, 'KR_X')
+        a.ext(0xC); a.w(lduh_rb(5, 0)); a.ext(0x2000 >> 6); a.w(0x7000 | 5)   # highlighted: the
+        a.w(cmp_i(5, 0)); a.br(JRNE, 'KR_X')            # box's top rows stay as drawn
+        a.w(sub_i(6, trim))
         a.L('KR_X')
         a.w(RET)
     # KCENT(r9 str, r0 max chars, r1 small) -> r6 = chars for putstr, r5 = x.
@@ -456,6 +494,11 @@ def _hooks(kw=12, kws=10, bold_src=(), bold_at=0, trim=0):
     a.L('KS_CALL')
     a.br(CALL, 0x02401CAE, x=True)
     a.w(0x8006); a.w(0x0243); a.w(RET)                  # add %sp,6; popn %r3
+    if trim:
+        a.L('KBLOCK')                                   # 12x14 empty glyph (highlight box)
+        blk = bytes([12, 14, 2, 0, 1, 0xFF]) + b'\x07\xe0\x60\x00' + bytes(12 * 14 // 2)
+        for k in range(0, len(blk), 2):
+            a.w(blk[k] | blk[k + 1] << 8)
     return a.build(), a.labels
 
 
@@ -480,7 +523,11 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
     trim = TRIM if big[0][1] == 14 - TRIM else 0
     n = len(_hooks(kw, kws, bsrc, BASE, trim)[0]) if bsrc else 0
     bold_at = BASE + CODE_AT + (n + 1 & ~1)
-    code, lab = _hooks(kw, kws, bsrc, bold_at, trim)
+    lab0 = _hooks(kw, kws, bsrc, bold_at, trim)[1]     # pass 1: KBLOCK's address
+    code, lab = _hooks(kw, kws, bsrc, bold_at, trim, lab0)
+    while lab != lab0:                                  # immediates grew: settle
+        lab0 = lab
+        code, lab = _hooks(kw, kws, bsrc, bold_at, trim, lab0)
     if bsrc:
         code += b'\0' * (bold_at - BASE - CODE_AT - len(code)) + bytes(b for g in bsrc for b in divmod(g, PER))
     blocks = [code]
