@@ -174,6 +174,7 @@ def bold_map(chars):
     return m
 
 
+NAME_LEN_FIX = 0x51D3C8      # see build_ps: item-name length for the garden request lines
 TRIM = 3                   # Galmuri11's 12x14 cells never use their top 3 rows: stored
                            # 12x11, drawn 3px lower (KGLYPH/KADV, the name slots)
 
@@ -625,6 +626,12 @@ def build_ps(ps_rom, some_rom=None, font='galmuri11', bold=True, strings=None,
         hangul_text.apply(rom, strings, alloc, refs, diary=darray - BASE if long_diary else None)
         if long_diary:
             hangul_diary.words(rom, ps_rom, strings)
+    # item-name copy (0x251D398: up to 10 bytes from the record, returns the
+    # length the request line is appended at) returns 0 when the name fills
+    # all 10 bytes -- a 5-syllable Korean name -- so the line overwrote it:
+    #   0x251D3C8  ld.w %r5,0x0  ->  ld.w %r5,%r8 (= 10)
+    assert struct.unpack_from('<H', rom, NAME_LEN_FIX)[0] == 0x6C05, 'item name copy'
+    struct.pack_into('<H', rom, NAME_LEN_FIX, 0x2E85)
     return bytes(rom)
 
 
