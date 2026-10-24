@@ -97,27 +97,43 @@ def sprite_end(it):
 def program_strings(it):
     """{key: (offset, bytes)} for every string a program's code points at.
 
-    Strings sit after the last sprite.  The code reaches them either
-    directly (an ``xld.w`` immediate) or through a table of LE32 pointers
-    that an immediate points at.  Keys are the instruction address (plus the
-    table slot) so the Japanese and English builds pair up."""
+    Strings sit in the data area after the code, usually after the last
+    sprite but sometimes between sprites (melodyland, miracrise).  The code
+    reaches them either directly (an ``xld.w`` immediate) or through a table
+    of LE32 pointers that an immediate points at.  Keys are the instruction
+    address (plus the table slot) so the Japanese and English builds pair up."""
     base = outing._detect_base(it)
-    lo, hi = sprite_end(it), len(it) - 2
+    recs = sprites.scan_loose(it)
+    lo, hi = (recs[0][0] if recs else 0x104), len(it) - 2
+    spans = [(r[0], r[0] + sprites.loose_span(tuple(r))) for r in recs]
+    ok = lambda fo: lo <= fo < hi and not any(a <= fo < b for a, b in spans)
+    # the English releases moved some tables into the spare header bytes
+    # (miracrise: 0xA8-0x100) and their strings over sprite-looking bytes,
+    # so a table may sit in the header and its entries anywhere in the data
+    head = lambda fo: 0x60 <= fo < 0x104
+    anywhere = lambda fo: lo <= fo < hi          # data, not code (jump tables)
     out = {}
-    for pc, imm in outing._code_refs(it):
+    refs = list(outing._code_refs(it))
+    is_table = lambda fo: (fo + 8 <= hi and (ok(fo) or head(fo)) and
+                           all(anywhere(x - base) for x in struct.unpack_from('<II', it, fo)))
+    starts = sorted({imm - base for _pc, imm in refs if is_table(imm - base)})
+    for pc, imm in refs:
         fo = imm - base
-        if not lo <= fo < hi:
+        if not (ok(fo) or head(fo)) or fo + 8 > hi:
             continue
-        v = struct.unpack_from('<I', it, fo)[0] if fo + 4 <= hi else 0
-        if lo <= v - base < hi:                     # a pointer table
+        if is_table(fo):
+            # tables sit back to back with no terminator: stop at the next one
+            stop = next((t for t in starts if t > fo), hi)
             k = 0
-            while fo + 4 * k + 4 <= hi:
+            while fo + 4 * k + 4 <= min(stop, hi):     # ... or at its strings
                 v = struct.unpack_from('<I', it, fo + 4 * k)[0]
-                if not lo <= v - base < hi:
+                if not anywhere(v - base):
                     break
                 out[(pc, k)] = (v - base, cstr(it, v - base))
+                if fo < v - base < stop:
+                    stop = v - base
                 k += 1
-        else:
+        elif ok(fo):
             out[(pc, None)] = (fo, cstr(it, fo))
     return out
 
@@ -195,9 +211,35 @@ NAME_AT, NAME_BYTES = 0x5E, 10            # zero-terminated; 0x69 is another fie
 FULL = 0x6C                               # a full-width blank cell
 
 
+# the download charset's names for symbols the firmware table calls otherwise
+# (same codes: 0x66 anger mark, 0x64, 0x62 sun, 0x60)
+SYMBOLS = {'!': '！', '?': '？', '╬': '✧', '＠': '◎', '☀': '☼', '☓': '×'}
+
+
 def enc(t):
     from tama4u import hangul_text
-    return hangul_text.encode(t.replace('!', '！').replace('?', '？'))
+    return hangul_text.encode(''.join(SYMBOLS.get(c, c) for c in t))
+
+
+def char_line(t):
+    """A raising-condition line: 24 bytes shown as two rows of 12 cells.
+    Spaces become full cells (1 byte, not the 2-byte half space), and a line
+    longer than one row is padded so the second row starts at a word."""
+    if '/' not in t and width_cells(t) <= 12:
+        return t.replace(' ', '\u3000')
+    if '/' in t:
+        a, b = t.split('/', 1)
+    else:
+        words, a = t.split(' '), ''
+        while words and width_cells((a + ' ' + words[0]).strip()) <= 12:
+            a = (a + ' ' + words.pop(0)).strip()
+        b = ' '.join(words)
+    a = a.replace(' ', '\u3000')
+    return a + '\u3000' * (12 - width_cells(a)) + b.replace(' ', '\u3000')
+
+
+def width_cells(t):
+    return len(t)
 
 
 def put_fixed(buf, off, cap, t, pad):
@@ -208,10 +250,12 @@ def put_fixed(buf, off, cap, t, pad):
 
 
 def wrap_text(t):
+    """12-cell talk lines (11.5: a syllable is a bit wider than a kana).
+    A '/' is kept as a forced break and each piece is wrapped on its own;
+    a piece that is only a full-width space is a blank line (page push)."""
     import rewrap12
-    if '/' in t:
-        return t
-    return rewrap12.wrap(t, 11.5)
+    return '/'.join(p if not p.strip() else rewrap12.wrap(p.strip(), 11.5)
+                    for p in t.split('/'))
 
 
 def patch_program(it, ko):
@@ -269,7 +313,7 @@ def build(name):
         for i in range(vdp.CH_LINES_N):
             o = b + vdp.CH_LINES + i * 24
             if hex(o) in ko:
-                put_fixed(data, o, 24, ko[hex(o)], FULL)
+                put_fixed(data, o, 24, char_line(ko[hex(o)]), FULL)
     # contents, last first so earlier offsets stay valid while we splice
     for o, n in reversed(packets(bytes(data))):
         pkt = bytearray(data[o:o + n])
@@ -330,9 +374,11 @@ def kind_label(k):
     return KIND.get(k, k)
 
 
-def nbytes(t):
+def nbytes(t, kind=''):
     try:
-        return len(enc(wrap_text(t) if t else ''))
+        if kind == 'char-line':
+            return len(enc(char_line(t)))
+        return len(enc(wrap_text(t) if kind.startswith('text') else t))
     except Exception:
         return None
 
@@ -375,7 +421,7 @@ def cmd_sheet():
         cap = CAP.get(k, NAME_BYTES if k == 'name' else '없음(늘어남)')
         ko, note = keep.get((r['set'], r['where']), (drafts.get(r['set'], {}).get(r['where']), None))
         ws.append([r['set'], kind_label(r['kind']), r['where'], r['ja'], r['en'], cap,
-                   ko, nbytes(ko) if ko else None, note])
+                   ko, nbytes(ko, r['kind']) if ko else None, note])
     for row in ws.iter_rows(min_row=2):
         for c in row:
             c.font = font
@@ -399,6 +445,32 @@ def cmd_sheet():
     print(SHEET, ws.max_row - 1)
 
 
+def cmd_check():
+    """Byte limits of every draft against its slot, without building."""
+    rows = json.load(open(os.path.join(CACHE, 'rows.json')))
+    kinds = {(r['set'], r['where']): r['kind'] for r in rows}
+    bad = 0
+    for f in sorted(glob.glob(os.path.join(KO_DIR, '*.json'))):
+        name = os.path.basename(f)[:-5]
+        for k, t in json.load(open(f)).items():
+            kind = kinds.get((name, k))
+            if kind is None:
+                print(name, k, '키 없음'); bad += 1; continue
+            kk = kind.split(':')[0]
+            cap = CAP.get(kk, NAME_BYTES if kk == 'name' else None)
+            try:
+                n = nbytes(t, kind)
+            except Exception as e:
+                print(name, k, t, e); bad += 1; continue
+            if n is None:
+                print(name, k, repr(t), '인코딩 실패'); bad += 1
+            elif cap and n > cap:
+                print(name, k, repr(t), f'{n}B > {cap}B'); bad += 1
+            elif kk == 'char-line' and '/' not in t and len(t) > 24:
+                print(name, k, repr(t), '두 줄 넘음'); bad += 1
+    print('문제', bad)
+
+
 def cmd_pull():
     import openpyxl
     ws = openpyxl.load_workbook(SHEET, data_only=True)['번역']
@@ -415,4 +487,4 @@ def cmd_pull():
 if __name__ == '__main__':
     globals()['TAB'] = charset.load_table(model="P's")
     {'cache': cmd_cache, 'extract': cmd_extract, 'build': cmd_build,
-     'sheet': cmd_sheet, 'pull': cmd_pull}[sys.argv[1]]()
+     'sheet': cmd_sheet, 'pull': cmd_pull, 'check': cmd_check}[sys.argv[1]]()
